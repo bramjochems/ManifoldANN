@@ -1,0 +1,18 @@
+name = "ManifoldANN"
+uuid = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
+version = "0.1.0"
+authors = ["Bram"]
+
+[deps]
+JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+[compat]
+JuliaFormatter = "2.2.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
