@@ -57,7 +57,7 @@ function _resolve_neighbor_policy(
     M::Int,
 )
     if policy === nothing
-        return HeuristicNeighborPolicy(M)
+        return DiversifiedNeighborPolicy(M)
     elseif policy isa AbstractNeighborPolicy
         return policy
     elseif policy isa Symbol

@@ -230,7 +230,14 @@ class HNSWWrapper(JuliANNWrapper):
 
     _VALID_NEIGHBOR_POLICIES = {"heuristic", "diversified"}
 
-    def __init__(self, metric, M=16, ef_construction=200, ef_search=64, neighbor_policy="heuristic"):
+    def __init__(
+        self,
+        metric,
+        M=16,
+        ef_construction=200,
+        ef_search=64,
+        neighbor_policy="diversified",
+    ):
         """Initialize HNSW wrapper.
 
         Args:

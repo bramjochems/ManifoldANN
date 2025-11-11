@@ -46,8 +46,18 @@ end
         rng = rng,
     )
 
+    default_policy = build_index(
+        HNSWIndex,
+        data;
+        M = 4,
+        ef_construction = 30,
+        ef_search = 20,
+        rng = rng,
+    )
+
     @test heuristic.neighbor_policy isa ManifoldANN.HeuristicNeighborPolicy
     @test diversified.neighbor_policy isa ManifoldANN.DiversifiedNeighborPolicy
+    @test default_policy.neighbor_policy isa ManifoldANN.DiversifiedNeighborPolicy
     @test_throws ArgumentError build_index(
         HNSWIndex,
         data;
