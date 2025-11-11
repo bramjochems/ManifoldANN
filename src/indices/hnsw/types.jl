@@ -29,8 +29,15 @@ Hierarchical Navigable Small World graph-based index with pluggable layer
 planners, neighbor-selection policies, and traversal strategies. Stores only
 the structural graph metadata so callers remain responsible for supplying the
 dataset at query time.
+
+# Type Parameters
+- `T`: Element type (e.g., Float32, Float64)
+- `LP`: Layer planner type
+- `NP`: Neighbor policy type
+- `TP`: Traversal policy type
+- `D`: Distance function type (must be thread-safe)
 """
-mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP} <: AbstractANNIndex
+mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP,D} <: AbstractANNIndex
     layers::Vector{HNSWLayer}
     entry_point::Int
     max_layer::Int
@@ -41,6 +48,7 @@ mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP} <: AbstractANNInde
     planner::LP
     neighbor_policy::NP
     traversal_policy::TP
+    distance::D
 end
 
 configured_k(::HNSWIndex) = nothing

@@ -19,8 +19,9 @@ HeuristicNeighborPolicy(M::Int) = HeuristicNeighborPolicy(M, M)
 
 function select_neighbors(policy::HeuristicNeighborPolicy, candidates::Vector{NeighborCandidate})
     isempty(candidates) && return NeighborCandidate[]
-    sort!(candidates, by = c -> c.dist)
     limit = min(policy.M, length(candidates))
+    # Use partialsort! to only sort the top M elements (O(n) vs O(n log n))
+    partialsort!(candidates, 1:limit, by = c -> c.dist)
     return copy(candidates[1:limit])
 end
 

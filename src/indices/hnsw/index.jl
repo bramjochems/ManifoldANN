@@ -17,8 +17,8 @@ function build_index(
     neighbor_policy::Union{AbstractNeighborPolicy,Nothing} = nothing,
     traversal_policy::Union{AbstractTraversalPolicy,Nothing} = nothing,
     rng::AbstractRNG = Random.default_rng(),
-    distance::Function = default_distance,
-) where {T<:LinearAlgebra.BlasFloat}
+    distance::D = default_distance,
+) where {T<:LinearAlgebra.BlasFloat, D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
     n > 0 || throw(ArgumentError("Dataset must contain at least one point"))
@@ -31,7 +31,7 @@ function build_index(
     neighbor_policy === nothing && (neighbor_policy = HeuristicNeighborPolicy(M))
     traversal_policy === nothing && (traversal_policy = GreedyTraversalPolicy(ef_search))
 
-    index = HNSWIndex{T,typeof(planner),typeof(neighbor_policy),typeof(traversal_policy)}(
+    index = HNSWIndex{T,typeof(planner),typeof(neighbor_policy),typeof(traversal_policy),D}(
         Vector{HNSWLayer}(),
         0,
         -1,
@@ -42,11 +42,12 @@ function build_index(
         planner,
         neighbor_policy,
         traversal_policy,
+        distance,
     )
 
     for col in 1:n
         point = @view data[:, col]
-        insert!(index, data, point; point_id = col, rng = rng, distance = distance)
+        insert!(index, data, point; point_id = col, rng = rng)
     end
     return index
 end

@@ -6,7 +6,6 @@ function query(
     q::AbstractVector{T},
     k::Integer;
     ef_search::Union{Nothing,Int} = nothing,
-    distance::Function = default_distance,
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_dimensions(index, data, q)
     k <= 0 && return Int[]
@@ -15,19 +14,85 @@ function query(
     ef = ef_search === nothing ? default_ef(base_policy) : ef_search
     ef = max(ef, k)
 
-    entry = NeighborCandidate(index.entry_point, distance(@view(data[:, index.entry_point]), q))
+    entry = NeighborCandidate(index.entry_point, index.distance(@view(data[:, index.entry_point]), q))
     visited = BitSet()
     push!(visited, entry.id)
 
     for layer = index.max_layer:-1:1
-        entry = _greedy_descent(index, layer, entry.id, q, data, distance)
+        entry = _greedy_descent(index, layer, entry.id, q, data)
     end
     base_results =
-        _search_layer(index, 0, entry, q, data, ef, distance; visited = visited)
+        _search_layer(index, 0, entry, q, data, ef; visited = visited)
 
     sort!(base_results, by = c -> c.dist)
     limit = min(k, length(base_results))
     return [base_results[i].id for i in 1:limit]
+end
+
+"""
+    query(index::HNSWIndex, data::Matrix, queries::Matrix, k::Integer; kwargs...)
+
+Batch query interface: process multiple queries efficiently.
+
+# Arguments
+- `index`: The HNSW index
+- `data`: Data matrix (dimension × n_points)
+- `queries`: Query matrix (dimension × n_queries)
+- `k`: Number of neighbors to return per query
+- `kwargs...`: Additional arguments passed to single query (e.g., ef_search, distance)
+
+# Returns
+Vector of result vectors, one per query. Each result is a vector of neighbor indices.
+
+# Performance
+This method processes queries in parallel using all available threads (`Threads.@threads`).
+Each query is independent and reads only from the index, making parallelization safe.
+When called from Python via juliacall, this minimizes the Python↔Julia bridge overhead
+by crossing the language boundary only once while distributing work across cores.
+"""
+function query(
+    index::HNSWIndex{T},
+    data::AbstractMatrix{T},
+    queries::AbstractMatrix{T},
+    k::Integer;
+    kwargs...
+) where {T<:LinearAlgebra.BlasFloat}
+    size(queries, 1) == index.dimension ||
+        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
+
+    n_queries = size(queries, 2)
+    results = Vector{Vector{Int}}(undef, n_queries)
+
+    Threads.@threads for i in 1:n_queries
+        q = @view queries[:, i]
+        results[i] = query(index, data, q, k; kwargs...)
+    end
+
+    return results
+end
+
+"""
+    query(index::HNSWIndex, data::Matrix, queries::Vector{<:Vector}, k::Integer; kwargs...)
+
+Convenience batch query interface using a vector of query vectors.
+
+# Note
+This method converts the Vector{Vector} to a Matrix internally for performance.
+For large batches, prefer passing queries as a Matrix directly.
+"""
+function query(
+    index::HNSWIndex{T},
+    data::AbstractMatrix{T},
+    queries::Vector{<:AbstractVector{T}},
+    k::Integer;
+    kwargs...
+) where {T<:LinearAlgebra.BlasFloat}
+    isempty(queries) && return Vector{Vector{Int}}()
+
+    # Stack queries into a matrix (dimension × n_queries)
+    queries_mat = reduce(hcat, queries)
+
+    return query(index, data, queries_mat, k; kwargs...)
 end
 
 function insert!(
@@ -36,7 +101,6 @@ function insert!(
     point::AbstractVector{T};
     point_id::Union{Nothing,Int} = nothing,
     rng::AbstractRNG = Random.default_rng(),
-    distance::Function = default_distance,
 ) where {T<:LinearAlgebra.BlasFloat}
     size(data, 1) == index.dimension ||
         throw(DimensionMismatch("Expected data with $(index.dimension) rows"))
@@ -61,17 +125,17 @@ function insert!(
     end
 
     current = index.entry_point
-    current_dist = distance(@view(data[:, current]), point)
+    current_dist = index.distance(@view(data[:, current]), point)
     for layer = index.max_layer:-1:max(level + 1, 1)
-        candidate = _greedy_descent(index, layer, current, point, data, distance)
+        candidate = _greedy_descent(index, layer, current, point, data)
         current = candidate.id
         current_dist = candidate.dist
     end
 
     for layer = min(level, index.max_layer):-1:0
-        results = _search_layer(index, layer, NeighborCandidate(current, current_dist), point, data, index.ef_construction, distance)
+        results = _search_layer(index, layer, NeighborCandidate(current, current_dist), point, data, index.ef_construction)
         neighbors = select_neighbors(index.neighbor_policy, results)
-        _connect_new_node!(index, layer, node_id, neighbors, data, distance)
+        _connect_new_node!(index, layer, node_id, neighbors, data)
         current = isempty(neighbors) ? current : neighbors[1].id
         current_dist = isempty(neighbors) ? current_dist : neighbors[1].dist
     end
@@ -85,14 +149,14 @@ function insert!(
     return index
 end
 
-function _greedy_descent(index::HNSWIndex, layer::Int, entry_id::Int, q, data, distance)
+function _greedy_descent(index::HNSWIndex, layer::Int, entry_id::Int, q, data)
     current = entry_id
-    current_dist = distance(@view(data[:, current]), q)
+    current_dist = index.distance(@view(data[:, current]), q)
     improved = true
     while improved
         improved = false
         @inbounds for neighbor in index.layers[layer + 1][current]
-            dist = distance(@view(data[:, neighbor]), q)
+            dist = index.distance(@view(data[:, neighbor]), q)
             if dist < current_dist
                 current = neighbor
                 current_dist = dist
@@ -109,8 +173,7 @@ function _search_layer(
     entry::NeighborCandidate,
     q,
     data,
-    ef::Int,
-    distance;
+    ef::Int;
     visited = BitSet(),
 )
     policy = with_ef(index.traversal_policy, ef)
@@ -129,7 +192,7 @@ function _search_layer(
                 continue
             end
             push!(visited, neighbor)
-            dist = distance(@view(data[:, neighbor]), q)
+            dist = index.distance(@view(data[:, neighbor]), q)
             if length(state.best) < policy.ef_search || dist < state.best[end].dist
                 maybe_push_candidate!(policy, state, NeighborCandidate(neighbor, dist))
             end
@@ -144,36 +207,36 @@ function _connect_new_node!(
     node_id::Int,
     neighbors::Vector{NeighborCandidate},
     data,
-    distance,
 )
     adjacency = index.layers[layer + 1]
     adjacency[node_id] = Int[]
     for neighbor in neighbors
-        _link_nodes!(index, layer, node_id, neighbor.id, data, distance)
+        _link_nodes!(index, layer, node_id, neighbor.id, data)
     end
 end
 
-function _link_nodes!(index::HNSWIndex, layer::Int, a::Int, b::Int, data, distance)
+function _link_nodes!(index::HNSWIndex, layer::Int, a::Int, b::Int, data)
     a == b && return
     adjacency = index.layers[layer + 1]
     list_a = adjacency[a]
     list_b = adjacency[b]
     if !(b in list_a)
         push!(list_a, b)
-        _prune_list!(list_a, a, data, distance, max_degree(index.neighbor_policy))
+        _prune_list!(index, list_a, a, data, max_degree(index.neighbor_policy))
     end
     if !(a in list_b)
         push!(list_b, a)
-        _prune_list!(list_b, b, data, distance, max_degree(index.neighbor_policy))
+        _prune_list!(index, list_b, b, data, max_degree(index.neighbor_policy))
     end
-    adjacency[a] = list_a
-    adjacency[b] = list_b
+    # No need to reassign: list_a and list_b are references to adjacency lists,
+    # already modified in-place by push! and _prune_list!
 end
 
-function _prune_list!(list::Vector{Int}, center::Int, data, distance, limit::Int)
+function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
     length(list) <= limit && return
     center_vec = @view(data[:, center])
-    sort!(list, by = id -> distance(center_vec, @view(data[:, id])))
+    # Use partialsort! to only sort the closest `limit` elements (O(n) vs O(n log n))
+    partialsort!(list, 1:limit, by = id -> index.distance(center_vec, @view(data[:, id])))
     resize!(list, limit)
 end
 
