@@ -7,12 +7,14 @@ include("utils/validation.jl")
 include("utils/eval_utils.jl")
 include("indices/bruteforce.jl")
 include("indices/lsh.jl")
+include("indices/kdtree.jl")
 
 export AbstractANNIndex,
        AbstractGraphIndex,
        AbstractLSHHash,
        BruteForceIndex,
        LSHIndex,
+       KDTreeIndex,
        KNNGraph,
        BinningHash,
        RandomHyperplaneHash,

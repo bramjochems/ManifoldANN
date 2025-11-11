@@ -4,13 +4,25 @@ Experimental Julia package for approximate nearest neighbours (ANN) on manifolds
 
 ## Developing
 
+There's make file to automate quick tasks
+
+For running tests:
 ```bash
 make test
 ```
+
+
+For formatting code:
+
+```bash
+make format
+```
+
 
 ## Directory Layout
 
 - `src/` package source
 - `tests/unit/` unit tests, loaded via `test/runtests.jl`
 - `docs/examples/` documentation assets and examples (placeholder)
-- docs/design/ documetns design decisions taken
+- docs/design/ documents design decisions taken
+

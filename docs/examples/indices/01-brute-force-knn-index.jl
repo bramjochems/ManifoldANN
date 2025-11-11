@@ -1,7 +1,7 @@
 #= 
 Example: Brute-force kNN index
 
-Run with `julia --project=. docs/examples/indices/ex01-brute-force-knn-index.jl`
+Run with `julia --project=. docs/examples/indices/01-brute-force-knn-index.jl`
 =#
 
 using ManifoldANN

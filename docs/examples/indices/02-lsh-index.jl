@@ -1,7 +1,7 @@
 #=
 Example: LSH index with inserts
 
-Run with `julia --project=. docs/examples/indices/ex02-lsh-index.jl`
+Run with `julia --project=. docs/examples/indices/02-lsh-index.jl`
 =#
 
 using ManifoldANN
