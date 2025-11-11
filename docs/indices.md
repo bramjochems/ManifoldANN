@@ -29,6 +29,18 @@ Below is a quick reference of the currently implemented indices and their most r
 - **Mutation**: `insert!` updates buckets and the point count; callers still own the data matrix.
 - **Examples**: `docs/examples/indices/ex02-lsh-index.jl` shows both angular and binning hashes along with recall reporting vs brute force.
 
+## HNSWIndex
+- **Scope**: graph-based approximate search with hierarchical layers; supports mutation (`insert!`) and layer-aware experimentation.
+- **Builder keywords**:
+  - `M`: max degree per layer (default 16).
+  - `ef_construction`: controls candidate breadth during insertion; higher improves recall.
+  - `ef_search`: default breadth during queries (can be overridden per call).
+  - `planner`, `neighbor_policy`, `traversal_policy`: optional hooks for custom layer assignment, connection heuristics, or traversal strategies.
+- **Query keywords**:
+  - `ef_search`: optional override (automatically clamped to `>= k`).
+- **Mutation**: `insert!(index, data, point; rng=...)` expects the caller to append the new column to `data` first; the index updates only its graph metadata.
+- **Examples**: `docs/examples/indices/ex04-hnsw-index.jl` (index usage) and `docs/examples/graphs/04-hnsw-knn-graph.jl` (graph export).
+
 ## Common Guidance
 - Indices never store the raw dataset; always pass `data` to `query`.
 - Use `supports_mutation(index)` to branch on whether `insert!` is available.

@@ -8,6 +8,7 @@ include("utils/eval_utils.jl")
 include("indices/bruteforce.jl")
 include("indices/lsh.jl")
 include("indices/kdtree.jl")
+include("indices/hnsw.jl")
 
 export AbstractANNIndex,
        AbstractGraphIndex,
@@ -15,6 +16,7 @@ export AbstractANNIndex,
        BruteForceIndex,
        LSHIndex,
        KDTreeIndex,
+       HNSWIndex,
        KNNGraph,
        BinningHash,
        RandomHyperplaneHash,
@@ -23,6 +25,9 @@ export AbstractANNIndex,
        query,
        materialize_graph,
        ensure_graph,
+       has_metadata,
+       graph_metadata,
+       node_metadata,
        make_binning_hash,
        make_random_hyperplane_hash,
        configured_k,

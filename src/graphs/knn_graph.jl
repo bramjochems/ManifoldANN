@@ -3,17 +3,19 @@
 
 Lightweight representation of a directed k-nearest-neighbor graph. Stores the
 ordered neighbor lists per vertex along with bookkeeping that downstream
-algorithms can inspect.
+algorithms can inspect. Graphs may optionally carry node-level metadata (any
+`Vector` whose length matches the vertex count).
 """
-struct KNNGraph{I<:Integer}
+struct KNNGraph{I<:Integer,M}
     neighbors::Vector{Vector{I}}
     k::Int
     include_self::Bool
+    metadata::M
 end
 
 Base.length(graph::KNNGraph) = length(graph.neighbors)
 Base.getindex(graph::KNNGraph, i::Integer) = graph.neighbors[i]
-Base.eltype(::Type{KNNGraph{I}}) where {I} = Vector{I}
+Base.eltype(::Type{KNNGraph{I,M}}) where {I,M} = Vector{I}
 Base.iterate(graph::KNNGraph) = iterate(graph.neighbors)
 Base.iterate(graph::KNNGraph, state) = iterate(graph.neighbors, state)
 
@@ -31,6 +33,7 @@ function build_knn_graph(
     data::AbstractMatrix{T};
     k::Union{Nothing,Integer} = nothing,
     include_self::Bool = false,
+    metadata::Union{Nothing,AbstractVector} = nothing,
     query_kwargs...,
 ) where {T}
     n_points = size(data, 2)
@@ -50,7 +53,9 @@ function build_knn_graph(
         adjacency[col] = _prepare_neighbors(result, col, resolved_k, include_self)
     end
 
-    return KNNGraph(adjacency, resolved_k, include_self)
+    stored_metadata = _prepare_metadata(metadata, n_points)
+
+    return KNNGraph(adjacency, resolved_k, include_self, stored_metadata)
 end
 
 function _resolve_graph_k(index::AbstractANNIndex, k::Union{Nothing,Integer})
@@ -114,3 +119,24 @@ function _trim_or_fail(ids::Vector{Int}, k::Int)
     end
     return ids
 end
+
+function _prepare_metadata(metadata, n_points::Int)
+    metadata === nothing && return nothing
+    length(metadata) == n_points ||
+        throw(
+            ArgumentError(
+                "Metadata length $(length(metadata)) must equal number of points $n_points",
+            ),
+        )
+    return collect(metadata)
+end
+
+has_metadata(graph::KNNGraph) = graph.metadata !== nothing
+
+function node_metadata(graph::KNNGraph, i::Integer)
+    graph.metadata !== nothing ||
+        throw(ArgumentError("Graph does not store metadata"))
+    return graph.metadata[i]
+end
+
+graph_metadata(graph::KNNGraph) = graph.metadata
