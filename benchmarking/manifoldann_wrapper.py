@@ -228,7 +228,9 @@ class KDTreeWrapper(JuliANNWrapper):
 class HNSWWrapper(JuliANNWrapper):
     """Wrapper for HNSWIndex."""
 
-    def __init__(self, metric, M=16, ef_construction=200, ef_search=64):
+    _VALID_NEIGHBOR_POLICIES = {"heuristic", "diversified"}
+
+    def __init__(self, metric, M=16, ef_construction=200, ef_search=64, neighbor_policy="heuristic"):
         """Initialize HNSW wrapper.
 
         Args:
@@ -236,23 +238,29 @@ class HNSWWrapper(JuliANNWrapper):
             M: Maximum number of connections per element
             ef_construction: Size of dynamic candidate list during construction
             ef_search: Size of dynamic candidate list during search
+            neighbor_policy: Strategy for neighbor selection ('heuristic' or 'diversified')
         """
         super().__init__(metric)
         self._M = M
         self._ef_construction = ef_construction
         self._ef_search = ef_search
+        if neighbor_policy not in self._VALID_NEIGHBOR_POLICIES:
+            raise ValueError(f"neighbor_policy must be one of {self._VALID_NEIGHBOR_POLICIES}")
+        self._neighbor_policy = neighbor_policy
 
     def fit(self, X):
         """Build the HNSW index."""
         super().fit(X)
 
         # Build index using Julia
+        neighbor_policy_symbol = jl.Symbol(self._neighbor_policy)
         self._index = jl.build_index(
             jl.HNSWIndex,
             self._data,
             M=self._M,
             ef_construction=self._ef_construction,
-            ef_search=self._ef_search
+            ef_search=self._ef_search,
+            neighbor_policy=neighbor_policy_symbol,
         )
 
     def set_query_arguments(self, ef_search=None):
@@ -277,7 +285,10 @@ class HNSWWrapper(JuliANNWrapper):
         return [int(idx) - 1 for idx in result]
 
     def __str__(self):
-        return f"HNSW(M={self._M}, ef_construction={self._ef_construction}, ef_search={self._ef_search})"
+        return (
+            f"HNSW(M={self._M}, ef_construction={self._ef_construction}, "
+            f"ef_search={self._ef_search}, neighbor_policy={self._neighbor_policy})"
+        )
 
 
 class BruteForceWrapper(JuliANNWrapper):

@@ -23,6 +23,37 @@ using ManifoldANN
     end
 end
 
+@testset "HNSW neighbor policies" begin
+    rng = MersenneTwister(1234)
+    data = randn(rng, 3, 20)
+
+    heuristic = build_index(
+        HNSWIndex,
+        data;
+        M = 4,
+        ef_construction = 30,
+        ef_search = 20,
+        neighbor_policy = :heuristic,
+        rng = rng,
+    )
+    diversified = build_index(
+        HNSWIndex,
+        data;
+        M = 4,
+        ef_construction = 30,
+        ef_search = 20,
+        neighbor_policy = :diversified,
+        rng = rng,
+    )
+
+    @test heuristic.neighbor_policy isa ManifoldANN.HeuristicNeighborPolicy
+    @test diversified.neighbor_policy isa ManifoldANN.DiversifiedNeighborPolicy
+    @test_throws ArgumentError build_index(
+        HNSWIndex,
+        data;
+        neighbor_policy = :unknown,
+    )
+end
 @testset "HNSW mutation and dimension checks" begin
     rng = MersenneTwister(7)
     data = randn(rng, 3, 5)

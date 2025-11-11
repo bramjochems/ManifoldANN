@@ -31,6 +31,7 @@ Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.
   - Tests ManifoldANN vs hnswlib vs Annoy
   - Measures QPS, recall@10, build time
   - Automatically uses batch queries for Julia algorithms
+  - Compares both `neighbor_policy=heuristic` and `neighbor_policy=diversified` HNSW variants
 - **`fetch_ann_benchmarks.sh`** - Clones the upstream ann-benchmarks repo (pinned commit)
 
 - **`setup.sh`** - Automated setup (venv + dependencies)

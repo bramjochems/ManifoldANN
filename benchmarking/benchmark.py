@@ -17,14 +17,17 @@ from urllib.request import urlretrieve
 
 # Configure Julia threading BEFORE importing juliacall
 # Default to using all available threads if not specified
-if 'JULIA_NUM_THREADS' not in os.environ:
+if "JULIA_NUM_THREADS" not in os.environ:
     import multiprocessing
-    os.environ['JULIA_NUM_THREADS'] = str(multiprocessing.cpu_count())
-    print(f"ℹ️  Setting JULIA_NUM_THREADS={os.environ['JULIA_NUM_THREADS']} (auto-detected)")
+
+    os.environ["JULIA_NUM_THREADS"] = str(multiprocessing.cpu_count())
+    print(
+        f"ℹ️  Setting JULIA_NUM_THREADS={os.environ['JULIA_NUM_THREADS']} (auto-detected)"
+    )
 
 # Suppress juliacall threading warning (we know what we're doing)
-if 'PYTHON_JULIACALL_HANDLE_SIGNALS' not in os.environ:
-    os.environ['PYTHON_JULIACALL_HANDLE_SIGNALS'] = 'yes'
+if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
+    os.environ["PYTHON_JULIACALL_HANDLE_SIGNALS"] = "yes"
 
 BASE_DIR = os.path.dirname(__file__)
 ANN_BENCHMARKS_DIR = os.path.join(BASE_DIR, "ann-benchmarks")
@@ -40,6 +43,7 @@ from manifoldann_wrapper import (
 # Import ann-benchmarks algorithms if available
 try:
     from annoy import AnnoyIndex
+
     ANNOY_AVAILABLE = True
 except ImportError:
     ANNOY_AVAILABLE = False
@@ -47,6 +51,7 @@ except ImportError:
 
 try:
     import hnswlib
+
     HNSWLIB_AVAILABLE = True
 except ImportError:
     HNSWLIB_AVAILABLE = False
@@ -54,6 +59,7 @@ except ImportError:
 
 try:
     import faiss
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
@@ -61,6 +67,7 @@ except ImportError:
 
 try:
     from scipy.spatial import cKDTree
+
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -69,8 +76,9 @@ except ImportError:
 
 class AnnoyWrapper:
     """Wrapper for Annoy to match our interface."""
+
     def __init__(self, metric, n_trees=10):
-        self.metric = 'angular' if metric == 'angular' else 'euclidean'
+        self.metric = "angular" if metric == "angular" else "euclidean"
         self.n_trees = n_trees
         self.index = None
         self.dimension = None
@@ -91,8 +99,9 @@ class AnnoyWrapper:
 
 class HNSWWrapper:
     """Wrapper for HNSW to match our interface."""
+
     def __init__(self, metric, M=16, ef_construction=200):
-        self.metric = 'cosine' if metric == 'angular' else 'l2'
+        self.metric = "cosine" if metric == "angular" else "l2"
         self.M = M
         self.ef_construction = ef_construction
         self.ef_search = 50  # Will be set by set_query_arguments
@@ -102,11 +111,13 @@ class HNSWWrapper:
     def fit(self, X):
         self.dimension = X.shape[1]
         self.index = hnswlib.Index(space=self.metric, dim=self.dimension)
-        self.index.init_index(max_elements=len(X), ef_construction=self.ef_construction, M=self.M)
+        self.index.init_index(
+            max_elements=len(X), ef_construction=self.ef_construction, M=self.M
+        )
 
         # Set thread count to match JULIA_NUM_THREADS if specified
-        if 'JULIA_NUM_THREADS' in os.environ:
-            num_threads = int(os.environ['JULIA_NUM_THREADS'])
+        if "JULIA_NUM_THREADS" in os.environ:
+            num_threads = int(os.environ["JULIA_NUM_THREADS"])
             self.index.set_num_threads(num_threads)
 
         self.index.add_items(X)
@@ -128,6 +139,7 @@ class HNSWWrapper:
 
 class FAISSWrapper:
     """Wrapper for FAISS HNSW to match our interface."""
+
     def __init__(self, metric, M=16, ef_construction=200):
         self.metric = metric
         self.M = M
@@ -140,7 +152,7 @@ class FAISSWrapper:
         self.dimension = X.shape[1]
 
         # Create HNSW index
-        if self.metric == 'angular':
+        if self.metric == "angular":
             # For angular/cosine distance, normalize vectors and use L2
             # (cosine similarity = 1 - ||normalized(a) - normalized(b)||^2 / 2)
             X_normalized = X / np.linalg.norm(X, axis=1, keepdims=True)
@@ -155,15 +167,15 @@ class FAISSWrapper:
         self.index.hnsw.efConstruction = self.ef_construction
 
         # Set thread count to match JULIA_NUM_THREADS if specified
-        if 'JULIA_NUM_THREADS' in os.environ:
-            num_threads = int(os.environ['JULIA_NUM_THREADS'])
+        if "JULIA_NUM_THREADS" in os.environ:
+            num_threads = int(os.environ["JULIA_NUM_THREADS"])
             faiss.omp_set_num_threads(num_threads)
 
         # Add data
         if self.X_normalized is not None:
-            self.index.add(self.X_normalized.astype('float32'))
+            self.index.add(self.X_normalized.astype("float32"))
         else:
-            self.index.add(X.astype('float32'))
+            self.index.add(X.astype("float32"))
 
     def set_query_arguments(self, ef_search=50):
         self.ef_search = ef_search
@@ -176,9 +188,9 @@ class FAISSWrapper:
 
         if self.X_normalized is not None:
             v_normalized = v / np.linalg.norm(v)
-            v_query = v_normalized.reshape(1, -1).astype('float32')
+            v_query = v_normalized.reshape(1, -1).astype("float32")
         else:
-            v_query = v.reshape(1, -1).astype('float32')
+            v_query = v.reshape(1, -1).astype("float32")
 
         distances, labels = self.index.search(v_query, n)
         return labels[0].tolist()
@@ -189,6 +201,7 @@ class FAISSWrapper:
 
 class KDTreeWrapper:
     """Wrapper for SciPy's cKDTree."""
+
     def __init__(self, metric, leafsize=40):
         self.metric = metric
         self.leafsize = leafsize
@@ -196,14 +209,14 @@ class KDTreeWrapper:
         self.data = None
 
     def _maybe_normalize(self, X):
-        if self.metric != 'angular':
+        if self.metric != "angular":
             return X
         norms = np.linalg.norm(X, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         return X / norms
 
     def _normalize_vector(self, v):
-        if self.metric != 'angular':
+        if self.metric != "angular":
             return v
         norm = np.linalg.norm(v)
         if norm == 0:
@@ -254,18 +267,20 @@ def download_dataset(dataset_name, data_dir="data"):
 def load_dataset(dataset_path, max_train=None):
     """Load dataset from HDF5 file."""
     print(f"\nLoading dataset from {dataset_path}...")
-    with h5py.File(dataset_path, 'r') as f:
-        train = np.array(f['train'])
-        test = np.array(f['test'])
-        neighbors = np.array(f['neighbors'])
-        distance_metric = f.attrs.get('distance', 'unknown')
+    with h5py.File(dataset_path, "r") as f:
+        train = np.array(f["train"])
+        test = np.array(f["test"])
+        neighbors = np.array(f["neighbors"])
+        distance_metric = f.attrs.get("distance", "unknown")
 
         print(f"Original train shape: {train.shape}")
         print(f"Test shape: {test.shape}")
         print(f"Distance metric: {distance_metric}")
 
         if max_train and train.shape[0] > max_train:
-            print(f"\n⚠️  Limiting train set from {train.shape[0]} to {max_train} samples")
+            print(
+                f"\n⚠️  Limiting train set from {train.shape[0]} to {max_train} samples"
+            )
             print(f"   Recomputing ground truth neighbors for limited dataset...")
             train = train[:max_train]
 
@@ -275,14 +290,16 @@ def load_dataset(dataset_path, max_train=None):
             print(f"   Computing ground truth using vectorized operations...")
             k = neighbors.shape[1]  # Use same k as original
 
-            if distance_metric == 'euclidean':
+            if distance_metric == "euclidean":
                 # Vectorized: (n_test, n_train) distance matrix
                 # Use broadcasting: ||x - y||^2 = ||x||^2 + ||y||^2 - 2*x^T*y
-                test_norm_sq = np.sum(test ** 2, axis=1, keepdims=True)  # (n_test, 1)
-                train_norm_sq = np.sum(train ** 2, axis=1)  # (n_train,)
-                distances = test_norm_sq + train_norm_sq - 2 * test @ train.T  # (n_test, n_train)
+                test_norm_sq = np.sum(test**2, axis=1, keepdims=True)  # (n_test, 1)
+                train_norm_sq = np.sum(train**2, axis=1)  # (n_train,)
+                distances = (
+                    test_norm_sq + train_norm_sq - 2 * test @ train.T
+                )  # (n_test, n_train)
                 distances = np.sqrt(np.maximum(distances, 0))  # Avoid numerical issues
-            elif distance_metric == 'angular':
+            elif distance_metric == "angular":
                 # Vectorized: cosine distance = 1 - cosine_similarity
                 # For normalized vectors: cosine_sim = dot product
                 similarities = test @ train.T  # (n_test, n_train)
@@ -292,11 +309,15 @@ def load_dataset(dataset_path, max_train=None):
 
             # Get k nearest neighbors for all queries at once
             # Use argpartition for O(n) complexity instead of O(n log n) sorting
-            neighbors_recomputed = np.argpartition(distances, min(k, distances.shape[1]-1), axis=1)[:, :k]
+            neighbors_recomputed = np.argpartition(
+                distances, min(k, distances.shape[1] - 1), axis=1
+            )[:, :k]
 
             # Sort the k nearest neighbors by distance
             for i in range(neighbors_recomputed.shape[0]):
-                neighbors_recomputed[i] = neighbors_recomputed[i, np.argsort(distances[i, neighbors_recomputed[i]])]
+                neighbors_recomputed[i] = neighbors_recomputed[
+                    i, np.argsort(distances[i, neighbors_recomputed[i]])
+                ]
 
             neighbors = neighbors_recomputed
             print(f"   Ground truth recomputed for {max_train} train samples")
@@ -341,7 +362,7 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
     print(f"Build time: {build_time:.2f} seconds")
 
     # Set query arguments if available
-    if hasattr(wrapper, 'set_query_arguments'):
+    if hasattr(wrapper, "set_query_arguments"):
         wrapper.set_query_arguments()
 
     # Query
@@ -350,11 +371,11 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
     recalls = []
 
     # Use batch querying if available (much faster for Julia wrappers)
-    if hasattr(wrapper, 'query_batch'):
+    if hasattr(wrapper, "query_batch"):
         print(f"  Using batch query interface for better performance...")
 
         # Warmup: Run a few queries to trigger JIT compilation
-        if hasattr(wrapper, '_julia_initialized'):
+        if hasattr(wrapper, "_julia_initialized"):
             print(f"  Running warmup queries (Julia JIT compilation)...")
             warmup_start = time.perf_counter()
             _ = wrapper.query_batch(X_test[:5], k)
@@ -367,15 +388,20 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
             total_time = time.perf_counter() - start
 
             # Compute per-query time and recall
-            for i, (predicted, true_neighbors) in enumerate(zip(results_batch, ground_truth)):
+            for i, (predicted, true_neighbors) in enumerate(
+                zip(results_batch, ground_truth)
+            ):
                 query_times.append(total_time / n_queries)  # Average time
                 recall = compute_recall_at_k(predicted, true_neighbors, k)
                 recalls.append(recall)
 
-            print(f"  Batch query completed: {total_time:.4f}s total, {total_time/n_queries*1000:.4f}ms per query")
+            print(
+                f"  Batch query completed: {total_time:.4f}s total, {total_time / n_queries * 1000:.4f}ms per query"
+            )
         except Exception as e:
             print(f"  Error in batch query: {e}")
             import traceback
+
             traceback.print_exc()
     else:
         # Fall back to individual queries
@@ -412,16 +438,18 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
     print(f"Build time:          {build_time:.2f} s")
     print(f"Avg query time:      {avg_query_time_ms:.4f} ± {std_query_time_ms:.4f} ms")
     print(f"Queries per second:  {qps:.1f}")
-    print(f"Recall@{k}:          {avg_recall:.4f} ({avg_recall*100:.2f}%)")
+    print(f"Recall@{k}:          {avg_recall:.4f} ({avg_recall * 100:.2f}%)")
     print(f"{'=' * 60}")
 
     return {
-        'name': str(wrapper),
-        'build_time': build_time,
-        'avg_query_time_ms': avg_query_time_ms,
-        'qps': qps,
-        'recall': avg_recall,
-        'implementation': 'ManifoldANN' if isinstance(wrapper, (LSHWrapper, ManifoldHNSW, ManifoldBruteForce)) else 'Other'
+        "name": str(wrapper),
+        "build_time": build_time,
+        "avg_query_time_ms": avg_query_time_ms,
+        "qps": qps,
+        "recall": avg_recall,
+        "implementation": "ManifoldANN"
+        if isinstance(wrapper, (LSHWrapper, ManifoldHNSW, ManifoldBruteForce))
+        else "Other",
     }
 
 
@@ -429,30 +457,49 @@ def main():
     """Run comparison benchmarks."""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Compare ManifoldANN with ann-benchmarks algorithms')
-    parser.add_argument('--dataset', choices=['fashion-mnist', 'glove-25', 'glove-50'],
-                       default='fashion-mnist', help='Which dataset to use')
-    parser.add_argument('--max-train', type=int, default=10000,
-                       help='Limit training set size (default: 10K, use 0 for full dataset)')
-    parser.add_argument('--n-queries', type=int, default=100,
-                       help='Number of test queries (default: 100)')
-    parser.add_argument('--threads', type=int, default=None,
-                       help='Number of threads (default: all cores). Applies to both ManifoldANN and hnswlib.')
+    parser = argparse.ArgumentParser(
+        description="Compare ManifoldANN with ann-benchmarks algorithms"
+    )
+    parser.add_argument(
+        "--dataset",
+        choices=["fashion-mnist", "glove-25", "glove-50"],
+        default="fashion-mnist",
+        help="Which dataset to use",
+    )
+    parser.add_argument(
+        "--max-train",
+        type=int,
+        default=10000,
+        help="Limit training set size (default: 10K, use 0 for full dataset)",
+    )
+    parser.add_argument(
+        "--n-queries",
+        type=int,
+        default=100,
+        help="Number of test queries (default: 100)",
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="Number of threads (default: all cores). Applies to both ManifoldANN and hnswlib.",
+    )
     args = parser.parse_args()
 
     # Override thread count if specified
     if args.threads is not None:
         import multiprocessing
-        os.environ['JULIA_NUM_THREADS'] = str(args.threads)
+
+        os.environ["JULIA_NUM_THREADS"] = str(args.threads)
         print(f"ℹ️  Using {args.threads} threads for all algorithms")
 
     # Determine full dataset name
-    if args.dataset == 'fashion-mnist':
-        dataset_name = 'fashion-mnist-784-euclidean'
-        metric = 'euclidean'
+    if args.dataset == "fashion-mnist":
+        dataset_name = "fashion-mnist-784-euclidean"
+        metric = "euclidean"
     else:
         dataset_name = f"{args.dataset}-angular"
-        metric = 'angular'
+        metric = "angular"
 
     print("=" * 60)
     print(f"ManifoldANN vs ann-benchmarks Comparison")
@@ -472,9 +519,22 @@ def main():
     algorithms = [
         # ManifoldANN algorithms
         ManifoldBruteForce(metric=metric),
-        ManifoldKDTree(metric=metric, axis_selector='variance'),
+        ManifoldKDTree(metric=metric, axis_selector="variance"),
         LSHWrapper(metric=metric, n_tables=8, hash_length=16),
-        ManifoldHNSW(metric=metric, M=16, ef_construction=200, ef_search=50),
+        ManifoldHNSW(
+            metric=metric,
+            M=16,
+            ef_construction=200,
+            ef_search=50,
+            neighbor_policy="heuristic",
+        ),
+        ManifoldHNSW(
+            metric=metric,
+            M=16,
+            ef_construction=200,
+            ef_search=50,
+            neighbor_policy="diversified",
+        ),
     ]
 
     # Add external algorithms if available
@@ -504,30 +564,34 @@ def main():
     results = []
     for algo in algorithms:
         try:
-            result = test_algorithm(algo, X_train, X_test, ground_truth,
-                                   k=k, n_queries=args.n_queries)
+            result = test_algorithm(
+                algo, X_train, X_test, ground_truth, k=k, n_queries=args.n_queries
+            )
             if result:
                 results.append(result)
         except Exception as e:
             print(f"\n❌ Error testing {algo}: {e}")
             import traceback
+
             traceback.print_exc()
 
     # Summary comparison
     if len(results) > 0:
-        print(f"\n{'=' * 80}")
+        print(f"\n{'=' * 140}")
         print("FINAL COMPARISON")
-        print(f"{'=' * 80}")
-        print(f"{'Algorithm':<60} {'Impl':<15} {'Build(s)':>10} {'QPS':>10} {'Recall@10':>10}")
-        print(f"{'-' * 80}")
+        print(f"{'=' * 140}")
+        print(
+            f"{'Algorithm':<100} {'Impl':<15} {'Build(s)':>10} {'QPS':>10} {'Recall@10':>10}"
+        )
+        print(f"{'-' * 120}")
 
         # Sort by recall descending
-        results_sorted = sorted(results, key=lambda x: x['recall'], reverse=True)
+        results_sorted = sorted(results, key=lambda x: x["recall"], reverse=True)
 
         for r in results_sorted:
-            impl_marker = "🔵" if r['implementation'] == 'ManifoldANN' else "⚪"
+            impl_marker = "🔵" if r["implementation"] == "ManifoldANN" else "⚪"
             print(
-                f"{impl_marker} {r['name']:<58} "
+                f"{impl_marker} {r['name']:<98} "
                 f"{r['implementation']:<15} "
                 f"{r['build_time']:>10.2f} "
                 f"{r['qps']:>10.1f} "

@@ -133,8 +133,15 @@ function insert!(
     end
 
     for layer = min(level, index.max_layer):-1:0
-        results = _search_layer(index, layer, NeighborCandidate(current, current_dist), point, data, index.ef_construction)
-        neighbors = select_neighbors(index.neighbor_policy, results)
+        results = _search_layer(
+            index,
+            layer,
+            NeighborCandidate(current, current_dist),
+            point,
+            data,
+            index.ef_construction,
+        )
+        neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
         _connect_new_node!(index, layer, node_id, neighbors, data)
         current = isempty(neighbors) ? current : neighbors[1].id
         current_dist = isempty(neighbors) ? current_dist : neighbors[1].dist
@@ -235,9 +242,22 @@ end
 function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
     length(list) <= limit && return
     center_vec = @view(data[:, center])
-    # Use partialsort! to only sort the closest `limit` elements (O(n) vs O(n log n))
-    partialsort!(list, 1:limit, by = id -> index.distance(center_vec, @view(data[:, id])))
-    resize!(list, limit)
+    candidates = Vector{NeighborCandidate}(undef, length(list))
+    @inbounds for (i, id) in enumerate(list)
+        dist = index.distance(center_vec, @view(data[:, id]))
+        candidates[i] = NeighborCandidate(id, dist)
+    end
+    pruned = select_neighbors(
+        index.neighbor_policy,
+        candidates,
+        data,
+        index.distance;
+        limit = limit,
+    )
+    resize!(list, length(pruned))
+    @inbounds for (i, cand) in enumerate(pruned)
+        list[i] = cand.id
+    end
 end
 
 function _ensure_layers!(index::HNSWIndex, level::Int)

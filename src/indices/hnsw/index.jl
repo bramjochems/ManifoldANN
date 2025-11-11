@@ -14,7 +14,7 @@ function build_index(
     ef_construction::Int = 200,
     ef_search::Int = 64,
     planner::Union{AbstractLayerPlanner,Nothing} = nothing,
-    neighbor_policy::Union{AbstractNeighborPolicy,Nothing} = nothing,
+    neighbor_policy::Union{AbstractNeighborPolicy,Symbol,Nothing} = nothing,
     traversal_policy::Union{AbstractTraversalPolicy,Nothing} = nothing,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_distance,
@@ -28,7 +28,7 @@ function build_index(
     ef_search >= 1 || throw(ArgumentError("ef_search must be at least 1"))
 
     planner === nothing && (planner = DefaultLayerPlanner(1 / log(max(M, 2))))
-    neighbor_policy === nothing && (neighbor_policy = HeuristicNeighborPolicy(M))
+    neighbor_policy = _resolve_neighbor_policy(neighbor_policy, M)
     traversal_policy === nothing && (traversal_policy = GreedyTraversalPolicy(ef_search))
 
     index = HNSWIndex{T,typeof(planner),typeof(neighbor_policy),typeof(traversal_policy),D}(
@@ -50,6 +50,27 @@ function build_index(
         insert!(index, data, point; point_id = col, rng = rng)
     end
     return index
+end
+
+function _resolve_neighbor_policy(
+    policy::Union{AbstractNeighborPolicy,Symbol,Nothing},
+    M::Int,
+)
+    if policy === nothing
+        return HeuristicNeighborPolicy(M)
+    elseif policy isa AbstractNeighborPolicy
+        return policy
+    elseif policy isa Symbol
+        if policy === :heuristic
+            return HeuristicNeighborPolicy(M)
+        elseif policy === :diversified
+            return DiversifiedNeighborPolicy(M)
+        else
+            throw(ArgumentError("Unknown neighbor_policy symbol: $policy"))
+        end
+    else
+        throw(ArgumentError("Unsupported neighbor_policy type: $(typeof(policy))"))
+    end
 end
 
 function supports_layers(::HNSWIndex)
