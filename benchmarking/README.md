@@ -15,6 +15,8 @@ source venv/bin/activate
 ### Run Benchmark
 ```bash
 python benchmark.py
+# or from repo root
+make benchmark
 ```
 
 Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.

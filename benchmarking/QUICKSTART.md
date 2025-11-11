@@ -27,6 +27,9 @@ cd benchmarking
 ```bash
 source venv/bin/activate
 python benchmark.py
+# or from repo root
+cd ..
+make benchmark
 ```
 
 **Expected output:**
