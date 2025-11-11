@@ -36,6 +36,8 @@ export AbstractANNIndex,
        supports_mutation,
        spawn_child_rngs,
        validate_index_dimensions,
-       recall_at_k
+       recall_at_k,
+       default_distance,
+       default_squared_distance
 
 end

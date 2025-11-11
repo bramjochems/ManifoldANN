@@ -1,6 +1,17 @@
 using Test
 using ManifoldANN
 
+@testset "Default distance helpers" begin
+    x = Float32[1.0, 2.0, 3.0]
+    y = Float32[1.5, 2.5, -1.0]
+    d = ManifoldANN.default_distance(x, y)
+    dsq = ManifoldANN.default_squared_distance(x, y)
+    @test d ≥ 0
+    @test dsq ≥ 0
+    @test d^2 ≈ dsq atol = 1f-5
+    @test dsq isa Float32
+end
+
 @testset "BruteForceIndex build" begin
     data = reshape(Float64.(1:12), 3, 4)
     index = build_index(BruteForceIndex, data)

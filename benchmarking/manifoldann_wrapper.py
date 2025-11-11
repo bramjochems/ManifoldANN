@@ -261,6 +261,7 @@ class HNSWWrapper(JuliANNWrapper):
             ef_construction=self._ef_construction,
             ef_search=self._ef_search,
             neighbor_policy=neighbor_policy_symbol,
+            distance=jl.ManifoldANN.default_squared_distance,
         )
 
     def set_query_arguments(self, ef_search=None):

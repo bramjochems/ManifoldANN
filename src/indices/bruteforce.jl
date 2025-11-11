@@ -120,6 +120,22 @@ Optimized to avoid allocations and use SIMD instructions.
     return sqrt(d)
 end
 
+"""
+    default_squared_distance(x, y)
+
+Squared Euclidean distance variant of `default_distance`. Returns the sum of
+element-wise squared differences without the final square root, which is useful
+when only relative ordering matters (e.g., HNSW priority queues).
+"""
+@inline function default_squared_distance(x::AbstractVector{T}, y::AbstractVector{T}) where T
+    d = zero(T)
+    @inbounds @simd for i in eachindex(x, y)
+        diff = x[i] - y[i]
+        d += diff * diff
+    end
+    return d
+end
+
 function _validate_dimensions(index::BruteForceIndex, data, q)
     size(data, 1) == index.dimension ||
         throw(DimensionMismatch("Expected point dimension $(index.dimension)"))

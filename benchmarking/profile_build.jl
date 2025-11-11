@@ -28,13 +28,27 @@ println("Parameters: M=$M, ef_construction=$ef_construction, ef_search=$ef_searc
 # Warm up compilation
 println("\n[1/3] Warmup (JIT compilation)...")
 small_data = data[:, 1:100]
-_ = build_index(HNSWIndex, small_data; M=M, ef_construction=ef_construction, ef_search=ef_search)
+_ = build_index(
+    HNSWIndex,
+    small_data;
+    M = M,
+    ef_construction = ef_construction,
+    ef_search = ef_search,
+    distance = default_squared_distance,
+)
 println("  ✓ Warmup complete")
 
 # Full build with timing
 println("\n[2/3] Building full index...")
 start = time()
-index = build_index(HNSWIndex, data; M=M, ef_construction=ef_construction, ef_search=ef_search)
+index = build_index(
+    HNSWIndex,
+    data;
+    M = M,
+    ef_construction = ef_construction,
+    ef_search = ef_search,
+    distance = default_squared_distance,
+)
 build_time = time() - start
 println("  ✓ Build time: $(round(build_time, digits=2))s")
 
