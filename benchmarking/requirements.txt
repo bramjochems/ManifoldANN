@@ -1,0 +1,6 @@
+juliacall>=0.9.0
+numpy>=1.20.0
+h5py>=3.0.0
+annoy>=1.17.0
+hnswlib>=0.7.0
+faiss-cpu>=1.7.0

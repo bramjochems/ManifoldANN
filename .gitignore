@@ -3,7 +3,11 @@
 *.jl.mem
 /Manifest.toml
 /docs/build/
-/benchmarking/
+# Benchmarking artifacts (keep sources under version control)
+/benchmarking/data/
+/benchmarking/ann-benchmarks/
+/benchmarking/venv/
+/benchmarking/__pycache__/
 
 # Python
 __pycache__/

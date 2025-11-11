@@ -1,0 +1,306 @@
+"""
+Python wrapper for JuliANN using juliacall.
+
+This module provides a bridge between ann-benchmarks' Python interface
+and the Julia-based ManifoldANN library.
+"""
+
+import numpy as np
+from juliacall import Main as jl
+
+# Configure Julia environment to use the ManifoldANN project
+import os
+MANIFOLDANN_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+class JuliANNWrapper:
+    """Base wrapper class for JuliANN algorithms."""
+
+    # Class-level converters (created once)
+    _julia_initialized = False
+    _to_matrix = None
+    _to_vector = None
+
+    def __init__(self, metric):
+        """Initialize the wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+        """
+        # Initialize Julia and load ManifoldANN (only once per class)
+        if not JuliANNWrapper._julia_initialized:
+            jl.seval(f'using Pkg; Pkg.activate("{MANIFOLDANN_PATH}")')
+            jl.seval('using ManifoldANN')
+            # Create conversion functions once
+            JuliANNWrapper._to_matrix = jl.seval('x -> Matrix{Float32}(x)')
+            JuliANNWrapper._to_vector = jl.seval('x -> Vector{Float32}(x)')
+            JuliANNWrapper._julia_initialized = True
+
+        self._metric = metric
+        self._index = None
+        self._data = None
+
+    def fit(self, X):
+        """Build the index from training data.
+
+        Args:
+            X: numpy array of shape (n_samples, n_features)
+        """
+        # Convert to Fortran-contiguous array (column-major) for Julia
+        # Julia expects (n_features, n_samples) while numpy gives (n_samples, n_features)
+        X_fortran = np.asfortranarray(X.T, dtype=np.float32)
+
+        # Convert to Julia array using pre-created converter
+        self._data = self._to_matrix(X_fortran)
+
+    def query(self, v, n):
+        """Query for nearest neighbors.
+
+        Args:
+            v: Query vector (1D numpy array)
+            n: Number of neighbors to return
+
+        Returns:
+            List of neighbor indices (0-indexed for Python)
+        """
+        # Convert to Julia Vector{Float32} using pre-created converter
+        query_vec = np.asfortranarray(v, dtype=np.float32)
+        query_jl = self._to_vector(query_vec)
+
+        # Call Julia query function
+        # Note: Julia uses 1-based indexing, so we need to convert
+        result = jl.query(self._index, self._data, query_jl, n)
+
+        # Convert from Julia 1-indexed to Python 0-indexed
+        return [int(idx) - 1 for idx in result]
+
+    def query_batch(self, queries, n):
+        """Query for nearest neighbors of multiple queries at once.
+
+        This is significantly faster than calling query() in a loop because it
+        minimizes Python↔Julia boundary crossings (1 crossing instead of N).
+
+        Args:
+            queries: numpy array of shape (n_queries, n_features)
+            n: Number of neighbors to return per query
+
+        Returns:
+            List of lists: [[neighbor_indices for query1], [for query2], ...]
+            All indices are 0-indexed for Python.
+        """
+        # Convert to Fortran-contiguous (column-major) for Julia
+        # Julia expects (n_features, n_queries) while numpy gives (n_queries, n_features)
+        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+        queries_jl = self._to_matrix(queries_fortran)
+
+        # Call Julia batch query function - crosses boundary only ONCE
+        results_jl = jl.query(self._index, self._data, queries_jl, n)
+
+        # Convert from Julia 1-indexed to Python 0-indexed
+        return [[int(idx) - 1 for idx in result] for result in results_jl]
+
+    def __str__(self):
+        return f"{self.__class__.__name__}(metric={self._metric})"
+
+
+class LSHWrapper(JuliANNWrapper):
+    """Wrapper for LSHIndex."""
+
+    def __init__(self, metric, n_tables=8, hash_length=16):
+        """Initialize LSH wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+            n_tables: Number of hash tables
+            hash_length: Length of hash codes
+        """
+        super().__init__(metric)
+        self._n_tables = n_tables
+        self._hash_length = hash_length
+
+    def fit(self, X):
+        """Build the LSH index."""
+        super().fit(X)
+
+        # WARNING: Currently only RandomHyperplaneHash is used
+        # RandomHyperplaneHash is theoretically optimal for angular/cosine distance
+        # but is suboptimal for Euclidean distance (should use BinningHash/E2LSH).
+        # However, BinningHash requires careful tuning of bin_width parameter.
+        if self._metric == 'euclidean':
+            import warnings
+            warnings.warn(
+                f"LSH with metric='{self._metric}': Using RandomHyperplaneHash which is "
+                f"designed for angular/cosine distance. For Euclidean distance, this is "
+                f"suboptimal and may result in lower recall. Consider using a different "
+                f"algorithm (HNSW, KDTree) for better Euclidean performance.",
+                UserWarning
+            )
+
+        # Use RandomHyperplaneHash for all metrics
+        # (BinningHash requires data-dependent bin_width tuning)
+        self._index = jl.build_index(
+            jl.LSHIndex,
+            self._data,
+            n_tables=self._n_tables,
+            hash_length=self._hash_length,
+            hash_factory=jl.make_random_hyperplane_hash,
+            T=jl.Float32
+        )
+
+    def set_query_arguments(self, candidate_cap=None):
+        """Set query-time parameters.
+
+        Args:
+            candidate_cap: Maximum number of candidates to consider
+        """
+        self._candidate_cap = candidate_cap
+
+    def query(self, v, n):
+        """Query for nearest neighbors with LSH."""
+        # Convert to Julia Vector{Float32} using pre-created converter
+        query_vec = np.asfortranarray(v, dtype=np.float32)
+        query_jl = self._to_vector(query_vec)
+
+        # Call with candidate_cap if set
+        if hasattr(self, '_candidate_cap') and self._candidate_cap is not None:
+            result = jl.query(self._index, self._data, query_jl, n,
+                            candidate_cap=self._candidate_cap)
+        else:
+            result = jl.query(self._index, self._data, query_jl, n)
+
+        return [int(idx) - 1 for idx in result]
+
+    def __str__(self):
+        cap_str = f", candidate_cap={self._candidate_cap}" if hasattr(self, '_candidate_cap') else ""
+        return f"LSH(n_tables={self._n_tables}, hash_length={self._hash_length}{cap_str})"
+
+
+class KDTreeWrapper(JuliANNWrapper):
+    """Wrapper for KDTreeIndex."""
+
+    _VALID_AXIS_SELECTORS = ("variance", "cyclic")
+
+    def __init__(self, metric, axis_selector="variance"):
+        """Initialize KDTree wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+            axis_selector: Strategy for choosing split axes (variance or cyclic)
+        """
+        super().__init__(metric)
+        if axis_selector not in self._VALID_AXIS_SELECTORS:
+            raise ValueError(
+                f"axis_selector must be one of {self._VALID_AXIS_SELECTORS}, got '{axis_selector}'"
+            )
+        self._axis_selector = axis_selector
+
+        if metric != "euclidean":
+            import warnings
+            warnings.warn(
+                "KDTreeIndex currently tunes splits for Euclidean metrics; "
+                "angular queries fall back to conservative pruning.",
+                UserWarning,
+            )
+
+    def fit(self, X):
+        """Build the KD-tree index."""
+        super().fit(X)
+
+        axis_symbol = jl.Symbol(self._axis_selector)
+        self._index = jl.build_index(
+            jl.KDTreeIndex,
+            self._data,
+            axis_selector=axis_symbol,
+        )
+
+    def set_query_arguments(self):
+        """KDTree has no query-time parameters."""
+        pass
+
+    def query_batch(self, queries, n):
+        """KDTreeIndex exposes only scalar queries; batch in Python."""
+        return [self.query(q, n) for q in queries]
+
+    def __str__(self):
+        return f"KDTree(axis_selector={self._axis_selector})"
+
+
+class HNSWWrapper(JuliANNWrapper):
+    """Wrapper for HNSWIndex."""
+
+    def __init__(self, metric, M=16, ef_construction=200, ef_search=64):
+        """Initialize HNSW wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+            M: Maximum number of connections per element
+            ef_construction: Size of dynamic candidate list during construction
+            ef_search: Size of dynamic candidate list during search
+        """
+        super().__init__(metric)
+        self._M = M
+        self._ef_construction = ef_construction
+        self._ef_search = ef_search
+
+    def fit(self, X):
+        """Build the HNSW index."""
+        super().fit(X)
+
+        # Build index using Julia
+        self._index = jl.build_index(
+            jl.HNSWIndex,
+            self._data,
+            M=self._M,
+            ef_construction=self._ef_construction,
+            ef_search=self._ef_search
+        )
+
+    def set_query_arguments(self, ef_search=None):
+        """Set query-time parameters.
+
+        Args:
+            ef_search: Size of dynamic candidate list during search
+        """
+        if ef_search is not None:
+            self._ef_search = ef_search
+
+    def query(self, v, n):
+        """Query for nearest neighbors with HNSW."""
+        # Convert to Julia Vector{Float32} using pre-created converter
+        query_vec = np.asfortranarray(v, dtype=np.float32)
+        query_jl = self._to_vector(query_vec)
+
+        # Call with ef_search parameter
+        result = jl.query(self._index, self._data, query_jl, n,
+                         ef_search=self._ef_search)
+
+        return [int(idx) - 1 for idx in result]
+
+    def __str__(self):
+        return f"HNSW(M={self._M}, ef_construction={self._ef_construction}, ef_search={self._ef_search})"
+
+
+class BruteForceWrapper(JuliANNWrapper):
+    """Wrapper for BruteForceIndex (baseline)."""
+
+    def __init__(self, metric):
+        """Initialize brute force wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+        """
+        super().__init__(metric)
+
+    def fit(self, X):
+        """Build the brute force index."""
+        super().fit(X)
+
+        # Build index using Julia
+        self._index = jl.build_index(jl.BruteForceIndex, self._data)
+
+    def set_query_arguments(self):
+        """Brute force has no query-time parameters."""
+        pass
+
+    def __str__(self):
+        return "BruteForce()"
