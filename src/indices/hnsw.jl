@@ -1,4 +1,5 @@
 include("hnsw/types.jl")
+include("hnsw/candidate_heap.jl")
 include("hnsw/planner.jl")
 include("hnsw/neighbor_policy.jl")
 include("hnsw/traversal.jl")

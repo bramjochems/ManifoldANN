@@ -16,14 +16,14 @@ struct GreedyTraversalPolicy <: AbstractTraversalPolicy
 end
 
 struct TraversalState{T}
-    pending::Vector{NeighborCandidate{T}} # min-first queue
+    pending::NeighborMinHeap{T}           # min-first queue
     best::Vector{NeighborCandidate{T}}    # sorted ascending by distance
 end
 
 GreedyTraversalPolicy(; ef_search::Int = 64) = GreedyTraversalPolicy(ef_search)
 
 function initialize_state(::GreedyTraversalPolicy, entry::NeighborCandidate{T}) where {T}
-    return TraversalState{T}([entry], [entry])
+    return TraversalState{T}(NeighborMinHeap(entry), [entry])
 end
 
 function should_continue(::GreedyTraversalPolicy, state::TraversalState)
@@ -31,8 +31,7 @@ function should_continue(::GreedyTraversalPolicy, state::TraversalState)
 end
 
 function pop_pending!(::GreedyTraversalPolicy, state::TraversalState)
-    current = popfirst!(state.pending)
-    return current
+    return popfirst!(state.pending)
 end
 
 function worst_distance(policy::GreedyTraversalPolicy, state::TraversalState)
@@ -46,12 +45,8 @@ function maybe_push_candidate!(
     state::TraversalState{T},
     candidate::NeighborCandidate{T},
 ) where {T}
-    # pending queue sorted ascending by distance
     push!(state.pending, candidate)
-    sort!(state.pending, by = c -> c.dist)
-
-    push!(state.best, candidate)
-    sort!(state.best, by = c -> c.dist)
+    _insert_sorted!(state.best, candidate)
     if length(state.best) > policy.ef_search
         pop!(state.best) # drop worst
     end
@@ -59,3 +54,12 @@ end
 
 default_ef(policy::GreedyTraversalPolicy) = policy.ef_search
 with_ef(::GreedyTraversalPolicy, ef::Int) = GreedyTraversalPolicy(ef)
+
+@inline function _insert_sorted!(
+    vec::Vector{NeighborCandidate{T}},
+    candidate::NeighborCandidate{T},
+) where {T}
+    idx = searchsortedlast(vec, candidate; by = c -> c.dist)
+    insert!(vec, idx + 1, candidate)
+    return vec
+end
