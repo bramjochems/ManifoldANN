@@ -21,12 +21,12 @@ HeuristicNeighborPolicy(M::Int) = HeuristicNeighborPolicy(M, M)
 
 function select_neighbors(
     policy::HeuristicNeighborPolicy,
-    candidates::Vector{NeighborCandidate},
+    candidates::Vector{NeighborCandidate{T}},
     ::AbstractMatrix,
     ::Function;
     limit::Union{Nothing,Int} = nothing,
-)
-    isempty(candidates) && return NeighborCandidate[]
+) where {T}
+    isempty(candidates) && return NeighborCandidate{T}[]
     cap = limit === nothing ? policy.M : limit
     cap = min(cap, length(candidates))
     # Use partialsort! to only sort the top M elements (O(n) vs O(n log n))
@@ -54,15 +54,15 @@ DiversifiedNeighborPolicy(M::Int) = DiversifiedNeighborPolicy(M, M)
 
 function select_neighbors(
     policy::DiversifiedNeighborPolicy,
-    candidates::Vector{NeighborCandidate},
+    candidates::Vector{NeighborCandidate{T}},
     data::AbstractMatrix,
     distance_fn::Function;
     limit::Union{Nothing,Int} = nothing,
-)
-    isempty(candidates) && return NeighborCandidate[]
+) where {T}
+    isempty(candidates) && return NeighborCandidate{T}[]
 
     sorted = sort(candidates; by = c -> c.dist)
-    selected = Vector{NeighborCandidate}()
+    selected = Vector{NeighborCandidate{T}}()
     selected_ids = BitSet()
     cap = limit === nothing ? policy.M : limit
     cap = min(cap, length(sorted))

@@ -4,14 +4,15 @@ using Random
 const NeighborList = Vector{Int}
 
 """
-    NeighborCandidate
+    NeighborCandidate{T}
 
-Helper struct carrying a node id plus its distance to the current query. Used
-throughout traversal and connection logic to keep code type-stable.
+Helper struct carrying a node id plus its distance to the current query. The
+distance type `T` remains parametric so we avoid widening (e.g., Float32 → Float64)
+when the active distance metric already matches the data precision.
 """
-struct NeighborCandidate
+struct NeighborCandidate{T<:AbstractFloat}
     id::Int
-    dist::Float64
+    dist::T
 end
 
 """

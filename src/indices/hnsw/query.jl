@@ -177,12 +177,12 @@ end
 function _search_layer(
     index::HNSWIndex,
     layer::Int,
-    entry::NeighborCandidate,
+    entry::NeighborCandidate{T},
     q,
     data,
     ef::Int;
     visited = BitSet(),
-)
+) where {T}
     policy = with_ef(index.traversal_policy, ef)
     state = initialize_state(policy, entry)
     push!(visited, entry.id)
@@ -212,9 +212,9 @@ function _connect_new_node!(
     index::HNSWIndex,
     layer::Int,
     node_id::Int,
-    neighbors::Vector{NeighborCandidate},
+    neighbors::Vector{NeighborCandidate{T}},
     data,
-)
+) where {T}
     adjacency = index.layers[layer + 1]
     adjacency[node_id] = Int[]
     for neighbor in neighbors
@@ -242,8 +242,13 @@ end
 function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
     length(list) <= limit && return
     center_vec = @view(data[:, center])
-    candidates = Vector{NeighborCandidate}(undef, length(list))
-    @inbounds for (i, id) in enumerate(list)
+    first_id = list[1]
+    first_dist = index.distance(center_vec, @view(data[:, first_id]))
+    TDist = typeof(first_dist)
+    candidates = Vector{NeighborCandidate{TDist}}(undef, length(list))
+    candidates[1] = NeighborCandidate(first_id, first_dist)
+    @inbounds for i in 2:length(list)
+        id = list[i]
         dist = index.distance(center_vec, @view(data[:, id]))
         candidates[i] = NeighborCandidate(id, dist)
     end

@@ -15,15 +15,15 @@ struct GreedyTraversalPolicy <: AbstractTraversalPolicy
     ef_search::Int
 end
 
-struct TraversalState
-    pending::Vector{NeighborCandidate} # min-first queue
-    best::Vector{NeighborCandidate}    # sorted ascending by distance
+struct TraversalState{T}
+    pending::Vector{NeighborCandidate{T}} # min-first queue
+    best::Vector{NeighborCandidate{T}}    # sorted ascending by distance
 end
 
 GreedyTraversalPolicy(; ef_search::Int = 64) = GreedyTraversalPolicy(ef_search)
 
-function initialize_state(::GreedyTraversalPolicy, entry::NeighborCandidate)
-    return TraversalState([entry], [entry])
+function initialize_state(::GreedyTraversalPolicy, entry::NeighborCandidate{T}) where {T}
+    return TraversalState{T}([entry], [entry])
 end
 
 function should_continue(::GreedyTraversalPolicy, state::TraversalState)
@@ -43,9 +43,9 @@ end
 
 function maybe_push_candidate!(
     policy::GreedyTraversalPolicy,
-    state::TraversalState,
-    candidate::NeighborCandidate,
-)
+    state::TraversalState{T},
+    candidate::NeighborCandidate{T},
+) where {T}
     # pending queue sorted ascending by distance
     push!(state.pending, candidate)
     sort!(state.pending, by = c -> c.dist)
