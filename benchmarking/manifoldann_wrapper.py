@@ -318,22 +318,22 @@ class NNDescentWrapper(JuliANNWrapper):
         self,
         metric,
         k=32,
-        max_iterations=12,
-        convergence_threshold=1e-3,
-        sample_rate=1.0,
-        symmetry_policy="full",
+        max_iterations=5,
+        convergence_threshold=0.01,
+        sample_rate=0.5,
+        symmetry_policy="pruned",
         ef_search=None,
     ):
         """Initialize NN-Descent wrapper.
 
         Args:
             metric: Distance metric ('angular' or 'euclidean')
-            k: Number of neighbors per node in the graph
-            max_iterations: Maximum NN-Descent iterations
-            convergence_threshold: Relative improvement threshold to stop early
-            sample_rate: Fraction of candidate pairs to evaluate (0-1)
-            symmetry_policy: Graph symmetry strategy ('full', 'pruned', 'none')
-            ef_search: Beam width for graph search queries
+            k: Number of neighbors per node in the graph (default: 32)
+            max_iterations: Maximum NN-Descent iterations (default: 5, typically converges in 3-5)
+            convergence_threshold: Relative improvement threshold to stop early (default: 0.01 = 1%)
+            sample_rate: Fraction of candidate pairs to evaluate (default: 0.5 = 2x faster)
+            symmetry_policy: Graph symmetry strategy (default: 'pruned' for 1.5x degree multiplier)
+            ef_search: Beam width for graph search queries (default: 2*k)
         """
         super().__init__(metric)
         self._k = int(k)

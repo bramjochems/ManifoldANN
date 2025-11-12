@@ -31,7 +31,8 @@ function select_neighbors(
     cap = min(cap, length(candidates))
     # Use partialsort! to only sort the top M elements (O(n) vs O(n log n))
     partialsort!(candidates, 1:cap, by = c -> c.dist)
-    return copy(candidates[1:cap])
+    # Return slice directly - candidates is always a temporary vector at call sites
+    return candidates[1:cap]
 end
 
 function max_degree(policy::HeuristicNeighborPolicy)

@@ -156,7 +156,10 @@ class FAISSWrapper:
         if self.metric == "angular":
             # For angular/cosine distance, normalize vectors and use L2
             # (cosine similarity = 1 - ||normalized(a) - normalized(b)||^2 / 2)
-            X_normalized = X / np.linalg.norm(X, axis=1, keepdims=True)
+            norms = np.linalg.norm(X, axis=1, keepdims=True)
+            # Avoid division by zero for zero-norm vectors
+            norms[norms == 0] = 1.0
+            X_normalized = X / norms
             self.index = faiss.IndexHNSWFlat(self.dimension, self.M, faiss.METRIC_L2)
             self.X_normalized = X_normalized
         else:
@@ -188,7 +191,11 @@ class FAISSWrapper:
             self.index.hnsw.efSearch = self.ef_search
 
         if self.X_normalized is not None:
-            v_normalized = v / np.linalg.norm(v)
+            v_norm = np.linalg.norm(v)
+            # Avoid division by zero for zero-norm query vectors
+            if v_norm == 0:
+                v_norm = 1.0
+            v_normalized = v / v_norm
             v_query = v_normalized.reshape(1, -1).astype("float32")
         else:
             v_query = v.reshape(1, -1).astype("float32")
@@ -387,11 +394,14 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
     ground_truth = ground_truth[:n_queries]
 
     # Build index
-    print("Building index...")
+    from datetime import datetime
+    start_time = datetime.now().strftime("%H:%M:%S")
+    print(f"Building index... (started at {start_time})")
     start = time.perf_counter()
     wrapper.fit(X_train)
     build_time = time.perf_counter() - start
-    print(f"Build time: {build_time:.2f} seconds")
+    end_time = datetime.now().strftime("%H:%M:%S")
+    print(f"Build time: {build_time:.2f} seconds (finished at {end_time})")
 
     # Set query arguments if available
     if hasattr(wrapper, "set_query_arguments"):
@@ -579,7 +589,7 @@ def main():
         ManifoldNNDescent(
             metric=metric,
             k=32,
-            max_iterations=10,
+            max_iterations=5,  # NN-Descent typically converges in 3-5 iterations
             convergence_threshold=0.01,  # Stop at 1% improvement (faster, still good recall)
             sample_rate=0.5,  # Sample 50% of pairs (2x faster build)
             symmetry_policy="pruned",  # PyNNDescent-style pruned symmetry (1.5x degree)

@@ -227,14 +227,15 @@ function _link_nodes!(index::HNSWIndex, layer::Int, a::Int, b::Int, data)
     adjacency = index.layers[layer + 1]
     list_a = adjacency[a]
     list_b = adjacency[b]
-    if !(b in list_a)
-        push!(list_a, b)
-        _prune_list!(index, list_a, a, data, max_degree(index.neighbor_policy))
-    end
-    if !(a in list_b)
-        push!(list_b, a)
-        _prune_list!(index, list_b, b, data, max_degree(index.neighbor_policy))
-    end
+
+    # Add neighbors without checking for duplicates (O(1) instead of O(M))
+    # Pruning will naturally handle any duplicates that arise
+    push!(list_a, b)
+    _prune_list!(index, list_a, a, data, max_degree(index.neighbor_policy))
+
+    push!(list_b, a)
+    _prune_list!(index, list_b, b, data, max_degree(index.neighbor_policy))
+
     # No need to reassign: list_a and list_b are references to adjacency lists,
     # already modified in-place by push! and _prune_list!
 end
@@ -242,6 +243,11 @@ end
 function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
     length(list) <= limit && return
     center_vec = @view(data[:, center])
+
+    # Remove duplicates that may have been added by _link_nodes!
+    unique!(list)
+    length(list) <= limit && return
+
     first_id = list[1]
     first_dist = index.distance(center_vec, @view(data[:, first_id]))
     TDist = typeof(first_dist)
