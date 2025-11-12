@@ -59,3 +59,4 @@ algorithms:
     max_iterations: 5
     sample_rate: 0.5
     precision: 0.01
+    max_candidates: 64

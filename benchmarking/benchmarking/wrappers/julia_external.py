@@ -244,7 +244,7 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
 
     _converter_defined = False
 
-    def __init__(self, metric, k=32, max_iterations=10, sample_rate=1.0, precision=0.001):
+    def __init__(self, metric, k=32, max_iterations=10, sample_rate=1.0, precision=0.001, max_candidates=None):
         """Initialize NearestNeighborDescent.jl.
 
         Args:
@@ -253,12 +253,14 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
             max_iterations: Maximum number of iterations
             sample_rate: Fraction of neighbors to sample (0.0 to 1.0)
             precision: Convergence threshold
+            max_candidates: Search beam width (defaults to max(k, 20))
         """
         super().__init__(metric)
         self.k = k
         self.max_iterations = max_iterations
         self.sample_rate = sample_rate
         self.precision = precision
+        self.max_candidates = max_candidates if max_candidates is not None else max(k, 20)
 
         # Define conversion function once (outside of fit timing)
         if not NearestNeighborDescent_jl._converter_defined:
@@ -300,11 +302,11 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
         query_vec = np.asfortranarray(v, dtype=np.float32)
         query_jl = self._to_vector(query_vec)
 
-        # Search using the graph
+        # Search using the graph with max_candidates parameter
         # search returns (indices, distances) as matrices where:
         #   - rows = neighbors (k)
         #   - columns = queries (1 in our case)
-        indices, distances = jl.search(self._graph, [query_jl], n)
+        indices, distances = jl.search(self._graph, [query_jl], n, max_candidates=self.max_candidates)
 
         # Extract the first (and only) column: indices[:, 1] (Julia 1-indexed)
         # But from Python with juliacall, we use Python indexing: [:, 0]
@@ -315,7 +317,7 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
 
     def __str__(self) -> str:
         return (f"NearestNeighborDescent.jl(k={self.k}, max_iterations={self.max_iterations}, "
-                f"sample_rate={self.sample_rate}, precision={self.precision})")
+                f"sample_rate={self.sample_rate}, precision={self.precision}, max_candidates={self.max_candidates})")
 
     @staticmethod
     def is_available() -> bool:
