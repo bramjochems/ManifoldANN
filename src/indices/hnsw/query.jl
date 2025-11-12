@@ -200,12 +200,14 @@ function _search_layer(
             end
             push!(visited, neighbor)
             dist = index.distance(@view(data[:, neighbor]), q)
-            if length(state.best) < policy.ef_search || dist < state.best[end].dist
+            if length(state.best) < policy.ef_search || dist < worst_distance(state.best)
                 maybe_push_candidate!(policy, state, NeighborCandidate(neighbor, dist))
             end
         end
     end
-    return copy(state.best)
+    # Sort heap results before returning (heap is unsorted internally)
+    sorted_results = sort(state.best.data, by = c -> c.dist)
+    return sorted_results
 end
 
 function _connect_new_node!(
@@ -216,9 +218,16 @@ function _connect_new_node!(
     data,
 ) where {T}
     adjacency = index.layers[layer + 1]
-    adjacency[node_id] = Int[]
+
+    # Directly assign neighbors (already ≤ M from select_neighbors)
+    # No need to prune the new node's list
+    adjacency[node_id] = [n.id for n in neighbors]
+
+    # Only update reverse edges (add node_id to each neighbor's list)
     for neighbor in neighbors
-        _link_nodes!(index, layer, node_id, neighbor.id, data)
+        list_b = adjacency[neighbor.id]
+        push!(list_b, node_id)
+        _prune_list!(index, list_b, neighbor.id, data, max_degree(index.neighbor_policy))
     end
 end
 
@@ -241,12 +250,12 @@ function _link_nodes!(index::HNSWIndex, layer::Int, a::Int, b::Int, data)
 end
 
 function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
-    length(list) <= limit && return
-    center_vec = @view(data[:, center])
-
     # Remove duplicates that may have been added by _link_nodes!
+    # Must do this BEFORE the length check, otherwise duplicates persist
     unique!(list)
     length(list) <= limit && return
+
+    center_vec = @view(data[:, center])
 
     first_id = list[1]
     first_dist = index.distance(center_vec, @view(data[:, first_id]))

@@ -62,10 +62,16 @@ function select_neighbors(
 ) where {T}
     isempty(candidates) && return NeighborCandidate{T}[]
 
+    cap = limit === nothing ? policy.M : limit
+
+    # Short-circuit: if we have few enough candidates, no diversification needed
+    if length(candidates) <= cap
+        return candidates
+    end
+
     sorted = sort(candidates; by = c -> c.dist)
     selected = Vector{NeighborCandidate{T}}()
     selected_ids = BitSet()
-    cap = limit === nothing ? policy.M : limit
     cap = min(cap, length(sorted))
 
     for cand in sorted
