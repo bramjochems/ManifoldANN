@@ -1,20 +1,19 @@
-"""
-Python wrapper for JuliANN using juliacall.
+"""Wrappers for ManifoldANN (Julia) algorithms."""
 
-This module provides a bridge between ann-benchmarks' Python interface
-and the Julia-based ManifoldANN library.
-"""
-
+import os
 import numpy as np
 from juliacall import Main as jl
 
+from .base import BaseANNWrapper
+
 # Configure Julia environment to use the ManifoldANN project
-import os
-MANIFOLDANN_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MANIFOLDANN_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
 
 
-class JuliANNWrapper:
-    """Base wrapper class for JuliANN algorithms."""
+class ManifoldANNWrapper(BaseANNWrapper):
+    """Base wrapper class for ManifoldANN (Julia) algorithms."""
 
     # Class-level converters (created once)
     _julia_initialized = False
@@ -27,16 +26,29 @@ class JuliANNWrapper:
         Args:
             metric: Distance metric ('angular' or 'euclidean')
         """
-        # Initialize Julia and load ManifoldANN (only once per class)
-        if not JuliANNWrapper._julia_initialized:
-            jl.seval(f'using Pkg; Pkg.activate("{MANIFOLDANN_PATH}")')
-            jl.seval('using ManifoldANN')
-            # Create conversion functions once
-            JuliANNWrapper._to_matrix = jl.seval('x -> Matrix{Float32}(x)')
-            JuliANNWrapper._to_vector = jl.seval('x -> Vector{Float32}(x)')
-            JuliANNWrapper._julia_initialized = True
+        super().__init__(metric)
 
-        self._metric = metric
+        # Initialize Julia and load ManifoldANN (only once per class)
+        if not ManifoldANNWrapper._julia_initialized:
+            jl.seval(f'using Pkg; Pkg.activate("{MANIFOLDANN_PATH}")')
+            jl.seval("using ManifoldANN")
+            # Create conversion functions once
+            ManifoldANNWrapper._to_matrix = jl.seval("x -> Matrix{Float32}(x)")
+            ManifoldANNWrapper._to_vector = jl.seval("x -> Vector{Float32}(x)")
+
+            # JIT warmup: compile core functions with small dummy data
+            # This ensures compilation time is excluded from benchmark timings
+            print("Warming up ManifoldANN (first use only)...")
+            warmup_data = jl.seval("randn(Float32, 10, 100)")  # 10-dim, 100 points
+            warmup_query = jl.seval("randn(Float32, 10)")
+
+            # Warmup a simple index (BruteForce is fastest to compile)
+            warmup_index = jl.build_index(jl.BruteForceIndex, warmup_data)
+            jl.query(warmup_index, warmup_data, warmup_query, 5)
+
+            print("✓ ManifoldANN warmup complete")
+            ManifoldANNWrapper._julia_initialized = True
+
         self._index = None
         self._data = None
 
@@ -46,7 +58,7 @@ class JuliANNWrapper:
         Returns:
             Julia function for computing distances (squared variant for use in priority queues)
         """
-        if self._metric == 'angular':
+        if self._metric == "angular":
             return jl.ManifoldANN.squared_cosine_distance
         else:  # euclidean
             return jl.ManifoldANN.default_squared_distance
@@ -110,84 +122,135 @@ class JuliANNWrapper:
         # Convert from Julia 1-indexed to Python 0-indexed
         return [[int(idx) - 1 for idx in result] for result in results_jl]
 
+    @staticmethod
+    def is_available():
+        """Check if ManifoldANN is available."""
+        try:
+            from juliacall import Main as jl
+            return True
+        except ImportError:
+            return False
+
+
+class ManifoldANN_BruteForce(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN BruteForceIndex (baseline)."""
+
+    def __init__(self, metric):
+        """Initialize brute force wrapper."""
+        super().__init__(metric)
+
+    def fit(self, X):
+        """Build the brute force index."""
+        super().fit(X)
+        distance_fn = self._get_distance_function()
+        self._index = jl.build_index(jl.BruteForceIndex, self._data, distance=distance_fn)
+
     def __str__(self):
-        return f"{self.__class__.__name__}(metric={self._metric})"
+        return "ManifoldANN-BruteForce()"
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-BruteForce"
 
 
-class LSHWrapper(JuliANNWrapper):
-    """Wrapper for LSHIndex."""
+class ManifoldANN_LSH(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN LSHIndex."""
 
-    def __init__(self, metric, n_tables=8, hash_length=16):
+    def __init__(self, metric, n_tables=8, hash_length=16, bin_width=None):
         """Initialize LSH wrapper.
 
         Args:
             metric: Distance metric ('angular' or 'euclidean')
             n_tables: Number of hash tables
             hash_length: Length of hash codes
+            bin_width: Bin width for BinningHash (Euclidean LSH). If None and metric
+                      is 'euclidean', will be auto-computed as 3 × avg_nn_distance
         """
         super().__init__(metric)
         self._n_tables = n_tables
         self._hash_length = hash_length
+        self._bin_width = bin_width
 
     def fit(self, X):
         """Build the LSH index."""
         super().fit(X)
 
-        # WARNING: Currently only RandomHyperplaneHash is used
-        # RandomHyperplaneHash is theoretically optimal for angular/cosine distance
-        # but is suboptimal for Euclidean distance (should use BinningHash/E2LSH).
-        # However, BinningHash requires careful tuning of bin_width parameter.
-        if self._metric == 'euclidean':
-            import warnings
-            warnings.warn(
-                f"LSH with metric='{self._metric}': Using RandomHyperplaneHash which is "
-                f"designed for angular/cosine distance. For Euclidean distance, this is "
-                f"suboptimal and may result in lower recall. Consider using a different "
-                f"algorithm (HNSW, KDTree) for better Euclidean performance.",
-                UserWarning
+        # Select appropriate hash family based on metric
+        if self._metric == "euclidean":
+            # Use BinningHash (p-stable LSH) for Euclidean distance
+            if self._bin_width is None:
+                # Auto-compute bin_width using heuristic: w ≈ 3 × avg_nn_distance
+                # Sample a subset of points to estimate average NN distance
+                n_samples = min(1000, X.shape[0])
+                indices = np.random.choice(X.shape[0], size=n_samples, replace=False)
+                sample = X[indices]
+
+                # Compute pairwise distances and find nearest neighbor for each sample
+                from scipy.spatial.distance import cdist
+
+                distances = cdist(sample, sample, metric="euclidean")
+                np.fill_diagonal(distances, np.inf)  # Ignore self-distances
+                avg_nn_dist = np.mean(np.min(distances, axis=1))
+
+                self._bin_width = 3.0 * avg_nn_dist
+                print(
+                    f"LSH: Auto-computed bin_width = {self._bin_width:.4f} "
+                    f"(3 × avg_nn_dist = 3 × {avg_nn_dist:.4f})"
+                )
+
+            # Build index with BinningHash
+            self._index = jl.build_index(
+                jl.LSHIndex,
+                self._data,
+                n_tables=self._n_tables,
+                hash_length=self._hash_length,
+                hash_factory=jl.make_binning_hash,
+                bin_width=self._bin_width,
+                use_offset=True,
+                T=jl.Float32,
             )
-
-        # Use RandomHyperplaneHash for all metrics
-        # (BinningHash requires data-dependent bin_width tuning)
-        self._index = jl.build_index(
-            jl.LSHIndex,
-            self._data,
-            n_tables=self._n_tables,
-            hash_length=self._hash_length,
-            hash_factory=jl.make_random_hyperplane_hash,
-            T=jl.Float32
-        )
-
-    def set_query_arguments(self, candidate_cap=None):
-        """Set query-time parameters.
-
-        Args:
-            candidate_cap: Maximum number of candidates to consider
-        """
-        self._candidate_cap = candidate_cap
+        else:
+            # Use RandomHyperplaneHash for angular/cosine distance
+            self._index = jl.build_index(
+                jl.LSHIndex,
+                self._data,
+                n_tables=self._n_tables,
+                hash_length=self._hash_length,
+                hash_factory=jl.make_random_hyperplane_hash,
+                T=jl.Float32,
+            )
 
     def query(self, v, n):
         """Query for nearest neighbors with LSH."""
-        # Convert to Julia Vector{Float32} using pre-created converter
         query_vec = np.asfortranarray(v, dtype=np.float32)
         query_jl = self._to_vector(query_vec)
 
         # Call with candidate_cap if set
-        if hasattr(self, '_candidate_cap') and self._candidate_cap is not None:
-            result = jl.query(self._index, self._data, query_jl, n,
-                            candidate_cap=self._candidate_cap)
+        if hasattr(self, "_candidate_cap") and self._candidate_cap is not None:
+            result = jl.query(
+                self._index, self._data, query_jl, n, candidate_cap=self._candidate_cap
+            )
         else:
             result = jl.query(self._index, self._data, query_jl, n)
 
         return [int(idx) - 1 for idx in result]
 
     def __str__(self):
-        cap_str = f", candidate_cap={self._candidate_cap}" if hasattr(self, '_candidate_cap') else ""
-        return f"LSH(n_tables={self._n_tables}, hash_length={self._hash_length}{cap_str})"
+        cap_str = (
+            f", candidate_cap={self._candidate_cap}"
+            if hasattr(self, "_candidate_cap")
+            else ""
+        )
+        bw_str = f", bin_width={self._bin_width:.4f}" if self._bin_width is not None else ""
+        return f"ManifoldANN-LSH(n_tables={self._n_tables}, hash_length={self._hash_length}{bw_str}{cap_str})"
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-LSH"
 
 
-class KDTreeWrapper(JuliANNWrapper):
-    """Wrapper for KDTreeIndex."""
+class ManifoldANN_KDTree(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN KDTreeIndex."""
 
     _VALID_AXIS_SELECTORS = ("variance", "cyclic")
 
@@ -207,6 +270,7 @@ class KDTreeWrapper(JuliANNWrapper):
 
         if metric != "euclidean":
             import warnings
+
             warnings.warn(
                 "KDTreeIndex currently tunes splits for Euclidean metrics; "
                 "angular queries fall back to conservative pruning.",
@@ -224,20 +288,20 @@ class KDTreeWrapper(JuliANNWrapper):
             axis_selector=axis_symbol,
         )
 
-    def set_query_arguments(self):
-        """KDTree has no query-time parameters."""
-        pass
-
     def query_batch(self, queries, n):
         """KDTreeIndex exposes only scalar queries; batch in Python."""
         return [self.query(q, n) for q in queries]
 
     def __str__(self):
-        return f"KDTree(axis_selector={self._axis_selector})"
+        return f"ManifoldANN-KDTree(axis_selector={self._axis_selector})"
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-KDTree"
 
 
-class HNSWWrapper(JuliANNWrapper):
-    """Wrapper for HNSWIndex."""
+class ManifoldANN_HNSW(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN HNSWIndex."""
 
     _VALID_NEIGHBOR_POLICIES = {"heuristic", "diversified"}
 
@@ -263,7 +327,9 @@ class HNSWWrapper(JuliANNWrapper):
         self._ef_construction = ef_construction
         self._ef_search = ef_search
         if neighbor_policy not in self._VALID_NEIGHBOR_POLICIES:
-            raise ValueError(f"neighbor_policy must be one of {self._VALID_NEIGHBOR_POLICIES}")
+            raise ValueError(
+                f"neighbor_policy must be one of {self._VALID_NEIGHBOR_POLICIES}"
+            )
         self._neighbor_policy = neighbor_policy
 
     def fit(self, X):
@@ -283,36 +349,29 @@ class HNSWWrapper(JuliANNWrapper):
             distance=distance_fn,
         )
 
-    def set_query_arguments(self, ef_search=None):
-        """Set query-time parameters.
-
-        Args:
-            ef_search: Size of dynamic candidate list during search
-        """
-        if ef_search is not None:
-            self._ef_search = ef_search
-
     def query(self, v, n):
         """Query for nearest neighbors with HNSW."""
-        # Convert to Julia Vector{Float32} using pre-created converter
         query_vec = np.asfortranarray(v, dtype=np.float32)
         query_jl = self._to_vector(query_vec)
 
         # Call with ef_search parameter
-        result = jl.query(self._index, self._data, query_jl, n,
-                         ef_search=self._ef_search)
+        result = jl.query(self._index, self._data, query_jl, n, ef_search=self._ef_search)
 
         return [int(idx) - 1 for idx in result]
 
     def __str__(self):
         return (
-            f"HNSW(M={self._M}, ef_construction={self._ef_construction}, "
+            f"ManifoldANN-HNSW(M={self._M}, ef_construction={self._ef_construction}, "
             f"ef_search={self._ef_search}, neighbor_policy={self._neighbor_policy})"
         )
 
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-HNSW"
 
-class NNDescentWrapper(JuliANNWrapper):
-    """Wrapper for NNDescentIndex."""
+
+class ManifoldANN_NNDescent(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN NNDescentIndex."""
 
     def __init__(
         self,
@@ -363,11 +422,6 @@ class NNDescentWrapper(JuliANNWrapper):
             distance=distance_fn,
         )
 
-    def set_query_arguments(self, ef_search=None):
-        """Adjust the graph search beam width."""
-        if ef_search is not None:
-            self._ef_search = int(ef_search)
-
     def query(self, v, n):
         """Query for nearest neighbors with NN-Descent."""
         query_vec = np.asfortranarray(v, dtype=np.float32)
@@ -396,36 +450,13 @@ class NNDescentWrapper(JuliANNWrapper):
 
     def __str__(self):
         return (
-            "NNDescent("
+            "ManifoldANN-NNDescent("
             f"k={self._k}, max_iterations={self._max_iterations}, "
             f"convergence_threshold={self._convergence_threshold}, "
             f"sample_rate={self._sample_rate}, symmetry={self._symmetry_policy}, "
             f"ef_search={self._ef_search})"
         )
 
-
-class BruteForceWrapper(JuliANNWrapper):
-    """Wrapper for BruteForceIndex (baseline)."""
-
-    def __init__(self, metric):
-        """Initialize brute force wrapper.
-
-        Args:
-            metric: Distance metric ('angular' or 'euclidean')
-        """
-        super().__init__(metric)
-
-    def fit(self, X):
-        """Build the brute force index."""
-        super().fit(X)
-
-        # Build index using Julia with appropriate distance function
-        distance_fn = self._get_distance_function()
-        self._index = jl.build_index(jl.BruteForceIndex, self._data, distance=distance_fn)
-
-    def set_query_arguments(self):
-        """Brute force has no query-time parameters."""
-        pass
-
-    def __str__(self):
-        return "BruteForce()"
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-NNDescent"

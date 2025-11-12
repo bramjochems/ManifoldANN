@@ -1,0 +1,55 @@
+# GloVe-50 dataset configuration
+dataset: glove-50-angular
+metric: angular
+n_train: 10000
+n_test: 1000
+
+algorithms:
+  ManifoldANN-BruteForce: {}
+
+  ManifoldANN-LSH:
+    n_tables: 12
+    hash_length: 6
+
+  ManifoldANN-HNSW-heuristic:
+    M: 16
+    ef_construction: 200
+    ef_search: 50
+    neighbor_policy: heuristic
+
+  ManifoldANN-HNSW-diversified:
+    M: 16
+    ef_construction: 200
+    ef_search: 50
+    neighbor_policy: diversified
+
+  ManifoldANN-NNDescent:
+    k: 32
+    max_iterations: 5
+    convergence_threshold: 0.01
+    sample_rate: 0.5
+    symmetry_policy: pruned
+    ef_search: 64
+
+  Annoy:
+    n_trees: 10
+
+  HNSWlib:
+    M: 16
+    ef_construction: 200
+    ef_search: 50
+
+  FAISS-IVF:
+    nlist: 100
+    nprobe: 10
+
+  HNSW-jl:
+    M: 16
+    ef_construction: 200
+    ef: 50
+
+  NearestNeighborDescent-jl:
+    k: 32
+    max_iterations: 5
+    sample_rate: 0.5
+    precision: 0.01

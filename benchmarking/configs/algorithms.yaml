@@ -1,0 +1,101 @@
+# Algorithm Metadata
+#
+# This file defines metadata for all available algorithms.
+# Each algorithm specifies:
+#   - name: Display name
+#   - source: Library/package name
+#   - language: Implementation language
+#   - type: Algorithm category
+#   - description: Brief description
+
+algorithms:
+  ManifoldANN-BruteForce:
+    name: Brute Force
+    source: ManifoldANN
+    language: Julia
+    type: exact
+    description: Exact nearest neighbor search (baseline)
+
+  ManifoldANN-LSH:
+    name: LSH
+    source: ManifoldANN
+    language: Julia
+    type: approximate
+    description: Locality Sensitive Hashing (auto hash family selection)
+
+  ManifoldANN-KDTree:
+    name: KD-Tree
+    source: ManifoldANN
+    language: Julia
+    type: tree
+    description: Space partitioning tree
+
+  ManifoldANN-HNSW:
+    name: HNSW
+    source: ManifoldANN
+    language: Julia
+    type: graph
+    description: Hierarchical Navigable Small World graphs
+
+  ManifoldANN-NNDescent:
+    name: NN-Descent
+    source: ManifoldANN
+    language: Julia
+    type: graph
+    description: Nearest Neighbor Descent graph construction
+
+  Annoy:
+    name: Annoy
+    source: Spotify/Annoy
+    language: C++
+    type: tree
+    description: Approximate Nearest Neighbors Oh Yeah
+
+  HNSWlib:
+    name: HNSWlib
+    source: nmslib/hnswlib
+    language: C++
+    type: graph
+    description: Fast HNSW implementation
+
+  FAISS-IVF:
+    name: FAISS IVF
+    source: Meta/FAISS
+    language: C++
+    type: quantization
+    description: Inverted File with product quantization
+
+  SciPy-KDTree:
+    name: SciPy KDTree
+    source: SciPy
+    language: Python/C
+    type: tree
+    description: Standard KD-Tree (exact, Euclidean only)
+
+  PyNNDescent:
+    name: PyNNDescent
+    source: lmcinnes/pynndescent
+    language: Python
+    type: graph
+    description: Python NN-Descent implementation
+
+  NearestNeighbors-KDTree:
+    name: NN.jl KDTree
+    source: NearestNeighbors.jl
+    language: Julia
+    type: tree
+    description: KD-Tree from NearestNeighbors.jl
+
+  HNSW-jl:
+    name: HNSW.jl
+    source: HNSW.jl
+    language: Julia
+    type: graph
+    description: Pure Julia HNSW implementation
+
+  NearestNeighborDescent-jl:
+    name: NN-Descent (Julia)
+    source: NearestNeighborDescent.jl
+    language: Julia
+    type: graph
+    description: Julia NN-Descent implementation

@@ -12,25 +12,45 @@ Experimental Julia package for approximate nearest neighbours (ANN) on manifolds
 
 ## Developing
 
-There's make file to automate quick tasks
+There's a Makefile to automate common tasks:
 
-For running tests:
+### Running Tests
 ```bash
 make test
 ```
 
-
-For formatting code:
-
+### Formatting Code
 ```bash
 make format
 ```
 
+### Benchmarking
+
+First-time setup (creates venv, installs dependencies):
+```bash
+make benchmark-setup
+```
+
+Run benchmarks:
+```bash
+make benchmark ARGS="fashion-mnist"
+make benchmark ARGS="nytimes -k 20"
+make benchmark ARGS="--list-configs"
+```
+
+The benchmark target automatically uses the virtual environment if available.
+
+See [`benchmarking/README.md`](benchmarking/README.md) and [`benchmarking/REFACTOR_SUMMARY.md`](benchmarking/REFACTOR_SUMMARY.md) for detailed benchmarking documentation.
+
 
 ## Directory Layout
 
-- `src/` package source
-- `test/unit/` unit tests, loaded via `test/runtests.jl`
-- `docs/examples/` runnable documentation examples
-- `docs/design/` architecture decision records (ADRs)
-- `benchmarking/` Python<->Julia harness for comparing against ann-benchmarks baselines
+- `src/` - Julia package source code
+- `test/` - Unit tests (`test/runtests.jl` entry point)
+- `docs/examples/` - Runnable documentation examples
+- `docs/design/` - Architecture decision records (ADRs)
+- `benchmarking/` - Benchmarking suite for ANN library comparison
+  - `configs/` - Per-dataset YAML configurations
+  - `benchmarking/` - Python package (utils, wrappers, registry)
+  - `julia/` - Separate Julia environment for Julia library benchmarks
+- `scripts/` - Development and testing scripts

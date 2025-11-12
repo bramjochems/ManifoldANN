@@ -1,0 +1,17 @@
+name = "ManifoldANNBenchmarks"
+uuid = "8f3e4d10-1234-5678-9abc-def012345678"
+version = "0.1.0"
+authors = ["Bram Jochems <bram.jochems@gmail.com>"]
+
+[deps]
+Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+HNSW = "540f64fa-c57e-11e8-081c-41422cda4629"
+ManifoldANN = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
+NearestNeighborDescent = "dd2c4c9e-a32f-5b2f-b342-08c2f244fce8"
+NearestNeighbors = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
+
+[compat]
+HNSW = "0.1"
+NearestNeighborDescent = "0.3.7"
+NearestNeighbors = "0.4"
+julia = "1.6"

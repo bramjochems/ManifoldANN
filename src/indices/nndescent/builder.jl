@@ -13,6 +13,7 @@ callers must still pass `data` when querying. Keywords:
 - `symmetry_policy`: `FullSymmetry()`, `PrunedSymmetry(1.5)`, `NoSymmetry()`, or symbol (defaults to `:full`)
 - `rng`: RNG used for initialization and sampling
 - `distance`: Distance function (defaults to `default_squared_distance`)
+- `max_candidate_neighbors`: Maximum number of neighbor IDs per node considered each iteration (default 64)
 """
 function build_index(
     ::Type{NNDescentIndex},
@@ -24,6 +25,7 @@ function build_index(
     symmetry_policy::Union{AbstractSymmetryPolicy,Symbol,Nothing} = nothing,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_squared_distance,
+    max_candidate_neighbors::Int = 64,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -35,6 +37,8 @@ function build_index(
         throw(ArgumentError("max_iterations must be at least 1"))
     convergence_threshold >= 0 ||
         throw(ArgumentError("convergence_threshold must be non-negative"))
+    max_candidate_neighbors > 0 ||
+        throw(ArgumentError("max_candidate_neighbors must be positive"))
 
     resolved_sampling_policy = _resolve_sampling_policy(sampling_policy)
     resolved_symmetry_policy = _resolve_symmetry_policy(symmetry_policy)
@@ -65,6 +69,7 @@ function build_index(
         max_iterations,
         convergence_threshold,
         rng,
+        max_candidate_neighbors,
     )
 
     adjacency = _finalize_neighbors(working_graph, k)
@@ -162,6 +167,7 @@ function _run_nndescent!(
     max_iterations::Int,
     convergence_threshold::Float64,
     rng::AbstractRNG,
+    max_candidate_neighbors::Int,
 ) where {T}
     n = length(graph)
     denom = n * k
@@ -171,18 +177,22 @@ function _run_nndescent!(
             node = graph[i]
             isempty(node.new_neighbors) && continue
 
+            new_candidates =
+                _sample_neighbor_ids(node.new_neighbors, max_candidate_neighbors, rng)
+            isempty(new_candidates) && continue
+            old_candidates =
+                _sample_neighbor_ids(node.old_neighbors, max_candidate_neighbors, rng)
+
             # Pair each new neighbor with other new neighbors
-            for new_a in node.new_neighbors
-                src = new_a.id
-                for new_b in node.new_neighbors
-                    dst = new_b.id
-                    src >= dst && continue  # Avoid duplicates and self-pairs
+            for new_idx in 1:length(new_candidates)
+                src = new_candidates[new_idx]
+                for inner_idx in (new_idx + 1):length(new_candidates)
+                    dst = new_candidates[inner_idx]
                     should_consider_pair(sampling_policy, rng) || continue
                     updates += _connect_pair!(graph, data, distance, src, dst)
                 end
                 # Pair new neighbors with old neighbors
-                for old in node.old_neighbors
-                    dst = old.id
+                for dst in old_candidates
                     src == dst && continue
                     should_consider_pair(sampling_policy, rng) || continue
                     updates += _connect_pair!(graph, data, distance, src, dst)
@@ -486,4 +496,21 @@ function _finalize_neighbors(
         adjacency[i] = ids
     end
     return adjacency
+end
+
+function _sample_neighbor_ids(
+    heap::BoundedMaxHeap{T},
+    limit::Int,
+    rng::AbstractRNG,
+) where {T}
+    limit <= 0 && return Int[]
+    collected = Int[]
+    @inbounds for nb in heap
+        push!(collected, nb.id)
+    end
+    len = length(collected)
+    len <= limit && return collected
+    shuffle!(rng, collected)
+    resize!(collected, limit)
+    return collected
 end

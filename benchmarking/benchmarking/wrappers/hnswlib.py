@@ -1,0 +1,84 @@
+"""Wrapper for HNSWlib."""
+
+from typing import List
+import numpy as np
+
+from .base import BaseANNWrapper
+
+
+class HNSWlib(BaseANNWrapper):
+    """Wrapper for HNSWlib to match our interface."""
+
+    def __init__(self, metric, M=16, ef_construction=200, ef_search=50):
+        """Initialize HNSWlib wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+            M: Maximum number of connections per element
+            ef_construction: Size of dynamic candidate list during construction
+            ef_search: Size of dynamic candidate list during search
+        """
+        super().__init__(metric)
+        self.M = M
+        self.ef_construction = ef_construction
+        self.ef_search = ef_search
+        self.index = None
+        self.dimension = None
+
+    def fit(self, X: np.ndarray) -> None:
+        """Build the HNSWlib index.
+
+        Args:
+            X: Training data, shape (n_samples, n_features)
+        """
+        import hnswlib
+
+        self.dimension = X.shape[1]
+        n_samples = X.shape[0]
+
+        # Map metric name
+        space_name = "cosine" if self._metric == "angular" else "l2"
+
+        # Initialize index
+        self.index = hnswlib.Index(space=space_name, dim=self.dimension)
+        self.index.init_index(
+            max_elements=n_samples, ef_construction=self.ef_construction, M=self.M
+        )
+
+        # Add data
+        self.index.add_items(X, np.arange(n_samples))
+
+        # Set ef for queries
+        self.index.set_ef(self.ef_search)
+
+    def query(self, v: np.ndarray, n: int) -> List[int]:
+        """Query for nearest neighbors.
+
+        Args:
+            v: Query vector, shape (n_features,)
+            n: Number of neighbors to return
+
+        Returns:
+            List of neighbor indices
+        """
+        labels, distances = self.index.knn_query(v.reshape(1, -1), k=n)
+        return labels[0].tolist()
+
+    def __str__(self) -> str:
+        return (
+            f"HNSWlib(M={self.M}, ef_construction={self.ef_construction}, "
+            f"ef_search={self.ef_search})"
+        )
+
+    @staticmethod
+    def is_available() -> bool:
+        """Check if HNSWlib is installed."""
+        try:
+            import hnswlib
+            return True
+        except ImportError:
+            return False
+
+    @staticmethod
+    def get_name() -> str:
+        return "HNSWlib"
