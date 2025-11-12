@@ -491,7 +491,9 @@ DATASET_CONFIG = {
     "glove-25": ("glove-25-angular", "angular"),
     "glove-50": ("glove-50-angular", "angular"),
     "glove-100": ("glove-100-angular", "angular"),
+    "lastfm": ("lastfm-64-angular", "angular"),
     "mnist": ("mnist-784-euclidean", "euclidean"),
+    "nytimes": ("nytimes-256-angular", "angular"),
     "sift": ("sift-128-euclidean", "euclidean"),
 }
 

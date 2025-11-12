@@ -41,10 +41,16 @@ Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.
 
 ## Usage
 
-### Different Dataset
+### Different Datasets
 ```bash
+# Angular (text/embeddings)
 python benchmark.py --dataset glove-25
-python benchmark.py --dataset glove-50
+python benchmark.py --dataset nytimes
+python benchmark.py --dataset lastfm
+
+# Euclidean (images/features)
+python benchmark.py --dataset sift
+python benchmark.py --dataset mnist
 ```
 
 ### More Queries
@@ -54,7 +60,7 @@ python benchmark.py --n-queries 1000
 
 ### Full Dataset
 ```bash
-python benchmark.py --max-train 0  # Uses full 60K training set
+python benchmark.py --max-train 0  # Uses full training set
 ```
 
 ## Performance Features
@@ -115,20 +121,26 @@ baseline for NN-Descent specific experiments.
 
 The benchmark script automatically selects the correct distance metric for each dataset:
 
-| Dataset | Dimensions | Train | Test | Size | Metric |
-|---------|-----------|-------|------|------|--------|
-| fashion-mnist | 784 | 60K | 10K | ~30MB | Euclidean |
-| glove-25 | 25 | 1.18M | 10K | ~120MB | Angular |
-| glove-50 | 50 | 1.18M | 10K | ~240MB | Angular |
-| glove-100 | 100 | 1.18M | 10K | ~470MB | Angular |
-| mnist | 784 | 60K | 10K | ~30MB | Euclidean |
-| sift | 128 | 1M | 10K | ~500MB | Euclidean |
+| Dataset | Dimensions | Train | Test | Size | Metric | Domain |
+|---------|-----------|-------|------|------|--------|--------|
+| fashion-mnist | 784 | 60K | 10K | ~217MB | Euclidean | Fashion images (raw pixels) |
+| glove-25 | 25 | 1.18M | 10K | ~121MB | Angular | Text embeddings (GloVe) |
+| glove-50 | 50 | 1.18M | 10K | ~235MB | Angular | Text embeddings (GloVe) |
+| glove-100 | 100 | 1.18M | 10K | ~463MB | Angular | Text embeddings (GloVe) |
+| lastfm | 64 | 292K | 50K | ~135MB | Angular | Collaborative filtering |
+| mnist | 784 | 60K | 10K | ~217MB | Euclidean | Handwritten digits (raw pixels) |
+| nytimes | 256 | 290K | 10K | ~301MB | Angular | Article embeddings |
+| sift | 128 | 1M | 10K | ~501MB | Euclidean | Image features (SIFT descriptors) |
 
 **Distance Metrics:**
 - **Euclidean**: Uses `default_squared_distance` (squared L2 distance)
 - **Angular**: Uses `squared_cosine_distance` (cosine distance for direction similarity)
 
 The wrapper automatically selects the appropriate Julia distance function based on the dataset's metric configuration in `DATASET_CONFIG`.
+
+**Dataset Coverage:**
+- **Euclidean**: fashion-mnist, mnist, sift (raw pixels + features)
+- **Angular**: glove-{25,50,100}, lastfm, nytimes (text, collaborative filtering, articles)
 
 ## Troubleshooting
 
