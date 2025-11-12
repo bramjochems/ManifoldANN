@@ -5,10 +5,12 @@ include("graphs/knn_graph.jl")
 include("utils/random_utils.jl")
 include("utils/validation.jl")
 include("utils/eval_utils.jl")
+include("utils/neighbor_heaps.jl")
 include("indices/bruteforce.jl")
 include("indices/lsh.jl")
 include("indices/kdtree.jl")
 include("indices/hnsw.jl")
+include("indices/nndescent.jl")
 
 export AbstractANNIndex,
        AbstractGraphIndex,
@@ -17,6 +19,11 @@ export AbstractANNIndex,
        LSHIndex,
        KDTreeIndex,
        HNSWIndex,
+       NNDescentIndex,
+       UniformPairSampling,
+       FullSymmetry,
+       PrunedSymmetry,
+       NoSymmetry,
        KNNGraph,
        BinningHash,
        RandomHyperplaneHash,
@@ -38,6 +45,7 @@ export AbstractANNIndex,
        validate_index_dimensions,
        recall_at_k,
        default_distance,
-       default_squared_distance
+       default_squared_distance,
+       squared_cosine_distance
 
 end

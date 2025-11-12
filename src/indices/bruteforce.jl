@@ -136,6 +136,42 @@ when only relative ordering matters (e.g., HNSW priority queues).
     return d
 end
 
+"""
+    squared_cosine_distance(x, y)
+
+Squared variant of cosine distance for use in priority queues where only
+relative ordering matters. This is NOT the same as squaring cosine_distance
+due to the non-linear relationship.
+
+For efficiency with angular metrics, this computes a monotonic transformation
+of cosine distance that preserves ordering:
+    2 * (1 - cosine_similarity) = 2 - 2*(x·y)/(||x||*||y||)
+
+This is mathematically equivalent to the squared Euclidean distance between
+normalized vectors, which is useful for priority queue comparisons.
+"""
+@inline function squared_cosine_distance(x::AbstractVector{T}, y::AbstractVector{T}) where T
+    dot_product = zero(T)
+    x_norm_sq = zero(T)
+    y_norm_sq = zero(T)
+
+    @inbounds @simd for i in eachindex(x, y)
+        dot_product += x[i] * y[i]
+        x_norm_sq += x[i] * x[i]
+        y_norm_sq += y[i] * y[i]
+    end
+
+    # Handle zero vectors
+    if x_norm_sq == 0 || y_norm_sq == 0
+        return convert(T, 2)
+    end
+
+    # Compute 2 * (1 - cosine_similarity)
+    cosine_sim = dot_product / sqrt(x_norm_sq * y_norm_sq)
+    cosine_sim = clamp(cosine_sim, -one(T), one(T))
+    return convert(T, 2) * (one(T) - cosine_sim)
+end
+
 function _validate_dimensions(index::BruteForceIndex, data, q)
     size(data, 1) == index.dimension ||
         throw(DimensionMismatch("Expected point dimension $(index.dimension)"))

@@ -1,0 +1,489 @@
+using Random
+
+"""
+    build_index(NNDescentIndex, data; kwargs...)
+
+Construct an NN-Descent index over `data`. Keeps only the neighbor graph, so
+callers must still pass `data` when querying. Keywords:
+
+- `k`: Number of neighbors per point (default 32)
+- `max_iterations`: Maximum NN-Descent iterations (default 10)
+- `convergence_threshold`: Relative improvement threshold to stop early
+- `sampling_policy`: `UniformPairSampling`, `:uniform`, or `nothing` (defaults to uniform)
+- `symmetry_policy`: `FullSymmetry()`, `PrunedSymmetry(1.5)`, `NoSymmetry()`, or symbol (defaults to `:full`)
+- `rng`: RNG used for initialization and sampling
+- `distance`: Distance function (defaults to `default_squared_distance`)
+"""
+function build_index(
+    ::Type{NNDescentIndex},
+    data::AbstractMatrix{T};
+    k::Int = 32,
+    max_iterations::Int = 10,
+    convergence_threshold::Float64 = 1e-3,
+    sampling_policy::Union{AbstractNNDescentSamplingPolicy,Symbol,Nothing} = nothing,
+    symmetry_policy::Union{AbstractSymmetryPolicy,Symbol,Nothing} = nothing,
+    rng::AbstractRNG = Random.default_rng(),
+    distance::D = default_squared_distance,
+) where {T<:LinearAlgebra.BlasFloat,D}
+    d, n = size(data)
+    d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
+    n > 0 || throw(ArgumentError("Dataset must contain at least one point"))
+    k > 0 || throw(ArgumentError("k must be positive"))
+    n > 1 || throw(ArgumentError("NN-Descent requires at least two points"))
+    k < n || throw(ArgumentError("k must be less than the number of points ($n)"))
+    max_iterations >= 1 ||
+        throw(ArgumentError("max_iterations must be at least 1"))
+    convergence_threshold >= 0 ||
+        throw(ArgumentError("convergence_threshold must be non-negative"))
+
+    resolved_sampling_policy = _resolve_sampling_policy(sampling_policy)
+    resolved_symmetry_policy = _resolve_symmetry_policy(symmetry_policy)
+
+    # Determine the distance element type for neighbor bookkeeping
+    probe = distance(view(data, :, 1), view(data, :, 1))
+    probe isa AbstractFloat ||
+        throw(
+            ArgumentError(
+                "distance function must return an AbstractFloat, got $(typeof(probe))",
+            ),
+        )
+    dist_type = typeof(probe)
+
+    working_graph =
+        [NNDescentNeighborNode{dist_type}(k) for _ in 1:n]::Vector{
+            NNDescentNeighborNode{dist_type},
+        }
+
+    _initialize_random_neighbors!(working_graph, data, k, distance, rng)
+    _run_nndescent!(
+        working_graph,
+        data,
+        distance,
+        k,
+        resolved_sampling_policy,
+        resolved_symmetry_policy,
+        max_iterations,
+        convergence_threshold,
+        rng,
+    )
+
+    adjacency = _finalize_neighbors(working_graph, k)
+
+    return NNDescentIndex{
+        T,
+        typeof(distance),
+        typeof(resolved_sampling_policy),
+        typeof(resolved_symmetry_policy),
+    }(
+        d,
+        n,
+        k,
+        max_iterations,
+        distance,
+        resolved_sampling_policy,
+        resolved_symmetry_policy,
+        adjacency,
+    )
+end
+
+function _resolve_sampling_policy(
+    policy::Union{AbstractNNDescentSamplingPolicy,Symbol,Nothing},
+)
+    if policy === nothing
+        return UniformPairSampling()
+    elseif policy isa AbstractNNDescentSamplingPolicy
+        return policy
+    elseif policy isa Symbol
+        if policy === :uniform
+            return UniformPairSampling()
+        else
+            throw(ArgumentError("Unknown NN-Descent sampling policy $policy"))
+        end
+    else
+        throw(ArgumentError("Unsupported sampling policy type $(typeof(policy))"))
+    end
+end
+
+function _resolve_symmetry_policy(
+    policy::Union{AbstractSymmetryPolicy,Symbol,Nothing},
+)
+    if policy === nothing
+        return FullSymmetry()
+    elseif policy isa AbstractSymmetryPolicy
+        return policy
+    elseif policy isa Symbol
+        if policy === :full
+            return FullSymmetry()
+        elseif policy === :pruned
+            return PrunedSymmetry()
+        elseif policy === :none
+            return NoSymmetry()
+        else
+            throw(ArgumentError("Unknown symmetry policy $policy. Use :full, :pruned, or :none"))
+        end
+    else
+        throw(ArgumentError("Unsupported symmetry policy type $(typeof(policy))"))
+    end
+end
+
+function _initialize_random_neighbors!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    data::AbstractMatrix,
+    k::Int,
+    distance,
+    rng::AbstractRNG,
+) where {T}
+    n = length(graph)
+    @inbounds for i in 1:n
+        node = graph[i]
+        chosen = Set{Int}()
+        added = 0
+        while added < k
+            candidate = rand(rng, 1:n)
+            candidate == i && continue
+            candidate in chosen && continue
+            push!(chosen, candidate)
+            dist = distance(view(data, :, i), view(data, :, candidate))
+            # All initial neighbors are "new"
+            push!(node.new_neighbors, candidate, dist)
+            added += 1
+        end
+    end
+    return nothing
+end
+
+function _run_nndescent!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    data::AbstractMatrix,
+    distance,
+    k::Int,
+    sampling_policy::AbstractNNDescentSamplingPolicy,
+    symmetry_policy::AbstractSymmetryPolicy,
+    max_iterations::Int,
+    convergence_threshold::Float64,
+    rng::AbstractRNG,
+) where {T}
+    n = length(graph)
+    denom = n * k
+    for _ in 1:max_iterations
+        updates = 0
+        @inbounds for i in 1:n
+            node = graph[i]
+            isempty(node.new_neighbors) && continue
+
+            # Pair each new neighbor with other new neighbors
+            for new_a in node.new_neighbors
+                src = new_a.id
+                for new_b in node.new_neighbors
+                    dst = new_b.id
+                    src >= dst && continue  # Avoid duplicates and self-pairs
+                    should_consider_pair(sampling_policy, rng) || continue
+                    updates += _connect_pair!(graph, data, distance, src, dst)
+                end
+                # Pair new neighbors with old neighbors
+                for old in node.old_neighbors
+                    dst = old.id
+                    src == dst && continue
+                    should_consider_pair(sampling_policy, rng) || continue
+                    updates += _connect_pair!(graph, data, distance, src, dst)
+                end
+            end
+        end
+
+        # Move all "new" neighbors to "old" for next iteration
+        @inbounds for i in 1:n
+            _transition_neighbors!(graph[i])
+        end
+
+        improvement = denom == 0 ? 0.0 : updates / denom
+        if improvement < convergence_threshold
+            break
+        end
+    end
+
+    # Apply symmetry policy only once at the end
+    # This is much more efficient than applying it every iteration
+    apply_symmetry_policy!(graph, k, symmetry_policy)
+
+    return nothing
+end
+
+"""
+    _transition_neighbors!(node)
+
+Move all "new" neighbors to the "old" heap for the next iteration. This clears
+the new_neighbors heap, preparing it for the next round of discoveries.
+"""
+function _transition_neighbors!(node::NNDescentNeighborNode{T}) where {T}
+    # Transfer all new neighbors to old neighbors
+    for neighbor in node.new_neighbors
+        push!(node.old_neighbors, neighbor.id, neighbor.dist)
+    end
+    # Clear the new neighbors heap for next iteration
+    empty!(node.new_neighbors.data)
+    return nothing
+end
+
+"""
+    apply_symmetry_policy!(graph, k, policy)
+
+Apply the specified symmetry policy to the graph after NN-Descent iterations complete.
+"""
+function apply_symmetry_policy!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    k::Int,
+    policy::AbstractSymmetryPolicy,
+) where {T}
+    # Dispatch to the appropriate implementation
+    _apply_symmetry!(graph, k, policy)
+end
+
+"""
+    _apply_symmetry!(graph, k, ::NoSymmetry)
+
+No-op: keep the directed k-NN graph as-is.
+"""
+function _apply_symmetry!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    k::Int,
+    ::NoSymmetry,
+) where {T}
+    # Nothing to do - graph remains asymmetric
+    return nothing
+end
+
+"""
+    _apply_symmetry!(graph, k, ::FullSymmetry)
+
+Add all reverse edges to ensure complete graph symmetry.
+Nodes may end up with > k neighbors.
+"""
+function _apply_symmetry!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    k::Int,
+    ::FullSymmetry,
+) where {T}
+    n = length(graph)
+
+    # Build sets for O(1) membership checking - combine both heaps
+    neighbor_sets = [Set{Int}() for _ in 1:n]
+    @inbounds for i in 1:n
+        for nb in graph[i].old_neighbors
+            push!(neighbor_sets[i], nb.id)
+        end
+        for nb in graph[i].new_neighbors
+            push!(neighbor_sets[i], nb.id)
+        end
+    end
+
+    # Collect reverse edges to add
+    to_add = [Vector{Tuple{Int,T}}() for _ in 1:n]
+
+    @inbounds for i in 1:n
+        # Check old neighbors
+        for nb in graph[i].old_neighbors
+            if i ∉ neighbor_sets[nb.id]
+                push!(to_add[nb.id], (i, nb.dist))
+            end
+        end
+        # Check new neighbors
+        for nb in graph[i].new_neighbors
+            if i ∉ neighbor_sets[nb.id]
+                push!(to_add[nb.id], (i, nb.dist))
+            end
+        end
+    end
+
+    # Add all the reverse edges to old_neighbors (they're not "new" discoveries)
+    # Use unsafe_push! to allow exceeding capacity for full symmetry
+    @inbounds for i in 1:n
+        for (neighbor_id, dist) in to_add[i]
+            # Note: This may exceed k capacity, which is expected for full symmetry
+            unsafe_push!(graph[i].old_neighbors, neighbor_id, dist)
+        end
+    end
+
+    return nothing
+end
+
+"""
+    _apply_symmetry!(graph, k, policy::PrunedSymmetry)
+
+Add reverse edges like FullSymmetry, but prune each node's combined neighbor list
+to at most `policy.degree_multiplier * k` edges. This balances search quality
+with memory efficiency, following PyNNDescent's approach.
+"""
+function _apply_symmetry!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    k::Int,
+    policy::PrunedSymmetry,
+) where {T}
+    n = length(graph)
+    max_degree = ceil(Int, policy.degree_multiplier * k)
+
+    # Build sets for O(1) membership checking - combine both heaps
+    neighbor_sets = [Set{Int}() for _ in 1:n]
+    @inbounds for i in 1:n
+        for nb in graph[i].old_neighbors
+            push!(neighbor_sets[i], nb.id)
+        end
+        for nb in graph[i].new_neighbors
+            push!(neighbor_sets[i], nb.id)
+        end
+    end
+
+    # Collect reverse edges to add
+    to_add = [Vector{Tuple{Int,T}}() for _ in 1:n]
+
+    @inbounds for i in 1:n
+        # Check old neighbors
+        for nb in graph[i].old_neighbors
+            if i ∉ neighbor_sets[nb.id]
+                push!(to_add[nb.id], (i, nb.dist))
+            end
+        end
+        # Check new neighbors
+        for nb in graph[i].new_neighbors
+            if i ∉ neighbor_sets[nb.id]
+                push!(to_add[nb.id], (i, nb.dist))
+            end
+        end
+    end
+
+    # Add reverse edges and prune to max_degree
+    @inbounds for i in 1:n
+        # Collect all neighbors from both heaps plus reverse edges
+        all_neighbors = Vector{Neighbor{T}}()
+        for nb in graph[i].old_neighbors
+            push!(all_neighbors, nb)
+        end
+        for nb in graph[i].new_neighbors
+            push!(all_neighbors, nb)
+        end
+        for (neighbor_id, dist) in to_add[i]
+            push!(all_neighbors, Neighbor{T}(neighbor_id, dist))
+        end
+
+        # Sort by distance and keep only the closest max_degree neighbors
+        sort!(all_neighbors, by = nb -> nb.dist)
+        if length(all_neighbors) > max_degree
+            resize!(all_neighbors, max_degree)
+        end
+
+        # Rebuild the old_neighbors heap with pruned neighbors, clear new_neighbors
+        # NOTE: We directly manipulate heap.data to bypass capacity limits.
+        # After empty!(), the heap can accept all_neighbors (up to max_degree)
+        # even though max_degree > k (the original heap capacity).
+        # This is intentional for PrunedSymmetry where degree_multiplier > 1.0.
+        empty!(graph[i].old_neighbors.data)
+        empty!(graph[i].new_neighbors.data)
+        for nb in all_neighbors
+            push!(graph[i].old_neighbors, nb.id, nb.dist)
+        end
+    end
+
+    return nothing
+end
+
+function _connect_pair!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    data::AbstractMatrix,
+    distance,
+    a::Int,
+    b::Int,
+) where {T}
+    a == b && return 0
+    dist = distance(view(data, :, a), view(data, :, b))
+    inserted = 0
+    inserted += _insert_neighbor!(graph[a], b, dist)
+    inserted += _insert_neighbor!(graph[b], a, dist)
+    return inserted
+end
+
+function _insert_neighbor!(
+    node::NNDescentNeighborNode{T},
+    neighbor_id::Int,
+    dist::T,
+) where {T}
+    # Check if neighbor already exists in either heap
+    @inbounds for existing in node.old_neighbors
+        if existing.id == neighbor_id
+            if dist < existing.dist
+                # Update distance in old_neighbors
+                # Need to find and update - for now, remove and re-add
+                _update_neighbor_dist!(node.old_neighbors, neighbor_id, dist)
+                # Also add to new_neighbors to mark as updated
+                push!(node.new_neighbors, neighbor_id, dist)
+                return 1
+            end
+            return 0
+        end
+    end
+
+    @inbounds for existing in node.new_neighbors
+        if existing.id == neighbor_id
+            if dist < existing.dist
+                # Update in new_neighbors heap
+                _update_neighbor_dist!(node.new_neighbors, neighbor_id, dist)
+                return 1
+            end
+            return 0
+        end
+    end
+
+    # Not found - add as new neighbor
+    push!(node.new_neighbors, neighbor_id, dist)
+    return 1
+end
+
+"""
+    _update_neighbor_dist!(heap, id, new_dist)
+
+Update the distance for a neighbor already in the heap. Since heaps don't support
+efficient in-place updates, we rebuild the heap without the old entry and add the new one.
+"""
+function _update_neighbor_dist!(
+    heap::BoundedMaxHeap{T},
+    neighbor_id::Int,
+    new_dist::T,
+) where {T}
+    # Remove the old entry and rebuild
+    old_data = filter(nb -> nb.id != neighbor_id, heap.data)
+    empty!(heap.data)
+    for nb in old_data
+        push!(heap, nb.id, nb.dist)
+    end
+    push!(heap, neighbor_id, new_dist)
+    return nothing
+end
+
+function _finalize_neighbors(
+    graph::Vector{NNDescentNeighborNode{T}},
+    k::Int,
+) where {T}
+    adjacency = Vector{Vector{Int}}(undef, length(graph))
+    @inbounds for i in eachindex(graph)
+        node = graph[i]
+
+        # Collect all neighbors from both heaps
+        all_neighbors = Vector{Neighbor{T}}()
+        for nb in node.old_neighbors
+            push!(all_neighbors, nb)
+        end
+        for nb in node.new_neighbors
+            push!(all_neighbors, nb)
+        end
+
+        # Sort by distance to ensure we keep the closest neighbors
+        sort!(all_neighbors, by = nb -> nb.dist)
+
+        # Extract IDs
+        ids = Vector{Int}(undef, length(all_neighbors))
+        for (j, nb) in enumerate(all_neighbors)
+            ids[j] = nb.id
+        end
+
+        adjacency[i] = ids
+    end
+    return adjacency
+end

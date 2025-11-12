@@ -40,6 +40,17 @@ class JuliANNWrapper:
         self._index = None
         self._data = None
 
+    def _get_distance_function(self):
+        """Get the appropriate Julia distance function for the metric.
+
+        Returns:
+            Julia function for computing distances (squared variant for use in priority queues)
+        """
+        if self._metric == 'angular':
+            return jl.ManifoldANN.squared_cosine_distance
+        else:  # euclidean
+            return jl.ManifoldANN.default_squared_distance
+
     def fit(self, X):
         """Build the index from training data.
 
@@ -259,8 +270,9 @@ class HNSWWrapper(JuliANNWrapper):
         """Build the HNSW index."""
         super().fit(X)
 
-        # Build index using Julia
+        # Build index using Julia with appropriate distance function
         neighbor_policy_symbol = jl.Symbol(self._neighbor_policy)
+        distance_fn = self._get_distance_function()
         self._index = jl.build_index(
             jl.HNSWIndex,
             self._data,
@@ -268,7 +280,7 @@ class HNSWWrapper(JuliANNWrapper):
             ef_construction=self._ef_construction,
             ef_search=self._ef_search,
             neighbor_policy=neighbor_policy_symbol,
-            distance=jl.ManifoldANN.default_squared_distance,
+            distance=distance_fn,
         )
 
     def set_query_arguments(self, ef_search=None):
@@ -299,6 +311,99 @@ class HNSWWrapper(JuliANNWrapper):
         )
 
 
+class NNDescentWrapper(JuliANNWrapper):
+    """Wrapper for NNDescentIndex."""
+
+    def __init__(
+        self,
+        metric,
+        k=32,
+        max_iterations=12,
+        convergence_threshold=1e-3,
+        sample_rate=1.0,
+        symmetry_policy="full",
+        ef_search=None,
+    ):
+        """Initialize NN-Descent wrapper.
+
+        Args:
+            metric: Distance metric ('angular' or 'euclidean')
+            k: Number of neighbors per node in the graph
+            max_iterations: Maximum NN-Descent iterations
+            convergence_threshold: Relative improvement threshold to stop early
+            sample_rate: Fraction of candidate pairs to evaluate (0-1)
+            symmetry_policy: Graph symmetry strategy ('full', 'pruned', 'none')
+            ef_search: Beam width for graph search queries
+        """
+        super().__init__(metric)
+        self._k = int(k)
+        self._max_iterations = int(max_iterations)
+        self._convergence_threshold = float(convergence_threshold)
+        self._sample_rate = float(sample_rate)
+        self._symmetry_policy = symmetry_policy
+        self._ef_search = ef_search if ef_search is not None else max(self._k, 2 * self._k)
+
+    def fit(self, X):
+        """Build the NN-Descent index."""
+        super().fit(X)
+        sampling_policy = jl.ManifoldANN.UniformPairSampling(self._sample_rate)
+
+        # Convert symmetry policy string to Julia symbol
+        symmetry_symbol = jl.Symbol(self._symmetry_policy)
+        distance_fn = self._get_distance_function()
+
+        self._index = jl.build_index(
+            jl.NNDescentIndex,
+            self._data,
+            k=self._k,
+            max_iterations=self._max_iterations,
+            convergence_threshold=self._convergence_threshold,
+            sampling_policy=sampling_policy,
+            symmetry_policy=symmetry_symbol,
+            distance=distance_fn,
+        )
+
+    def set_query_arguments(self, ef_search=None):
+        """Adjust the graph search beam width."""
+        if ef_search is not None:
+            self._ef_search = int(ef_search)
+
+    def query(self, v, n):
+        """Query for nearest neighbors with NN-Descent."""
+        query_vec = np.asfortranarray(v, dtype=np.float32)
+        query_jl = self._to_vector(query_vec)
+        result = jl.query(
+            self._index,
+            self._data,
+            query_jl,
+            n,
+            ef_search=self._ef_search,
+        )
+        return [int(idx) - 1 for idx in result]
+
+    def query_batch(self, queries, n):
+        """Batch query variant that respects ef_search."""
+        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+        queries_jl = self._to_matrix(queries_fortran)
+        results = jl.query(
+            self._index,
+            self._data,
+            queries_jl,
+            n,
+            ef_search=self._ef_search,
+        )
+        return [[int(idx) - 1 for idx in result] for result in results]
+
+    def __str__(self):
+        return (
+            "NNDescent("
+            f"k={self._k}, max_iterations={self._max_iterations}, "
+            f"convergence_threshold={self._convergence_threshold}, "
+            f"sample_rate={self._sample_rate}, symmetry={self._symmetry_policy}, "
+            f"ef_search={self._ef_search})"
+        )
+
+
 class BruteForceWrapper(JuliANNWrapper):
     """Wrapper for BruteForceIndex (baseline)."""
 
@@ -314,8 +419,9 @@ class BruteForceWrapper(JuliANNWrapper):
         """Build the brute force index."""
         super().fit(X)
 
-        # Build index using Julia
-        self._index = jl.build_index(jl.BruteForceIndex, self._data)
+        # Build index using Julia with appropriate distance function
+        distance_fn = self._get_distance_function()
+        self._index = jl.build_index(jl.BruteForceIndex, self._data, distance=distance_fn)
 
     def set_query_arguments(self):
         """Brute force has no query-time parameters."""

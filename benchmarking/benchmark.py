@@ -38,6 +38,7 @@ from manifoldann_wrapper import (
     HNSWWrapper as ManifoldHNSW,
     BruteForceWrapper as ManifoldBruteForce,
     KDTreeWrapper as ManifoldKDTree,
+    NNDescentWrapper as ManifoldNNDescent,
 )
 
 # Import ann-benchmarks algorithms if available
@@ -301,8 +302,22 @@ def load_dataset(dataset_path, max_train=None):
                 distances = np.sqrt(np.maximum(distances, 0))  # Avoid numerical issues
             elif distance_metric == "angular":
                 # Vectorized: cosine distance = 1 - cosine_similarity
-                # For normalized vectors: cosine_sim = dot product
-                similarities = test @ train.T  # (n_test, n_train)
+                # Compute cosine similarity with proper normalization
+                # cosine_sim = (x · y) / (||x|| * ||y||)
+
+                # Normalize test and train vectors
+                test_norms = np.linalg.norm(test, axis=1, keepdims=True)
+                train_norms = np.linalg.norm(train, axis=1, keepdims=True)
+
+                # Avoid division by zero
+                test_norms[test_norms == 0] = 1.0
+                train_norms[train_norms == 0] = 1.0
+
+                test_normalized = test / test_norms
+                train_normalized = train / train_norms
+
+                # Compute cosine similarity
+                similarities = test_normalized @ train_normalized.T  # (n_test, n_train)
                 distances = 1 - similarities
             else:
                 raise ValueError(f"Unknown distance metric: {distance_metric}")
@@ -324,6 +339,23 @@ def load_dataset(dataset_path, max_train=None):
 
         print(f"Final train shape: {train.shape}")
         print(f"Ground truth shape: {neighbors.shape}")
+
+        # Sanity check: verify ground truth by checking first query's nearest neighbor
+        if len(neighbors) > 0 and len(train) > 0:
+            first_query = test[0]
+            expected_nn = neighbors[0][0]  # First nearest neighbor
+
+            if distance_metric == "euclidean":
+                dist_to_nn = np.linalg.norm(first_query - train[expected_nn])
+                print(f"Sanity check: distance to 1st NN = {dist_to_nn:.4f}")
+            elif distance_metric == "angular":
+                # Compute cosine distance
+                q_norm = np.linalg.norm(first_query)
+                nn_norm = np.linalg.norm(train[expected_nn])
+                if q_norm > 0 and nn_norm > 0:
+                    cos_sim = np.dot(first_query, train[expected_nn]) / (q_norm * nn_norm)
+                    cos_dist = 1 - cos_sim
+                    print(f"Sanity check: cosine distance to 1st NN = {cos_dist:.4f}")
 
         return train, test, neighbors
 
@@ -448,9 +480,20 @@ def test_algorithm(wrapper, X_train, X_test, ground_truth, k=10, n_queries=100):
         "qps": qps,
         "recall": avg_recall,
         "implementation": "ManifoldANN"
-        if isinstance(wrapper, (LSHWrapper, ManifoldHNSW, ManifoldBruteForce))
+        if isinstance(wrapper, (LSHWrapper, ManifoldHNSW, ManifoldBruteForce, ManifoldKDTree, ManifoldNNDescent))
         else "Other",
     }
+
+
+# Dataset configuration: maps short names to (full_name, metric)
+DATASET_CONFIG = {
+    "fashion-mnist": ("fashion-mnist-784-euclidean", "euclidean"),
+    "glove-25": ("glove-25-angular", "angular"),
+    "glove-50": ("glove-50-angular", "angular"),
+    "glove-100": ("glove-100-angular", "angular"),
+    "mnist": ("mnist-784-euclidean", "euclidean"),
+    "sift": ("sift-128-euclidean", "euclidean"),
+}
 
 
 def main():
@@ -462,7 +505,7 @@ def main():
     )
     parser.add_argument(
         "--dataset",
-        choices=["fashion-mnist", "glove-25", "glove-50"],
+        choices=list(DATASET_CONFIG.keys()),
         default="fashion-mnist",
         help="Which dataset to use",
     )
@@ -493,17 +536,13 @@ def main():
         os.environ["JULIA_NUM_THREADS"] = str(args.threads)
         print(f"ℹ️  Using {args.threads} threads for all algorithms")
 
-    # Determine full dataset name
-    if args.dataset == "fashion-mnist":
-        dataset_name = "fashion-mnist-784-euclidean"
-        metric = "euclidean"
-    else:
-        dataset_name = f"{args.dataset}-angular"
-        metric = "angular"
+    # Get dataset configuration
+    dataset_name, metric = DATASET_CONFIG[args.dataset]
 
     print("=" * 60)
     print(f"ManifoldANN vs ann-benchmarks Comparison")
     print(f"Dataset: {dataset_name}")
+    print(f"Metric: {metric}")
     print("=" * 60)
 
     ensure_ann_benchmarks_checkout()
@@ -534,6 +573,15 @@ def main():
             ef_construction=200,
             ef_search=50,
             neighbor_policy="diversified",
+        ),
+        ManifoldNNDescent(
+            metric=metric,
+            k=32,
+            max_iterations=10,
+            convergence_threshold=0.01,  # Stop at 1% improvement (faster, still good recall)
+            sample_rate=0.5,  # Sample 50% of pairs (2x faster build)
+            symmetry_policy="pruned",  # PyNNDescent-style pruned symmetry (1.5x degree)
+            ef_search=64,
         ),
     ]
 

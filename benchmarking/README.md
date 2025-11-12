@@ -24,14 +24,15 @@ Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.
 ## Files
 
 - **`manifoldann_wrapper.py`** - Python↔Julia bridge using juliacall
-  - Wraps: LSH, HNSW, KDTree, BruteForce
+  - Wraps: LSH, HNSW, KDTree, NN-Descent, BruteForce
   - Supports batch queries for performance
 
 - **`benchmark.py`** - Benchmark script
-  - Tests ManifoldANN vs hnswlib vs Annoy
+  - Tests ManifoldANN vs hnswlib vs Annoy (plus optional FAISS, SciPy KDTree)
   - Measures QPS, recall@10, build time
   - Automatically uses batch queries for Julia algorithms
   - Compares both `neighbor_policy=heuristic` and `neighbor_policy=diversified` HNSW variants
+  - Includes the NN-Descent index so build-time/recall trade-offs can be compared directly
 - **`fetch_ann_benchmarks.sh`** - Clones the upstream ann-benchmarks repo (pinned commit)
 
 - **`setup.sh`** - Automated setup (venv + dependencies)
@@ -101,13 +102,33 @@ For most benchmarking use cases (query time >1ms), overhead is acceptable (1-2%)
 - **ManifoldANN is currently single-threaded** (multithreading planned)
 - Datasets cached in `data/` after first download
 
+## NN-Descent baselines
+
+For a like-for-like NN-Descent comparison on the Python side, consider
+[PyNNDescent](https://github.com/lmcinnes/pynndescent). Install with
+`pip install pynndescent` and hook it into `benchmark.py` the same way other
+external algorithms are wired. PyNNDescent is well-maintained and mirrors the
+algorithmic knobs exposed in this repository, making it the most relevant
+baseline for NN-Descent specific experiments.
+
 ## Available Datasets
+
+The benchmark script automatically selects the correct distance metric for each dataset:
 
 | Dataset | Dimensions | Train | Test | Size | Metric |
 |---------|-----------|-------|------|------|--------|
 | fashion-mnist | 784 | 60K | 10K | ~30MB | Euclidean |
 | glove-25 | 25 | 1.18M | 10K | ~120MB | Angular |
 | glove-50 | 50 | 1.18M | 10K | ~240MB | Angular |
+| glove-100 | 100 | 1.18M | 10K | ~470MB | Angular |
+| mnist | 784 | 60K | 10K | ~30MB | Euclidean |
+| sift | 128 | 1M | 10K | ~500MB | Euclidean |
+
+**Distance Metrics:**
+- **Euclidean**: Uses `default_squared_distance` (squared L2 distance)
+- **Angular**: Uses `squared_cosine_distance` (cosine distance for direction similarity)
+
+The wrapper automatically selects the appropriate Julia distance function based on the dataset's metric configuration in `DATASET_CONFIG`.
 
 ## Troubleshooting
 
