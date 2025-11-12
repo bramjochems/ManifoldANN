@@ -59,13 +59,15 @@ def get_algorithm_metadata(algo_name: str, metadata_dict: dict) -> dict:
     return {}
 
 
-def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10):
+def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None):
     """Run benchmarks for a single dataset configuration.
 
     Args:
         config_name: Name of the config file (without .yaml extension)
         data_dir: Directory for downloading/storing datasets
         k: Number of neighbors to retrieve
+        n_train: Number of training points (None uses config, 0 uses full dataset)
+        n_test: Number of test queries (None uses config, 0 uses full dataset)
     """
     # Load configuration and algorithm metadata
     print("=" * 80)
@@ -76,8 +78,10 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10):
 
     dataset_name = config["dataset"]
     metric = config["metric"]
-    n_train = config["n_train"]
-    n_test = config["n_test"]
+
+    # Use command-line values if provided, otherwise use config values
+    n_train = n_train if n_train is not None else config["n_train"]
+    n_test = n_test if n_test is not None else config["n_test"]
 
     print(f"Dataset: {dataset_name}")
     print(f"Metric: {metric}")
@@ -194,16 +198,33 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10):
 
 def main():
     """Main entry point."""
+    # Get available configs for help text
+    from benchmarking.utils.config import list_available_configs
+    available_configs = list_available_configs()
+    config_list = ", ".join(available_configs) if available_configs else "none found"
+
     parser = argparse.ArgumentParser(
-        description="ManifoldANN Benchmarking Suite",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description="ManifoldANN Benchmarking Suite - Compare ANN algorithms",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+Examples:
+  python benchmark.py fashion-mnist          # Run fashion-mnist benchmark
+  python benchmark.py sift -k 20             # Run SIFT with k=20 neighbors
+  python benchmark.py mnist --n-train 5000   # Use 5000 training points
+  python benchmark.py mnist --n-train 0      # Use full training dataset
+  python benchmark.py --list-configs         # Show all available datasets
+  python benchmark.py --list-algorithms      # Show all available algorithms
+
+Available datasets:
+  {config_list}
+        """,
     )
 
     parser.add_argument(
         "config",
         nargs="?",
         default="fashion-mnist",
-        help="Dataset configuration name (without .yaml)",
+        help="Dataset configuration name (without .yaml extension)",
     )
 
     parser.add_argument(
@@ -217,6 +238,20 @@ def main():
         type=int,
         default=10,
         help="Number of neighbors to retrieve",
+    )
+
+    parser.add_argument(
+        "--n-train",
+        type=int,
+        default=None,
+        help="Number of training points (0 or omit for config default, use full dataset with large value)",
+    )
+
+    parser.add_argument(
+        "--n-test",
+        type=int,
+        default=None,
+        help="Number of test queries (0 or omit for config default, use full dataset with large value)",
     )
 
     parser.add_argument(
@@ -235,8 +270,7 @@ def main():
 
     # Handle --list-configs
     if args.list_configs:
-        from benchmarking.utils.config import list_available_configs
-        configs = list_available_configs()
+        configs = available_configs
         print("Available dataset configurations:")
         for config in configs:
             print(f"  - {config}")
@@ -252,7 +286,7 @@ def main():
         return
 
     # Run benchmark
-    run_benchmark(args.config, args.data_dir, args.k)
+    run_benchmark(args.config, args.data_dir, args.k, args.n_train, args.n_test)
 
 
 if __name__ == "__main__":

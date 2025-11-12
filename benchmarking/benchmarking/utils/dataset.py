@@ -50,8 +50,8 @@ def load_dataset(
 
     Args:
         dataset_path: Path to HDF5 dataset file
-        n_train: Maximum number of training points (None for all)
-        n_test: Maximum number of test queries (None for all)
+        n_train: Maximum number of training points (None or 0 for all)
+        n_test: Maximum number of test queries (None or 0 for all)
 
     Returns:
         Tuple of (train_data, test_queries, ground_truth_neighbors)
@@ -67,16 +67,16 @@ def load_dataset(
         print(f"Original test shape: {test.shape}")
         print(f"Distance metric: {distance_metric}")
 
-        # Limit training set if requested
-        if n_train and train.shape[0] > n_train:
+        # Limit training set if requested (None or 0 means use all)
+        if n_train is not None and n_train > 0 and train.shape[0] > n_train:
             print(f"\n⚠️  Limiting train set from {train.shape[0]} to {n_train} samples")
             print(f"   Recomputing ground truth neighbors for limited dataset...")
             train = train[:n_train]
             neighbors = _recompute_ground_truth(train, test, distance_metric, neighbors.shape[1])
             print(f"   Ground truth recomputed for {n_train} train samples")
 
-        # Limit test set if requested
-        if n_test and test.shape[0] > n_test:
+        # Limit test set if requested (None or 0 means use all)
+        if n_test is not None and n_test > 0 and test.shape[0] > n_test:
             print(f"   Limiting test set from {test.shape[0]} to {n_test} queries")
             test = test[:n_test]
             neighbors = neighbors[:n_test]
