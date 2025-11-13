@@ -52,5 +52,7 @@ mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP,D} <: AbstractANNIn
     distance::D
 end
 
+index_distance(index::HNSWIndex) = index.distance
+
 configured_k(::HNSWIndex) = nothing
 supports_mutation(::HNSWIndex) = true

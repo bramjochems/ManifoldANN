@@ -4,11 +4,19 @@ Experimental Julia package for approximate nearest neighbours (ANN) on manifolds
 
 ## Implemented indices
 
+### Single-Level Indices
 - `BruteForceIndex` – exact baseline with multithreaded scans
 - `KDTreeIndex` – variance/cyclic split heuristics
 - `LSHIndex` – multi-table random hyperplane + binned hashes
 - `HNSWIndex` – configurable layer planner, neighbor policies, traversal policies
 - `NNDescentIndex` – policy-driven NN-Descent graph builder with greedy graph search queries (see `docs/examples/indices/05-nndescent-index.jl`)
+
+### Multi-Level Indices
+- `MultiLevelIndex` – FAISS-like hierarchical indices with pluggable transforms, routing strategies, and merge policies
+  - Supports IVF (Inverted File with Vector quantization) via `KMeansTransform`
+  - Arbitrary nesting depth for multi-level hierarchies
+  - Configurable routing strategies (`TopKRouting`, `ExhaustiveRouting`)
+  - See `docs/examples/indices/06-ivf-index.jl` and `docs/transforms.md` for details
 
 ## Developing
 

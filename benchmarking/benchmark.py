@@ -117,14 +117,14 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         try:
             # Build index
             print("Building index...")
-            build_start = time.time()
+            build_start = time.perf_counter()
             algo.fit(train)
-            build_time = time.time() - build_start
+            build_time = time.perf_counter() - build_start
             print(f"✓ Build time: {build_time:.2f}s")
 
             # Query
             print(f"Querying {n_test} test points...")
-            query_start = time.time()
+            query_start = time.perf_counter()
 
             # Use batch query if available, otherwise loop
             if hasattr(algo, "query_batch"):
@@ -132,8 +132,8 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             else:
                 predictions = [algo.query(q, k) for q in test]
 
-            query_time = time.time() - query_start
-            qps = n_test / query_time
+            query_time = time.perf_counter() - query_start
+            qps = n_test / query_time if query_time > 0 else float("inf")
             print(f"✓ Query time: {query_time:.2f}s ({qps:.0f} queries/sec)")
 
             # Compute recall
@@ -148,6 +148,7 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
                 "name": algo_name,
                 "display": str(algo),
                 "source": metadata.get("source", "Unknown"),
+                "type": metadata.get("type", "unknown"),
                 "build_time": build_time,
                 "query_time": query_time,
                 "qps": qps,
@@ -174,10 +175,10 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     results.sort(key=lambda x: x["recall"], reverse=True)
 
     # Print results table
-    print(f"{'Algorithm':<30} {'Source':<28} {'Build(s)':>10} {'QPS':>10} {'Recall@'+str(k):>12}")
-    print("─" * 93)
+    print(f"{'Algorithm':<30} {'Source':<28} {'Type':<10} {'Build(s)':>10} {'QPS':>10} {'Recall@'+str(k):>12}")
+    print("─" * 103)
     for r in results:
-        print(f"{r['name']:<30} {r['source']:<28} {r['build_time']:>10.2f} {r['qps']:>10.0f} {r['recall']:>12.4f}")
+        print(f"{r['name']:<30} {r['source']:<28} {r['type']:<10} {r['build_time']:>10.2f} {r['qps']:>10.0f} {r['recall']:>12.4f}")
 
     # Print parameter details
     print(f"\n{'─' * 80}")

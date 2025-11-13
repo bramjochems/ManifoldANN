@@ -1,6 +1,6 @@
 PYTHON ?= python3
 VENV_DIR := benchmarking/venv
-VENV_PYTHON := $(VENV_DIR)/bin/python
+VENV_ACTIVATE := venv/bin/activate
 
 .PHONY: test format benchmark benchmark-setup clean
 
@@ -18,7 +18,7 @@ benchmark-setup:
 benchmark:
 	@if [ -d "$(VENV_DIR)" ]; then \
 		echo "Using virtual environment at $(VENV_DIR)"; \
-		cd benchmarking && $(VENV_PYTHON) benchmark.py $(ARGS); \
+		cd benchmarking && . $(VENV_ACTIVATE) && python benchmark.py $(ARGS); \
 	else \
 		echo "Virtual environment not found. Run 'make benchmark-setup' first."; \
 		echo "Falling back to system Python..."; \

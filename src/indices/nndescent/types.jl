@@ -112,6 +112,8 @@ mutable struct NNDescentIndex{T<:LinearAlgebra.BlasFloat,D,SP,SYM} <: AbstractGr
     neighbors::Vector{Vector{Int}}
 end
 
+index_distance(index::NNDescentIndex) = index.distance
+
 configured_k(index::NNDescentIndex) = index.k
 supports_layers(::NNDescentIndex) = false
 supports_metadata(::NNDescentIndex) = false

@@ -11,6 +11,7 @@ callers must still pass `data` when querying. Keywords:
 - `convergence_threshold`: Relative improvement threshold to stop early
 - `sampling_policy`: `UniformPairSampling`, `:uniform`, or `nothing` (defaults to uniform)
 - `symmetry_policy`: `FullSymmetry()`, `PrunedSymmetry(1.5)`, `NoSymmetry()`, or symbol (defaults to `:full`)
+- `apply_symmetry_continuously`: If true, apply symmetry after each iteration; if false, apply only at end (default false)
 - `rng`: RNG used for initialization and sampling
 - `distance`: Distance function (defaults to `default_squared_distance`)
 - `max_candidate_neighbors`: Maximum number of neighbor IDs per node considered each iteration (default 64)
@@ -23,6 +24,7 @@ function build_index(
     convergence_threshold::Float64 = 1e-3,
     sampling_policy::Union{AbstractNNDescentSamplingPolicy,Symbol,Nothing} = nothing,
     symmetry_policy::Union{AbstractSymmetryPolicy,Symbol,Nothing} = nothing,
+    apply_symmetry_continuously::Bool = false,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_squared_distance,
     max_candidate_neighbors::Int = 64,
@@ -66,6 +68,7 @@ function build_index(
         k,
         resolved_sampling_policy,
         resolved_symmetry_policy,
+        apply_symmetry_continuously,
         max_iterations,
         convergence_threshold,
         rng,
@@ -150,7 +153,12 @@ function _initialize_random_neighbors!(
             push!(chosen, candidate)
             dist = distance(view(data, :, i), view(data, :, candidate))
             # All initial neighbors are "new"
+            # Add bidirectional edges (like NearestNeighborDescent.jl)
+            # This improves initial graph connectivity significantly
             push!(node.new_neighbors, candidate, dist)
+            # Add reverse edge using unsafe_push! to allow exceeding capacity
+            # Symmetry policy will prune back to appropriate size later
+            unsafe_push!(graph[candidate].new_neighbors, i, dist)
             added += 1
         end
     end
@@ -164,6 +172,7 @@ function _run_nndescent!(
     k::Int,
     sampling_policy::AbstractNNDescentSamplingPolicy,
     symmetry_policy::AbstractSymmetryPolicy,
+    apply_symmetry_continuously::Bool,
     max_iterations::Int,
     convergence_threshold::Float64,
     rng::AbstractRNG,
@@ -200,6 +209,12 @@ function _run_nndescent!(
             end
         end
 
+        # Apply symmetry policy after each iteration if requested
+        # This maintains graph symmetry during construction, improving neighbor discovery
+        if apply_symmetry_continuously
+            apply_symmetry_policy!(graph, k, symmetry_policy)
+        end
+
         # Move all "new" neighbors to "old" for next iteration
         @inbounds for i in 1:n
             _transition_neighbors!(graph[i])
@@ -211,9 +226,11 @@ function _run_nndescent!(
         end
     end
 
-    # Apply symmetry policy only once at the end
-    # This is much more efficient than applying it every iteration
-    apply_symmetry_policy!(graph, k, symmetry_policy)
+    # Apply symmetry policy at the end if not applied continuously
+    # When applied only once at the end, this is more efficient but may reduce graph quality
+    if !apply_symmetry_continuously
+        apply_symmetry_policy!(graph, k, symmetry_policy)
+    end
 
     return nothing
 end
@@ -477,11 +494,22 @@ function _finalize_neighbors(
 
         # Collect all neighbors from both heaps
         all_neighbors = Vector{Neighbor{T}}()
+        seen_ids = Set{Int}()  # Track seen IDs to prevent duplicates
+
+        # Add neighbors from old_neighbors heap, checking for duplicates
         for nb in node.old_neighbors
-            push!(all_neighbors, nb)
+            if !(nb.id in seen_ids)
+                push!(all_neighbors, nb)
+                push!(seen_ids, nb.id)
+            end
         end
+
+        # Add neighbors from new_neighbors heap, checking for duplicates
         for nb in node.new_neighbors
-            push!(all_neighbors, nb)
+            if !(nb.id in seen_ids)
+                push!(all_neighbors, nb)
+                push!(seen_ids, nb.id)
+            end
         end
 
         # Sort by distance to ensure we keep the closest neighbors

@@ -72,6 +72,18 @@ meaning "no preference/limit".
 """
 configured_k(::AbstractANNIndex) = nothing
 
+# Distance helper -------------------------------------------------------------
+
+"""
+    index_distance(index::AbstractANNIndex) -> Union{Nothing, Function}
+
+Return the distance function intrinsically associated with `index`, if any.
+Indices that store their metric (e.g. HNSW, BruteForce) should override this
+to expose it. The default `nothing` signals that callers should fall back to
+their own distance function when recomputing neighbor scores.
+"""
+index_distance(::AbstractANNIndex) = nothing
+
 # Capability introspection hooks let algorithms branch cheaply without repeated
 # type checks or ad-hoc keyword plumbing.
 """

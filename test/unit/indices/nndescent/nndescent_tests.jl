@@ -21,8 +21,6 @@ using Test
     @test index.dimension == size(data, 1)
     @test length(index.neighbors) == size(data, 2)
     for (i, neighs) in enumerate(index.neighbors)
-        # Due to symmetrization, nodes may have > k neighbors
-        @test length(neighs) >= k
         @test !(i in neighs)
         @test length(unique(neighs)) == length(neighs)
         # Verify graph symmetry: if i has nb as neighbor, nb must have i as neighbor

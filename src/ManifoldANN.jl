@@ -12,6 +12,12 @@ include("indices/kdtree.jl")
 include("indices/hnsw.jl")
 include("indices/nndescent.jl")
 
+# Transform module
+include("transforms/transforms.jl")
+
+# Multi-level indices
+include("indices/multilevel/multilevel_index.jl")
+
 export AbstractANNIndex,
        AbstractGraphIndex,
        AbstractLSHHash,
@@ -38,6 +44,7 @@ export AbstractANNIndex,
        make_binning_hash,
        make_random_hyperplane_hash,
        configured_k,
+       index_distance,
        supports_layers,
        supports_metadata,
        supports_mutation,
@@ -46,6 +53,31 @@ export AbstractANNIndex,
        recall_at_k,
        default_distance,
        default_squared_distance,
-       squared_cosine_distance
+       squared_cosine_distance,
+       # Transforms
+       AbstractTransform,
+       TransformResult,
+       IdentityTransform,
+       KMeansTransform,
+       KMeansAssignment,
+       fit!,
+       transform,
+       has_bucketing,
+       get_bucket_assignment,
+       partition_by_transform,
+       apply_transform_batch,
+       # Multi-level indices
+       AbstractIndexConfig,
+       TerminalConfig,
+       TransformedConfig,
+       AbstractRoutingStrategy,
+       TopKRouting,
+       ExhaustiveRouting,
+       AbstractMergeStrategy,
+       SimpleMerge,
+       TransformedIndex,
+       MultiLevelIndex,
+       build_ivf_hnsw_index,
+       Neighbor
 
 end

@@ -9,6 +9,7 @@ from .wrappers.manifoldann import (
     ManifoldANN_LSH,
     ManifoldANN_KDTree,
     ManifoldANN_HNSW,
+    ManifoldANN_IVFHNSW,
     ManifoldANN_NNDescent,
 )
 from .wrappers.annoy import Annoy
@@ -21,11 +22,14 @@ from .wrappers.julia_external import NearestNeighbors_KDTree, HNSW_jl, NearestNe
 
 # Registry mapping algorithm names to their wrapper classes
 ALGORITHM_REGISTRY: Dict[str, Type[BaseANNWrapper]] = {
-    "ManifoldANN-BruteForce": ManifoldANN_BruteForce,
-    "ManifoldANN-LSH": ManifoldANN_LSH,
-    "ManifoldANN-KDTree": ManifoldANN_KDTree,
-    "ManifoldANN-HNSW": ManifoldANN_HNSW,
-    "ManifoldANN-NNDescent": ManifoldANN_NNDescent,
+    # ManifoldANN algorithms (with MANN- prefix for cleaner output)
+    "MANN-BruteForce": ManifoldANN_BruteForce,
+    "MANN-LSH": ManifoldANN_LSH,
+    "MANN-KDTree": ManifoldANN_KDTree,
+    "MANN-HNSW": ManifoldANN_HNSW,
+    "MANN-IVF-HNSW": ManifoldANN_IVFHNSW,
+    "MANN-NNDescent": ManifoldANN_NNDescent,
+    # External libraries
     "Annoy": Annoy,
     "HNSWlib": HNSWlib,
     "FAISS-IVF": FAISS_IVF,

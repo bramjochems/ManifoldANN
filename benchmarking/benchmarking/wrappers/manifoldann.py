@@ -370,6 +370,73 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
         return "ManifoldANN-HNSW"
 
 
+class ManifoldANN_IVFHNSW(ManifoldANNWrapper):
+    """Wrapper for the IVF (KMeans) + HNSW multi-level index."""
+
+    def __init__(
+        self,
+        metric,
+        nlist=64,
+        routing_k=8,
+        kmeans_init="kmeans_plus_plus",
+        kmeans_max_iters=50,
+        kmeans_tol=1e-4,
+        M=16,
+        ef_construction=200,
+        ef_search=64,
+        neighbor_policy="diversified",
+    ):
+        super().__init__(metric)
+        self._nlist = int(nlist)
+        self._routing_k = int(routing_k)
+        self._kmeans_init = kmeans_init
+        self._kmeans_max_iters = int(kmeans_max_iters)
+        self._kmeans_tol = float(kmeans_tol)
+        self._M = int(M)
+        self._ef_construction = int(ef_construction)
+        self._ef_search = int(ef_search)
+        self._neighbor_policy = neighbor_policy
+
+    def _kmeans_metric(self):
+        if self._metric == "angular":
+            return jl.seval("ManifoldANN.Distances.CosineDist()")
+        return jl.seval("ManifoldANN.Distances.Euclidean()")
+
+    def fit(self, X):
+        """Build the IVF+HNSW index."""
+        super().fit(X)
+        distance_fn = self._get_distance_function()
+        routing_k = max(1, min(self._routing_k, self._nlist))
+        kmeans_metric = self._kmeans_metric()
+        self._index = jl.build_ivf_hnsw_index(
+            self._data,
+            nlist=self._nlist,
+            routing_k=routing_k,
+            kmeans_distance=kmeans_metric,
+            kmeans_init=jl.Symbol(self._kmeans_init),
+            kmeans_max_iters=self._kmeans_max_iters,
+            kmeans_tol=self._kmeans_tol,
+            hnsw_M=self._M,
+            hnsw_ef_construction=self._ef_construction,
+            hnsw_ef_search=self._ef_search,
+            hnsw_neighbor_policy=jl.Symbol(self._neighbor_policy),
+            distance=distance_fn,
+        )
+
+    def __str__(self):
+        return (
+            "ManifoldANN-IVF-HNSW("
+            f"nlist={self._nlist}, routing_k={self._routing_k}, "
+            f"M={self._M}, ef_construction={self._ef_construction}, "
+            f"ef_search={self._ef_search}, neighbor_policy={self._neighbor_policy}, "
+            f"kmeans_init={self._kmeans_init})"
+        )
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-IVF-HNSW"
+
+
 class ManifoldANN_NNDescent(ManifoldANNWrapper):
     """Wrapper for ManifoldANN NNDescentIndex."""
 
@@ -381,6 +448,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         convergence_threshold=0.01,
         sample_rate=0.5,
         symmetry_policy="pruned",
+        apply_symmetry_continuously=False,
         ef_search=None,
     ):
         """Initialize NN-Descent wrapper.
@@ -392,6 +460,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             convergence_threshold: Relative improvement threshold to stop early (default: 0.01 = 1%)
             sample_rate: Fraction of candidate pairs to evaluate (default: 0.5 = 2x faster)
             symmetry_policy: Graph symmetry strategy (default: 'pruned' for 1.5x degree multiplier)
+            apply_symmetry_continuously: Apply symmetry after each iteration (True) or only at end (False, default)
             ef_search: Beam width for graph search queries (default: 2*k)
         """
         super().__init__(metric)
@@ -400,6 +469,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         self._convergence_threshold = float(convergence_threshold)
         self._sample_rate = float(sample_rate)
         self._symmetry_policy = symmetry_policy
+        self._apply_symmetry_continuously = bool(apply_symmetry_continuously)
         self._ef_search = ef_search if ef_search is not None else max(self._k, 2 * self._k)
 
     def fit(self, X):
@@ -419,6 +489,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             convergence_threshold=self._convergence_threshold,
             sampling_policy=sampling_policy,
             symmetry_policy=symmetry_symbol,
+            apply_symmetry_continuously=self._apply_symmetry_continuously,
             distance=distance_fn,
         )
 
@@ -449,11 +520,12 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         return [[int(idx) - 1 for idx in result] for result in results]
 
     def __str__(self):
+        symmetry_mode = "continuous" if self._apply_symmetry_continuously else "deferred"
         return (
             "ManifoldANN-NNDescent("
             f"k={self._k}, max_iterations={self._max_iterations}, "
             f"convergence_threshold={self._convergence_threshold}, "
-            f"sample_rate={self._sample_rate}, symmetry={self._symmetry_policy}, "
+            f"sample_rate={self._sample_rate}, symmetry={self._symmetry_policy} ({symmetry_mode}), "
             f"ef_search={self._ef_search})"
         )
 

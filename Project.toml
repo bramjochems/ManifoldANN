@@ -4,11 +4,13 @@ version = "0.1.0"
 authors = ["Bram"]
 
 [deps]
+Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
 JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
+Distances = "0.10.12"
 JuliaFormatter = "2.2.0"
 
 [extras]

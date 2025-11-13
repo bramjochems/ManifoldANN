@@ -41,6 +41,40 @@ Below is a quick reference of the currently implemented indices and their most r
 - **Mutation**: `insert!(index, data, point; rng=...)` expects the caller to append the new column to `data` first; the index updates only its graph metadata.
 - **Examples**: `docs/examples/indices/ex04-hnsw-index.jl` (index usage) and `docs/examples/graphs/04-hnsw-knn-graph.jl` (graph export).
 
+## MultiLevelIndex
+- **Scope**: FAISS-like hierarchical indices with configurable transforms, routing, and merge strategies; enables IVF, multi-level clustering, and future PQ/OPQ pipelines.
+- **Builder keywords**:
+  - `config`: Declarative configuration tree specifying index structure (see below)
+  - `merge_strategy`: Strategy for combining results from multiple child indices (default: `SimpleMerge()`)
+- **Configuration**: Build using nested `TransformedConfig` and `TerminalConfig`:
+  ```julia
+  # IVF: KMeans(100) → HNSW per cluster
+  config = TransformedConfig(
+      KMeansTransform(k=100, distance=Euclidean(), init=:kmeans_plus_plus),
+      TopKRouting(5),  # Probe 5 nearest clusters
+      TerminalConfig(HNSWIndex, (M=16, ef_construction=200))
+  )
+  index = build_index(MultiLevelIndex, data, config)
+  ```
+  - Convenience: `build_ivf_hnsw_index(data; nlist=100, routing_k=8, hnsw_M=16, ...)` wires this pattern up directly.
+- **Transforms**:
+  - `IdentityTransform()`: Pass-through (useful for testing or mixed hierarchies)
+  - `KMeansTransform(k, distance; init=:kmeans_plus_plus)`: Cluster-based partitioning
+    - `init` can be `:random` or `:kmeans_plus_plus` (default)
+  - Future: `PQTransform`, `OPQTransform`, `PCATransform`
+- **Routing Strategies**:
+  - `TopKRouting(k)`: Probe k nearest clusters/partitions
+  - `ExhaustiveRouting()`: Probe all children (useful with IdentityTransform)
+- **Merge Strategies**:
+  - `SimpleMerge()`: Trust sub-index distances, sort globally, deduplicate
+  - Future: `RecomputeMerge` for accuracy with approximate distance computations
+- **Query keywords**: None currently; routing/merge behavior is configured at build time
+- **Mutation**: Immutable—rebuild when dataset changes
+- **Examples**:
+  - `docs/examples/indices/06-ivf-index.jl` (basic IVF)
+  - `docs/examples/indices/07-multilevel-hierarchy.jl` (two-level clustering)
+  - See `docs/transforms.md` for detailed transform documentation
+
 ## Common Guidance
 - Indices never store the raw dataset; always pass `data` to `query`.
 - Use `supports_mutation(index)` to branch on whether `insert!` is available.

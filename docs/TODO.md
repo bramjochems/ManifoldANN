@@ -47,7 +47,47 @@
 ### Potential Follow-ups
 
 - [ ] Tune `max_candidate_neighbors` defaults per dataset/metric and document recommended settings.
-- [ ] Retain neighbor distances through construction to enable a diversification/pruning pass similar to PyNNDescent’s angular check.
+- [ ] Retain neighbor distances through construction to enable a diversification/pruning pass similar to PyNNDescent's angular check.
 - [ ] Add an optional RP-tree or projection-tree seeding phase before random initialization to shrink required iterations.
 - [ ] Experiment with incremental symmetry (apply symmetry every few iterations) so reverse edges help convergence earlier.
 - [ ] Explore `Threads.@threads` or a modulo-based partitioning scheme to parallelize candidate evaluation once data structures are thread-safe.
+
+## Multi-Level Index Optimizations
+
+**Context:** The multi-level index architecture (IVF, multi-level hierarchies) is now implemented with two key optimizations already in place: parallel child index building and fast-path IdentityTransform. Additional batch transform optimizations are deferred until profiling justifies the complexity.
+
+### Implemented Optimizations
+
+- [x] **Parallel child index building** (`src/indices/multilevel/builder.jl`)
+  - Child indices are built in parallel using `Threads.@threads`
+  - Near-linear speedup potential (e.g., 4× with 4 threads)
+  - Biggest win for IVF with many clusters or deep hierarchies
+
+- [x] **Fast-path IdentityTransform** (`src/transforms/utils.jl`)
+  - Specialized `apply_transform_batch(::IdentityTransform, X)` returns input directly
+  - Zero-copy optimization for pass-through transforms
+  - Eliminates allocation overhead in non-bucketing hierarchies
+
+### Deferred Optimizations
+
+**Batch Transform API** (defer until profiling shows bottleneck):
+
+- [ ] Add `transform_batch(transform::AbstractTransform, X::Matrix)` interface
+  - **Rationale:** Enable transforms to provide vectorized implementations
+  - **Example:** KMeans could compute `pairwise_distances!(X, centroids)` once instead of per-column
+  - **Complexity:** Requires handling heterogeneous `TransformResult` types
+  - **Current status:** Per-column overhead likely small compared to child index building
+
+- [ ] Implement `transform_batch` for KMeansTransform
+  - Compute all point-to-centroid distances in single pass
+  - Eliminates `n` separate `compute_distances` calls in `partition_by_transform`
+  - Expected speedup: 10-30% for transforms with expensive distance computations
+
+- [ ] Extend `apply_transform_batch` to use optional `transform_batch`
+  - Fall back to per-column loop if batch method not available
+  - Maintains backward compatibility with existing transforms
+
+**When to revisit:**
+- If profiling shows `partition_by_transform` is >20% of build time
+- When implementing PQ/OPQ transforms that would benefit from batch processing
+- If datasets grow large enough that allocation overhead dominates

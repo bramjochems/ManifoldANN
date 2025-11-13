@@ -19,6 +19,8 @@ mutable struct BruteForceIndex{T,D} <: AbstractANNIndex
     distance::D
 end
 
+index_distance(index::BruteForceIndex) = index.distance
+
 """
     build_index(BruteForceIndex, data; distance=default_distance)
 

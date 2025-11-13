@@ -5,33 +5,69 @@ n_train: 10000
 n_test: 1000
 
 algorithms:
-  ManifoldANN-BruteForce: {}
+  MANN-BruteForce: {}
 
-  ManifoldANN-LSH:
+  MANN-LSH:
     n_tables: 20
     hash_length: 8
 
-  ManifoldANN-HNSW-heuristic:
+  MANN-HNSW-heuristic:
     M: 16
     ef_construction: 200
     ef_search: 50
     neighbor_policy: heuristic
 
-  ManifoldANN-HNSW-diversified:
+  MANN-HNSW-diversified:
     M: 16
     ef_construction: 200
     ef_search: 50
     neighbor_policy: diversified
 
-  ManifoldANN-KDTree:
+  MANN-IVF-HNSW:
+    nlist: 128
+    routing_k: 10
+    M: 16
+    ef_construction: 200
+    ef_search: 64
+    neighbor_policy: diversified
+
+  MANN-KDTree:
     axis_selector: variance
 
-  ManifoldANN-NNDescent:
+  MANN-NNDescent-pruned-continuous:
     k: 32
     max_iterations: 5
     convergence_threshold: 0.01
     sample_rate: 0.5
     symmetry_policy: pruned
+    apply_symmetry_continuously: true
+    ef_search: 64
+
+  MANN-NNDescent-pruned-deferred:
+    k: 32
+    max_iterations: 5
+    convergence_threshold: 0.01
+    sample_rate: 0.5
+    symmetry_policy: pruned
+    apply_symmetry_continuously: false
+    ef_search: 64
+
+  MANN-NNDescent-full-continuous:
+    k: 32
+    max_iterations: 5
+    convergence_threshold: 0.01
+    sample_rate: 0.5
+    symmetry_policy: full
+    apply_symmetry_continuously: true
+    ef_search: 64
+
+  MANN-NNDescent-full-deferred:
+    k: 32
+    max_iterations: 5
+    convergence_threshold: 0.01
+    sample_rate: 0.5
+    symmetry_policy: full
+    apply_symmetry_continuously: false
     ef_search: 64
 
   Annoy:
