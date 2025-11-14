@@ -26,7 +26,16 @@ end
 # Required methods
 fit!(transform::AbstractTransform, X::Matrix)
 transform(transform::AbstractTransform, x::Vector)::TransformResult
+
+# Optional trait
+preserves_data(transform::AbstractTransform)::Bool
 ```
+
+The `preserves_data` predicate defaults to `false`. Transforms that simply attach routing
+metadata (e.g., `IdentityTransform`, `KMeansTransform`) override it to return `true`, which
+allows multi-level indices to reuse caller-provided datasets instead of caching redundant
+partitions. Any transform that produces a new representation should leave the default so
+the transformed data is materialized once during build and reused for all queries.
 
 ## Available Transforms
 

@@ -6,7 +6,7 @@ configurable transforms, routing, and merging strategies.
 """
 
 """
-    MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, D} <: AbstractANNIndex
+    MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, D} <: AbstractANNIndex
 
 Top-level multi-level index with configurable merge strategy and distance function.
 
@@ -14,13 +14,14 @@ This wraps a TransformedIndex tree and adds a global merge strategy for
 combining results from multiple child indices.
 
 # Fields
-- `root::TransformedIndex{T,I}`: Root of the index tree
+- `root::TransformedIndex{T,I,C}`: Root of the index tree
 - `merge_strategy::AbstractMergeStrategy`: Strategy for merging results from multiple probes
 - `distance::D`: Distance function used for recomputing distances from terminal indices
 
 # Type Parameters
 - `T`: Type of root transform
 - `I`: Type of indices in root layer
+- `C`: Type of stored child datasets at the root (either `Nothing` or `Vector{<:AbstractMatrix}`)
 - `D`: Type of distance function
 
 # Examples
@@ -39,16 +40,16 @@ q = rand(Float32, size(X, 1))
 neighbors = query(index, X, q, 10)
 ```
 """
-struct MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, D} <: AbstractANNIndex
-    root::TransformedIndex{T,I}
+struct MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, D} <: AbstractANNIndex
+    root::TransformedIndex{T,I,C}
     merge_strategy::AbstractMergeStrategy
     distance::D
 
     function MultiLevelIndex(
-        root::TransformedIndex{T,I},
+        root::TransformedIndex{T,I,C},
         merge_strategy::AbstractMergeStrategy,
         distance::D
-    ) where {T<:AbstractTransform, I<:AbstractANNIndex, D}
-        new{T, I, D}(root, merge_strategy, distance)
+    ) where {T<:AbstractTransform, I<:AbstractANNIndex, C, D}
+        new{T, I, C, D}(root, merge_strategy, distance)
     end
 end

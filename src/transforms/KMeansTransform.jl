@@ -145,3 +145,5 @@ function transform(t::KMeansTransform, x::AbstractVector)
 
     return TransformResult(x, KMeansAssignment(distances))
 end
+
+preserves_data(::KMeansTransform) = true

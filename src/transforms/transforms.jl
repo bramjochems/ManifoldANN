@@ -15,6 +15,7 @@ This module provides transform abstractions for hierarchical ANN indices:
 - `KMeansTransform`, `KMeansAssignment`
 - `fit!`, `transform`
 - `has_bucketing`, `get_bucket_assignment`
+- `preserves_data`
 - `partition_by_transform`, `apply_transform_batch`
 """
 
@@ -34,5 +35,5 @@ export KMeansTransform, KMeansAssignment
 
 # Utilities
 include("utils.jl")
-export has_bucketing, get_bucket_assignment
+export has_bucketing, get_bucket_assignment, preserves_data
 export partition_by_transform, apply_transform_batch

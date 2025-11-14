@@ -11,7 +11,12 @@ The build process:
 """
 
 # Import transform utilities
-using ...ManifoldANN: has_bucketing, partition_by_transform, apply_transform_batch, default_distance
+using ...ManifoldANN:
+    has_bucketing,
+    partition_by_transform,
+    apply_transform_batch,
+    default_distance,
+    preserves_data
 
 """
     build_index(
@@ -89,9 +94,15 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
     # Sample one point to check assignment type
     sample_result = ManifoldANN.transform(config.transform, X[:, 1])
 
+    preserves = ManifoldANN.preserves_data(config.transform)
+
     if has_bucketing(sample_result.assignment)
         # Step 3a: Partition data by bucket assignments
-        partitions, id_mappings = partition_by_transform(X, config.transform)
+        partitions, id_mappings = partition_by_transform(
+            X,
+            config.transform;
+            capture_data = !preserves,
+        )
 
         # Step 3b: Build child index for each partition (in parallel)
         # CRITICAL: Must deepcopy child_config for each partition!
@@ -104,24 +115,46 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
         #
         # OPTIMIZATION: Build children in parallel since each partition is independent after deepcopy.
         # This provides near-linear speedup for IVF indices with many clusters.
-        n_partitions = length(partitions)
+        n_partitions = length(id_mappings)
         children = Vector{AbstractANNIndex}(undef, n_partitions)
+        stored_child_data = preserves ? nothing : partitions
 
         Threads.@threads for i in 1:n_partitions
-            children[i] = _build_from_config(partitions[i], deepcopy(config.child_config))
+            child_input = preserves ?
+                _view_partition(X, id_mappings[i]) :
+                stored_child_data[i]
+            children[i] = _build_from_config(child_input, deepcopy(config.child_config))
         end
 
-        # Step 4: Create TransformedIndex with ID mappings and partition data
-        return TransformedIndex(config.transform, config.routing, children, id_mappings, partitions)
+        # Step 4: Create TransformedIndex with ID mappings and optional stored data
+        return TransformedIndex(
+            config.transform,
+            config.routing,
+            children,
+            id_mappings,
+            stored_child_data,
+        )
     else
         # Step 3a: No bucketing - transform all data
-        X_transformed = apply_transform_batch(config.transform, X)
+        if preserves
+            child_input = X
+            stored_child_data = nothing
+        else
+            child_input = apply_transform_batch(config.transform, X)
+            stored_child_data = [child_input]
+        end
 
         # Step 3b: Build single child with transformed data
-        children = [_build_from_config(X_transformed, config.child_config)]
+        children = [_build_from_config(child_input, config.child_config)]
 
         # Step 4: Create TransformedIndex without ID mappings and with transformed data
-        return TransformedIndex(config.transform, config.routing, children, nothing, [X_transformed])
+        return TransformedIndex(
+            config.transform,
+            config.routing,
+            children,
+            nothing,
+            stored_child_data,
+        )
     end
 end
 
@@ -158,4 +191,8 @@ Recursive case: build a TransformedIndex from a TransformedConfig.
 function _build_from_config(X::AbstractMatrix, config::TransformedConfig)
     # Recursive case: build another TransformedIndex
     return _build_transformed(X, config)
+end
+
+@inline function _view_partition(X::AbstractMatrix, ids::Vector{Int})
+    @views return view(X, :, ids)
 end

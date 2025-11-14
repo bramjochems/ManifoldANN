@@ -25,15 +25,18 @@ The design must cleanly separate:
 We will use a **recursive tree structure** where each node is a `TransformedIndex` that can contain other `TransformedIndex` nodes or terminal indices.
 
 ```julia
-struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex} <: AbstractANNIndex
+struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
     transform::T
     routing_strategy::AbstractRoutingStrategy
     indices::Vector{I}  # Children (may be TransformedIndex or terminal)
+    id_mappings::Union{Nothing, Vector{Vector{Int}}}
+    child_data::C        # Optional stored datasets when the transform changes representation
 end
 
-struct MultiLevelIndex <: AbstractANNIndex
-    root::TransformedIndex
+struct MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, D} <: AbstractANNIndex
+    root::TransformedIndex{T,I,C}
     merge_strategy::AbstractMergeStrategy
+    distance::D
 end
 ```
 
@@ -61,6 +64,12 @@ Every transform **always returns both outputs**, even if one is trivial:
 - `IdentityTransform`: `(x, nothing)`
 - `KMeansTransform`: `(x, KMeansAssignment(distances))`
 - `PQTransform`: `(pq_codes, nothing)`
+
+Transforms also expose a `preserves_data(::AbstractTransform)` predicate. Transforms that only
+add routing metadata (e.g., `IdentityTransform`, `KMeansTransform`) return `true`, signaling that
+multi-level indices can reuse caller-provided data instead of caching redundant copies. Any
+transform that produces a new representation keeps the default `false`, and the resulting
+`TransformedIndex` stores the transformed datasets once during build so queries remain efficient.
 
 **Rationale**: Uniform interface simplifies composition. No special-casing for "bucketing" vs "encoding" transforms.
 

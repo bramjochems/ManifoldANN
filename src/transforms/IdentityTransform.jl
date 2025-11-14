@@ -33,3 +33,5 @@ fit!(::IdentityTransform, ::Matrix) = nothing
 Return the input unchanged with no bucketing information.
 """
 transform(::IdentityTransform, x::AbstractVector) = TransformResult(x, nothing)
+
+preserves_data(::IdentityTransform) = true

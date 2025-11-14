@@ -6,23 +6,30 @@ Compare ManifoldANN algorithms against other popular ANN libraries
 using standardized datasets and metrics.
 """
 
+# CRITICAL: Configure Julia threading BEFORE any imports
+# Julia threading must be set before the Julia runtime initializes, which happens
+# on the first juliacall import. We do this at the very top of the file.
 import os
 import sys
+
+if "JULIA_NUM_THREADS" not in os.environ:
+    import multiprocessing
+    n_threads = multiprocessing.cpu_count()
+    os.environ["JULIA_NUM_THREADS"] = str(n_threads)
+    print(f"⚙️  Auto-configured Julia threading: JULIA_NUM_THREADS={n_threads}")
+else:
+    print(f"⚙️  Using existing Julia threading: JULIA_NUM_THREADS={os.environ['JULIA_NUM_THREADS']}")
+
+# Suppress juliacall threading warning
+if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
+    os.environ["PYTHON_JULIACALL_HANDLE_SIGNALS"] = "yes"
+
+# Now safe to import other modules
 import time
 import argparse
 from pathlib import Path
 
 import numpy as np
-
-# Configure Julia threading BEFORE importing juliacall
-if "JULIA_NUM_THREADS" not in os.environ:
-    import multiprocessing
-    os.environ["JULIA_NUM_THREADS"] = str(multiprocessing.cpu_count())
-    print(f"ℹ️  Setting JULIA_NUM_THREADS={os.environ['JULIA_NUM_THREADS']} (auto-detected)")
-
-# Suppress juliacall threading warning
-if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
-    os.environ["PYTHON_JULIACALL_HANDLE_SIGNALS"] = "yes"
 
 # Add benchmarking package to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -59,6 +66,44 @@ def get_algorithm_metadata(algo_name: str, metadata_dict: dict) -> dict:
     return {}
 
 
+# Cache to avoid checking threading multiple times
+_julia_threading_verified = False
+
+def _verify_julia_threading():
+    """Verify that Julia threading is properly configured.
+
+    This checks the actual number of threads Julia is using and warns if it's
+    suboptimal. Only runs once per session.
+    """
+    global _julia_threading_verified
+
+    if _julia_threading_verified:
+        return
+
+    try:
+        from juliacall import Main as jl
+
+        # Check actual thread count in Julia
+        n_threads = jl.seval("Threads.nthreads()")
+
+        if n_threads == 1:
+            print(f"\n⚠️  WARNING: Julia is using only 1 thread!")
+            print(f"   Multi-threaded algorithms (IVF-HNSW, etc.) will run sequentially.")
+            print(f"   To enable threading, set JULIA_NUM_THREADS before running:")
+            print(f"   export JULIA_NUM_THREADS=$(nproc)  # Linux/WSL")
+            print(f"   export JULIA_NUM_THREADS=$(sysctl -n hw.ncpu)  # macOS")
+            print()
+        else:
+            print(f"✓ Julia threading enabled: {n_threads} threads\n")
+
+        _julia_threading_verified = True
+
+    except Exception as e:
+        # If juliacall isn't available yet, skip verification
+        # (it will be checked when the first Julia algorithm runs)
+        pass
+
+
 def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None):
     """Run benchmarks for a single dataset configuration.
 
@@ -88,6 +133,9 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     print(f"Training points: {n_train}")
     print(f"Test queries: {n_test}")
     print(f"k (neighbors): {k}")
+
+    # Verify Julia threading (only check once, when Julia is first initialized)
+    _verify_julia_threading()
 
     # Download and load dataset
     dataset_path = download_dataset(dataset_name, data_dir)

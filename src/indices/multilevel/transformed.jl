@@ -6,7 +6,7 @@ child indices based on the transform's assignment, and collects results.
 """
 
 """
-    TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex} <: AbstractANNIndex
+    TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
 
 An index that applies a transform before routing to child indices.
 
@@ -18,11 +18,12 @@ contain other TransformedIndex nodes or terminal indices, forming an arbitrary t
 - `routing_strategy::AbstractRoutingStrategy`: Strategy for selecting children to probe
 - `indices::Vector{I}`: Child indices (may be TransformedIndex or terminal indices)
 - `id_mappings::Union{Nothing, Vector{Vector{Int}}}`: Maps local IDs to global IDs for bucketing transforms
-- `partition_data::Union{Nothing, Vector{Matrix}}`: Partition data for bucketing transforms (for querying children)
+- `child_data::C`: Optional per-child datasets (only stored when the transform changes the representation)
 
 # Type Parameters
 - `T`: Type of transform
 - `I`: Type of child indices (may be Union type for mixed children)
+- `C`: Type of stored child datasets (either `Nothing` or `Vector{<:AbstractMatrix}`)
 
 # Examples
 ```julia
@@ -34,21 +35,21 @@ hnsw_indices = [build_index(HNSWIndex, partition; M=16) for partition in partiti
 ivf = TransformedIndex(kmeans, TopKRouting(5), hnsw_indices, id_mappings)
 ```
 """
-struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex} <: AbstractANNIndex
+struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
     transform::T
     routing_strategy::AbstractRoutingStrategy
     indices::Vector{I}
     id_mappings::Union{Nothing, Vector{Vector{Int}}}
-    partition_data::Union{Nothing, Vector}  # Vector of matrices (any element type)
+    child_data::C  # Either `nothing` or per-child data matrices
 
     function TransformedIndex(
         transform::T,
         routing_strategy::AbstractRoutingStrategy,
         indices::Vector{I},
         id_mappings::Union{Nothing, Vector{Vector{Int}}}=nothing,
-        partition_data::Union{Nothing, Vector}=nothing
-    ) where {T<:AbstractTransform, I<:AbstractANNIndex}
+        child_data::C=nothing,
+    ) where {T<:AbstractTransform, I<:AbstractANNIndex, C}
         isempty(indices) && throw(ArgumentError("Must have at least one child index"))
-        new{T, I}(transform, routing_strategy, indices, id_mappings, partition_data)
+        new{T, I, C}(transform, routing_strategy, indices, id_mappings, child_data)
     end
 end

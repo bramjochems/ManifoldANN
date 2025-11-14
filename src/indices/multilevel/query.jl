@@ -52,7 +52,7 @@ function query(
     kwargs...
 )
     # Query recursively through the index tree
-    all_results = _query_recursive(index.root, data, q, k, index.distance)
+    all_results = _query_recursive(index.root, data, q, k, index.distance; kwargs...)
 
     # Merge results using the merge strategy
     merged_neighbors = merge_results(index.merge_strategy, all_results, k)
@@ -136,7 +136,8 @@ function _query_recursive(
     data::AbstractMatrix,
     q::AbstractVector,
     k::Integer,
-    fallback_distance::Function
+    fallback_distance::Function;
+    kwargs...
 )
     # Step 1: Transform query point
     result = ManifoldANN.transform(node.transform, q)
@@ -149,28 +150,31 @@ function _query_recursive(
     # Step 3: Query each selected child index
     # Each child may return different result types depending on whether it's
     # a TransformedIndex (returns Vector{Vector{Neighbor}}) or terminal (needs conversion)
-    results = Vector{Vector{Neighbor{Float32}}}()
+    distance_type = _child_distance_type(node, data)
+    results = Vector{Vector{Neighbor{distance_type}}}()
 
-    for (i, child) in enumerate(probe_indices)
-        # Find which child index this is
-        child_idx = findfirst(==(child), node.indices)
+    for child_idx in probe_indices
+        child = node.indices[child_idx]
+        child_data = _resolve_child_data(node, child_idx, data)
 
-        # Get the appropriate data for this child
-        child_data = if !isnothing(node.partition_data)
-            node.partition_data[child_idx]
-        else
-            data  # Use original data if no partitioning
-        end
-
-        child_results = _query_node(child, child_data, q_transformed, k, fallback_distance)
+        child_results = _query_node(
+            child,
+            child_data,
+            q_transformed,
+            k,
+            fallback_distance;
+            kwargs...,
+        )
 
         # Map local IDs to global IDs if we have ID mappings
         if !isnothing(node.id_mappings)
             id_mapping = node.id_mappings[child_idx]
-
-            # Remap IDs in all result lists
             for result_list in child_results
-                remapped = [Neighbor(id_mapping[n.id], n.dist) for n in result_list]
+                remapped = Vector{Neighbor{distance_type}}(undef, length(result_list))
+                @inbounds for i in eachindex(result_list)
+                    n = result_list[i]
+                    remapped[i] = Neighbor(id_mapping[n.id], n.dist)
+                end
                 push!(results, remapped)
             end
         else
@@ -200,9 +204,10 @@ function _query_node(
     data::AbstractMatrix,
     q::AbstractVector,
     k::Integer,
-    fallback_distance::Function
+    fallback_distance::Function;
+    kwargs...
 )
-    return _query_recursive(node, data, q, k, fallback_distance)
+    return _query_recursive(node, data, q, k, fallback_distance; kwargs...)
 end
 
 """
@@ -230,21 +235,49 @@ function _query_node(
     data::AbstractMatrix,
     q::AbstractVector,
     k::Integer,
-    fallback_distance::Function
+    fallback_distance::Function;
+    kwargs...
 )
     # Query terminal index (returns Vector{Int})
-    ids = query(index, data, q, k)
+    ids = query(index, data, q, k; kwargs...)
 
     distance_fn = index_distance(index)
     distance_fn === nothing && (distance_fn = fallback_distance)
 
-    neighbors = Neighbor{Float32}[]
-    for id in ids
+    T = float(eltype(data))
+    neighbors = Vector{Neighbor{T}}(undef, length(ids))
+    @inbounds for (pos, id) in enumerate(ids)
         point = @view data[:, id]
-        dist = Float32(distance_fn(point, q))
-        push!(neighbors, Neighbor(id, dist))
+        dist = T(distance_fn(point, q))
+        neighbors[pos] = Neighbor(id, dist)
     end
 
     # Return as single-element vector for consistency
     return [neighbors]
+end
+
+@inline function _resolve_child_data(
+    node::TransformedIndex,
+    child_idx::Int,
+    parent_data::AbstractMatrix,
+)
+    if node.child_data === nothing
+        if isnothing(node.id_mappings)
+            return parent_data
+        else
+            ids = node.id_mappings[child_idx]
+            @views return view(parent_data, :, ids)
+        end
+    else
+        return node.child_data[child_idx]
+    end
+end
+
+@inline function _child_distance_type(node::TransformedIndex, parent_data::AbstractMatrix)
+    if node.child_data === nothing
+        return float(eltype(parent_data))
+    else
+        first_child = node.child_data[1]
+        return float(eltype(first_child))
+    end
 end

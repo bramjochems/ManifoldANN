@@ -64,7 +64,7 @@ struct ExhaustiveRouting <: AbstractRoutingStrategy end
         strategy::AbstractRoutingStrategy,
         assignment,
         indices::Vector{I}
-    )::Vector{I} where {I<:AbstractANNIndex}
+    )::Vector{Int} where {I<:AbstractANNIndex}
 
 Select which child indices to probe based on routing strategy and assignment info.
 
@@ -74,7 +74,7 @@ Select which child indices to probe based on routing strategy and assignment inf
 - `indices`: Vector of all available child indices
 
 # Returns
-- Vector of indices to probe (subset of `indices`)
+- Vector of integer positions into `indices` identifying children to probe
 
 # Examples
 ```julia
@@ -96,12 +96,25 @@ function select_indices(
     assignment::KMeansAssignment,
     indices::Vector{I}
 ) where {I<:AbstractANNIndex}
-    k = min(strategy.k, length(indices))
+    n_children = length(indices)
+    n_children > 0 || return Int[]
 
-    # Get indices of k nearest clusters (smallest distances)
-    nearest_indices = partialsortperm(assignment.distances, 1:k)
+    # Only the first `n_children` buckets were materialized during build.
+    # Later buckets correspond to empty clusters and do not have child indices.
+    n_distances = length(assignment.distances)
+    available = min(n_children, n_distances)
+    available > 0 ||
+        throw(ArgumentError("Transform produced no routing distances for TopKRouting"))
 
-    return indices[nearest_indices]
+    k = min(strategy.k, available)
+    k == 0 && return Int[]
+
+    distance_view = @view assignment.distances[1:available]
+
+    # Get indices of k nearest materialized clusters (smallest distances)
+    nearest_indices = partialsortperm(distance_view, 1:k)
+
+    return nearest_indices
 end
 
 # ExhaustiveRouting implementation
@@ -110,5 +123,5 @@ function select_indices(
     assignment,  # Ignored
     indices::Vector{I}
 ) where {I<:AbstractANNIndex}
-    return indices
+    return collect(eachindex(indices))
 end

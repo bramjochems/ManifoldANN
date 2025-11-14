@@ -39,6 +39,17 @@ struct TransformResult{T,B}
 end
 
 """
+    preserves_data(transform::AbstractTransform) -> Bool
+
+Return true when `transform` leaves the underlying data representation unchanged.
+Transforms that simply attach routing metadata (e.g., `KMeansTransform`,
+`IdentityTransform`) should override this to return `true` so that multi-level
+indices can avoid caching redundant copies of the dataset. The default is
+`false`, meaning callers must assume the transform produces a new representation.
+"""
+preserves_data(::AbstractTransform) = false
+
+"""
     fit!(transform::AbstractTransform, X::Matrix)
 
 Fit the transform to training data `X` (each column is a data point).
