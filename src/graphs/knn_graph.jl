@@ -49,8 +49,9 @@ function build_knn_graph(
     adjacency = Vector{Vector{Int}}(undef, n_points)
     request_k = resolved_k + (include_self ? 0 : 1)
     @views for col in 1:n_points
-        result = Vector{Int}(query(index, data, data[:, col], request_k; query_kwargs...))
-        adjacency[col] = _prepare_neighbors(result, col, resolved_k, include_self)
+        neighbors = query(index, data, data[:, col], request_k; query_kwargs...)
+        ids = neighbor_ids(neighbors)
+        adjacency[col] = _prepare_neighbors(ids, col, resolved_k, include_self)
     end
 
     stored_metadata = _prepare_metadata(metadata, n_points)

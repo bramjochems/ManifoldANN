@@ -14,13 +14,14 @@ function query(
     distance::Function = default_distance,
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_dimensions(index, data, q)
-    k <= 0 && return Int[]
+    S = float(T)
+    k <= 0 && return Neighbor{S}[]
     actual_k = min(Int(k), index.n_points)
-    actual_k == 0 && return Int[]
+    actual_k == 0 && return Neighbor{S}[]
 
     buffer = NeighborBuffer(actual_k)
     _search_kdtree!(index, index.root, data, q, buffer, distance)
-    return finalize_neighbors(buffer)
+    return finalize_neighbors(buffer, S)
 end
 
 mutable struct NeighborBuffer
@@ -56,11 +57,15 @@ function current_worst_distance(buf::NeighborBuffer)
     return maximum(buf.dists)
 end
 
-function finalize_neighbors(buf::NeighborBuffer)
+function finalize_neighbors(buf::NeighborBuffer, ::Type{S}) where {S<:AbstractFloat}
     len = buffer_length(buf)
-    len == 0 && return Int[]
+    len == 0 && return Neighbor{S}[]
     order = sortperm(1:len; by = i -> (buf.dists[i], buf.ids[i]))
-    return buf.ids[order]
+    results = Vector{Neighbor{S}}(undef, length(order))
+    @inbounds for (pos, idx) in enumerate(order)
+        results[pos] = Neighbor{S}(buf.ids[idx], S(buf.dists[idx]))
+    end
+    return results
 end
 
 function _search_kdtree!(

@@ -28,21 +28,25 @@ brute = build_index(BruteForceIndex, data)
 @info "Dataset summary" dimension n_points k
 
 query_point = randn(rng, dimension)
-approx_ids = query(hnsw, data, query_point, k; ef_search = 100)
-truth_ids = query(brute, data, query_point, k)
+approx_neighbors = query(hnsw, data, query_point, k; ef_search = 100)
+truth_neighbors = query(brute, data, query_point, k)
 
-function print_neighbors(label, ids)
+function print_neighbors(label, neighbors)
     println(label)
-    for id in ids
-        dist = LinearAlgebra.norm(@view(data[:, id]) .- query_point)
-        println("  id=$(lpad(id, 3)) dist=$(round(dist, digits = 4))")
+    for neighbor in neighbors
+        println(
+            "  id=$(lpad(neighbor.id, 3)) dist=$(round(neighbor.dist, digits=4))",
+        )
     end
 end
 
-print_neighbors("HNSW neighbors:", approx_ids)
-print_neighbors("Brute-force neighbors:", truth_ids)
+print_neighbors("HNSW neighbors:", approx_neighbors)
+print_neighbors("Brute-force neighbors:", truth_neighbors)
 
-overlap = length(intersect(Set(approx_ids), Set(truth_ids))) / k
+overlap =
+    length(
+        intersect(neighbor_ids(approx_neighbors) |> Set, neighbor_ids(truth_neighbors) |> Set),
+    ) / k
 @info "Recall for this query" recall = overlap
 
 println("▶ Demonstrating insert! with a nearby point.")

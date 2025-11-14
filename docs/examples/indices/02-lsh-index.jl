@@ -26,8 +26,11 @@ hyperplane_index = build_index(
 )
 
 query_point = randn(rng, dimension)
-neighbor_ids = query(hyperplane_index, data, query_point, 3)
-println("Random-hyperplane sample query results (ids): ", neighbor_ids)
+neighbors = query(hyperplane_index, data, query_point, 3)
+println(
+    "Random-hyperplane sample query results (id, dist): ",
+    [(n.id, round(n.dist, digits=4)) for n in neighbors],
+)
 
 # Insert a new point and keep storage aligned.
 new_point = randn(rng, dimension)
@@ -35,8 +38,11 @@ println("▶ Demonstrating insert! by appending a single point to the dataset.")
 data = hcat(data, new_point)
 insert!(hyperplane_index, new_point)
 
-neighbor_ids_after_insert = query(hyperplane_index, data, new_point, 1)
-println("Nearest neighbor for inserted point (should return its own id): ", neighbor_ids_after_insert)
+neighbor_after_insert = query(hyperplane_index, data, new_point, 1)
+println(
+    "Nearest neighbor for inserted point (should return its own id): ",
+    [(n.id, round(n.dist, digits=4)) for n in neighbor_after_insert],
+)
 
 # Demonstrate binning hash for Euclidean distance.
 println("▶ Rebuilding with a binning hash family suited for Euclidean distances.")
@@ -51,8 +57,13 @@ binning_index = build_index(
     use_offset = true,
 )
 
-euclid_ids = query(binning_index, data, query_point, 3)
-println("Binning-hash neighbors (ids): ", isempty(euclid_ids) ? "(none; consider raising bin_width or lowering hash_length)" : string(euclid_ids))
+euclid_neighbors = query(binning_index, data, query_point, 3)
+println(
+    "Binning-hash neighbors (id, dist): ",
+    isempty(euclid_neighbors) ?
+        "(none; consider raising bin_width or lowering hash_length)" :
+        string([(n.id, round(n.dist, digits=4)) for n in euclid_neighbors]),
+)
 
 # Compare recall against brute-force for a handful of random queries.
 brute = build_index(BruteForceIndex, data)
@@ -69,8 +80,14 @@ true_neighbors = [query(brute, data, q, k) for q in queries]
 hyperplane_neighbors = neighbors_for(hyperplane_index, queries)
 binning_neighbors = neighbors_for(binning_index, queries)
 
-recall_hyperplane = recall_at_k(hyperplane_neighbors, true_neighbors)
-recall_binning = recall_at_k(binning_neighbors, true_neighbors)
+recall_hyperplane = recall_at_k(
+    neighbor_ids.(hyperplane_neighbors),
+    neighbor_ids.(true_neighbors),
+)
+recall_binning = recall_at_k(
+    neighbor_ids.(binning_neighbors),
+    neighbor_ids.(true_neighbors),
+)
 
 @info "Recall over $n_eval queries" hyperplane = recall_hyperplane binning = recall_binning
 
@@ -78,10 +95,13 @@ println("Shown below: for each query we list the approximate neighbors vs the br
 for i in 1:n_eval
     q = queries[i]
     println("Query $i (norm=$(round(LinearAlgebra.norm(q), digits=3))):")
-    sorted_truth = sort(true_neighbors[i]; by = id -> LinearAlgebra.norm(@view(data[:, id]) .- q))
-    sorted_hyper = sort(hyperplane_neighbors[i]; by = id -> LinearAlgebra.norm(@view(data[:, id]) .- q))
-    sorted_bin = sort(binning_neighbors[i]; by = id -> LinearAlgebra.norm(@view(data[:, id]) .- q))
-    println("  truth      -> ", sorted_truth)
-    println("  hyperplane -> ", sorted_hyper)
-    println("  binning    -> ", sorted_bin)
+    sorted_truth = sort(true_neighbors[i]; by = n -> n.dist)
+    sorted_hyper = sort(hyperplane_neighbors[i]; by = n -> n.dist)
+    sorted_bin = sort(binning_neighbors[i]; by = n -> n.dist)
+    println("  truth      -> ", [(n.id, round(n.dist, digits=4)) for n in sorted_truth])
+    println(
+        "  hyperplane -> ",
+        [(n.id, round(n.dist, digits=4)) for n in sorted_hyper],
+    )
+    println("  binning    -> ", [(n.id, round(n.dist, digits=4)) for n in sorted_bin])
 end

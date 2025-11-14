@@ -53,7 +53,13 @@ end
 
     function ManifoldANN.query(index::FixedKIndex, data, q, k; kwargs...)
         n_points = size(data, 2)
-        return collect(1:min(k, n_points))
+        result_k = min(k, n_points)
+        T = float(eltype(data))
+        neighbors = Vector{Neighbor{T}}(undef, result_k)
+        @inbounds for i in 1:result_k
+            neighbors[i] = Neighbor{T}(i, zero(T))
+        end
+        return neighbors
     end
 
     data = randn(2, 3)

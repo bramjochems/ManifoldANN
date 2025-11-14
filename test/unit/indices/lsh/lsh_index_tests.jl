@@ -22,7 +22,8 @@ using LinearAlgebra
     @test index.dimension == dimension
 
     for i in 1:n_points
-        ids = query(index, data, data[:, i], 1)
+        neighbors = query(index, data, data[:, i], 1)
+        ids = neighbor_ids(neighbors)
         @test !isempty(ids)
         @test ids[1] == i
     end
@@ -42,7 +43,7 @@ end
 
     bad_q = randn(rng, 2)
     @test_throws DimensionMismatch query(index, data, bad_q, 1)
-    @test query(index, data, data[:, 1], 0) == Int[]
+    @test neighbor_ids(query(index, data, data[:, 1], 0)) == Int[]
 end
 
 @testset "LSHIndex determinism and candidate cap" begin
@@ -70,8 +71,8 @@ end
         hash_factory = make_random_hyperplane_hash,
     )
 
-    neighbors1 = query(index1, data, q, 10)
-    neighbors2 = query(index2, data, q, 10)
+    neighbors1 = neighbor_ids(query(index1, data, q, 10))
+    neighbors2 = neighbor_ids(query(index2, data, q, 10))
     @test neighbors1 == neighbors2
 
     capped = query(index1, data, q, 10; candidate_cap = 3)
@@ -94,7 +95,7 @@ end
     data = hcat(data, new_point)
     insert!(index, new_point)
 
-    result = query(index, data, new_point, 1)
+    result = neighbor_ids(query(index, data, new_point, 1))
     @test result[1] == size(data, 2)
 
     batch = randn(rng, 2, 2)
@@ -117,7 +118,7 @@ end
         use_offset = true,
     )
 
-    ids = query(index, data, data[:, 1], 2)
+    ids = neighbor_ids(query(index, data, data[:, 1], 2))
     @test !isempty(ids)
     @test ids[1] == 1
 end

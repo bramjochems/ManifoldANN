@@ -108,7 +108,9 @@ println("  Brute-force:")
 println()
 
 # Compute recalls
-function compute_recall(approx_ids, truth_ids)
+function compute_recall(approx_neighbors, truth_neighbors)
+    approx_ids = neighbor_ids(approx_neighbors)
+    truth_ids = neighbor_ids(truth_neighbors)
     return length(intersect(Set(approx_ids), Set(truth_ids))) / length(truth_ids)
 end
 

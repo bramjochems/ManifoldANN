@@ -8,8 +8,9 @@ function query(
     ef_search::Union{Nothing,Int} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_dimensions(index, data, q)
-    k <= 0 && return Int[]
-    index.n_points == 0 && return Int[]
+    S = float(T)
+    k <= 0 && return Neighbor{S}[]
+    index.n_points == 0 && return Neighbor{S}[]
     base_policy = index.traversal_policy
     ef = ef_search === nothing ? default_ef(base_policy) : ef_search
     ef = max(ef, k)
@@ -26,7 +27,12 @@ function query(
 
     sort!(base_results, by = c -> c.dist)
     limit = min(k, length(base_results))
-    return [base_results[i].id for i in 1:limit]
+    neighbors = Vector{Neighbor{S}}(undef, limit)
+    @inbounds for i in 1:limit
+        candidate = base_results[i]
+        neighbors[i] = Neighbor{S}(candidate.id, S(candidate.dist))
+    end
+    return neighbors
 end
 
 """
@@ -61,7 +67,7 @@ function query(
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
 
     n_queries = size(queries, 2)
-    results = Vector{Vector{Int}}(undef, n_queries)
+    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
 
     Threads.@threads for i in 1:n_queries
         q = @view queries[:, i]
@@ -87,7 +93,7 @@ function query(
     k::Integer;
     kwargs...
 ) where {T<:LinearAlgebra.BlasFloat}
-    isempty(queries) && return Vector{Vector{Int}}()
+    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
 
     # Stack queries into a matrix (dimension × n_queries)
     queries_mat = reduce(hcat, queries)

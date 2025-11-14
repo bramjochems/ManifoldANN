@@ -78,6 +78,7 @@ export AbstractANNIndex,
        TransformedIndex,
        MultiLevelIndex,
        build_ivf_hnsw_index,
-       Neighbor
+       Neighbor,
+       neighbor_ids
 
 end

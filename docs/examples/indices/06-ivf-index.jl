@@ -73,7 +73,9 @@ println("  Brute-force (ground truth):")
 println()
 
 # Compute recalls
-function compute_recall(approx_ids, truth_ids)
+function compute_recall(approx_neighbors, truth_neighbors)
+    approx_ids = neighbor_ids(approx_neighbors)
+    truth_ids = neighbor_ids(truth_neighbors)
     return length(intersect(Set(approx_ids), Set(truth_ids))) / length(truth_ids)
 end
 
@@ -86,11 +88,10 @@ println("  HNSW recall: $(round(hnsw_recall * 100, digits=1))%")
 println()
 
 # Show actual distances for verification
-function print_neighbors(label, ids, n_show=5)
+function print_neighbors(label, neighbors, n_show=5)
     println("$label (showing first $n_show):")
-    for (i, id) in enumerate(ids[1:min(n_show, length(ids))])
-        dist = norm(@view(data[:, id]) - query_point)
-        println("  $i. id=$(lpad(id, 5))  dist=$(round(dist, digits=4))")
+    for (i, neighbor) in enumerate(neighbors[1:min(n_show, length(neighbors))])
+        println("  $i. id=$(lpad(neighbor.id, 5))  dist=$(round(neighbor.dist, digits=4))")
     end
     println()
 end

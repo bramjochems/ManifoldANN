@@ -28,22 +28,24 @@ truth_neighbors = query(brute_index, data, query_point, k)
 println("Sample query vector:")
 println(query_point)
 
-function print_neighbors(title, ids, data, query_point)
+function print_neighbors(title, neighbors)
     println(title)
-    for id in ids
-        dist = LinearAlgebra.norm(@view(data[:, id]) .- query_point)
-        println("  id=$(lpad(id, 3))  dist=$(round(dist, digits=4))")
+    for neighbor in neighbors
+        println(
+            "  id=$(lpad(neighbor.id, 3))  dist=$(round(neighbor.dist, digits=4))",
+        )
     end
 end
 
-print_neighbors("KD-tree neighbors (ids sorted by Euclidean distance):", kd_neighbors, data, query_point)
-print_neighbors("Brute-force neighbors (ground truth):", truth_neighbors, data, query_point)
+print_neighbors("KD-tree neighbors (ids sorted by Euclidean distance):", kd_neighbors)
+print_neighbors("Brute-force neighbors (ground truth):", truth_neighbors)
 
-@info "Neighbors match" equal = (kd_neighbors == truth_neighbors)
+@info "Neighbors match" equal = (neighbor_ids(kd_neighbors) == neighbor_ids(truth_neighbors))
 
 println("▶ Rebuilding with cyclic axis selection to demonstrate deterministic splits.")
 cyclic_index = build_index(KDTreeIndex, data; axis_selector = :cyclic)
 cyclic_neighbors = query(cyclic_index, data, query_point, k)
-print_neighbors("Cyclic KD-tree neighbors:", cyclic_neighbors, data, query_point)
-@info "Cyclic matches variance" equal = (cyclic_neighbors == truth_neighbors)
+print_neighbors("Cyclic KD-tree neighbors:", cyclic_neighbors)
+@info "Cyclic matches variance" equal =
+    (neighbor_ids(cyclic_neighbors) == neighbor_ids(truth_neighbors))
 @info "Cyclic KD-tree metadata" axis_selector = :cyclic n_nodes = length(cyclic_index.nodes)

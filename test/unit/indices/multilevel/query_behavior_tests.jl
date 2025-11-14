@@ -20,7 +20,12 @@ function ManifoldANN.query(
     kwargs...
 )
     index.last_kwargs[] = NamedTuple(kwargs)
-    return collect(1:min(k, size(data, 2)))
+    max_id = min(k, size(data, 2))
+    neighbors = Vector{Neighbor{Float32}}(undef, max_id)
+    @inbounds for i in 1:max_id
+        neighbors[i] = Neighbor{Float32}(i, 0f0)
+    end
+    return neighbors
 end
 
 struct ShiftBucketTransform <: ManifoldANN.AbstractTransform
@@ -50,7 +55,7 @@ ManifoldANN.preserves_data(::ShiftBucketTransform) = false
     q = rand(Float32, size(data, 1))
     neighbors = query(index, data, q, 3; test_kw = 42)
 
-    @test Set(neighbors) == Set([1, 2, 3])
+    @test Set(neighbor_ids(neighbors)) == Set([1, 2, 3])
     recorder = index.root.indices[1]
     @test recorder.last_kwargs[] == (test_kw = 42,)
 end
@@ -80,7 +85,13 @@ end
     brute = build_index(BruteForceIndex, data)
     for _ in 1:3
         q = randn(rng, Float32, size(data, 1))
-        @test query(index, data, q, 5) == query(brute, data, q, 5)
+        result = query(index, data, q, 5)
+        expected = query(brute, data, q, 5)
+        @test length(result) == length(expected)
+        for i in eachindex(result)
+            @test result[i].id == expected[i].id
+            @test result[i].dist ≈ expected[i].dist
+        end
     end
 end
 

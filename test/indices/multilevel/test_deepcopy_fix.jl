@@ -55,15 +55,16 @@ using LinearAlgebra
     # Test query functionality
     q = randn(rng, Float32, 20)
     neighbors = query(index, data, q, 5)
+    neighbor_ids_list = neighbor_ids(neighbors)
 
-    @test length(neighbors) <= 5
-    @test all(1 .<= neighbors .<= 200)
-    @test length(unique(neighbors)) == length(neighbors)  # No duplicates
+    @test length(neighbor_ids_list) <= 5
+    @test all(1 .<= neighbor_ids_list .<= 200)
+    @test length(unique(neighbor_ids_list)) == length(neighbor_ids_list)  # No duplicates
 
     # Check reasonable recall
     brute = build_index(BruteForceIndex, data)
-    truth = query(brute, data, q, 5)
-    recall = length(intersect(Set(neighbors), Set(truth))) / length(truth)
+    truth = neighbor_ids(query(brute, data, q, 5))
+    recall = length(intersect(Set(neighbor_ids_list), Set(truth))) / length(truth)
     println("\nQuery test: recall = $(round(recall * 100, digits=1))%")
     @test recall >= 0.2  # At least 20% recall (very lenient, just checking it works)
 

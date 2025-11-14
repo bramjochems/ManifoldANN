@@ -28,7 +28,10 @@ println("Index built: k=$(index.k), dimension=$(index.dimension)")
 # Query the index
 query_vec = randn(Float32, d)
 neighbors = query(index, data, query_vec, 10; ef_search = 48)
-println("Approximate neighbors (1-based ids): ", neighbors)
+println(
+    "Approximate neighbors (id, dist): ",
+    [(n.id, round(n.dist, digits=4)) for n in neighbors],
+)
 
 # Materialize the kNN graph if needed for downstream processing
 graph = materialize_graph(index)

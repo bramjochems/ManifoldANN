@@ -10,9 +10,10 @@ function query(
     rng::AbstractRNG = Random.default_rng(),
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_dimensions(index, data, q)
-    k <= 0 && return Int[]
+    S = float(T)
+    k <= 0 && return Neighbor{S}[]
     actual_k = min(Int(k), index.n_points)
-    actual_k == 0 && return Int[]
+    actual_k == 0 && return Neighbor{S}[]
 
     beam = ef_search === nothing ? max(actual_k, index.k) : max(actual_k, Int(ef_search))
     beam > 0 || (beam = actual_k)
@@ -59,11 +60,12 @@ function query(
     end
 
     result_count = min(actual_k, length(best))
-    results = Vector{Int}(undef, result_count)
+    neighbors = Vector{Neighbor{S}}(undef, result_count)
     @inbounds for i in 1:result_count
-        results[i] = best[i].id
+        candidate = best[i]
+        neighbors[i] = Neighbor{S}(candidate.id, S(candidate.dist))
     end
-    return results
+    return neighbors
 end
 
 function query(
@@ -77,9 +79,9 @@ function query(
     size(queries, 1) == index.dimension ||
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
     n_queries = size(queries, 2)
-    n_queries == 0 && return Vector{Vector{Int}}()
+    n_queries == 0 && return Vector{Vector{Neighbor{float(T)}}}()
     child_rngs = spawn_child_rngs(rng, n_queries)
-    results = Vector{Vector{Int}}(undef, n_queries)
+    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
     @inbounds for i in 1:n_queries
         qi = view(queries, :, i)
         results[i] = query(
@@ -101,7 +103,7 @@ function query(
     k::Integer;
     kwargs...,
 ) where {T<:LinearAlgebra.BlasFloat}
-    isempty(queries) && return Vector{Vector{Int}}()
+    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
     matrix = reduce(hcat, queries)
     return query(index, data, matrix, k; kwargs...)
 end

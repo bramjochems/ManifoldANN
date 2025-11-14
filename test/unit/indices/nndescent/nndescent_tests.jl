@@ -51,7 +51,7 @@ end
 
     for trial in 1:8
         q = randn(Float32, size(data, 1))
-        nn_result = query(
+        nn_neighbors = query(
             index,
             data,
             q,
@@ -59,9 +59,10 @@ end
             ef_search = 24,
             rng = Random.MersenneTwister(1000 + trial),
         )
-        brute_result = query(brute, data, q, 8)
-        recall =
-            length(intersect(Set(nn_result), Set(brute_result))) / length(brute_result)
+        brute_neighbors = query(brute, data, q, 8)
+        nn_ids = neighbor_ids(nn_neighbors)
+        brute_ids = neighbor_ids(brute_neighbors)
+        recall = length(intersect(Set(nn_ids), Set(brute_ids))) / length(brute_ids)
         @test recall >= 0.75
     end
 end

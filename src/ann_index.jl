@@ -30,12 +30,14 @@ search. Keyword arguments configure algorithm-specific parameters.
 function build_index end
 
 """
-    query(index, data, q, k; kwargs...) -> Vector{Int}
+    query(index, data, q, k; kwargs...) -> Vector{Neighbor}
 
-Return up to `k` approximate nearest neighbors of query point `q`. The backing
-dataset `data` is always supplied explicitly, which allows the same index to
-serve multiple data representations (e.g. PCA-denoised copies). Concrete
-indices handle algorithm-specific keyword arguments such as search policies.
+Return up to `k` approximate nearest neighbors of query point `q`. Each entry
+stores both the identifier and the distance the index computed internally.
+The backing dataset `data` is always supplied explicitly, which allows the
+same index to serve multiple data representations (e.g. PCA-denoised copies).
+Concrete indices handle algorithm-specific keyword arguments such as search
+policies.
 """
 function query end
 

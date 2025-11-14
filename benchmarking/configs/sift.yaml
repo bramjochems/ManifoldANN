@@ -11,11 +11,11 @@ algorithms:
     n_tables: 20
     hash_length: 8
 
-  MANN-HNSW-heuristic:
-    M: 16
-    ef_construction: 200
-    ef_search: 50
-    neighbor_policy: heuristic
+  # MANN-HNSW-heuristic:
+  #   M: 16
+  #   ef_construction: 200
+  #   ef_search: 50
+  #   neighbor_policy: heuristic
 
   MANN-HNSW-diversified:
     M: 16
@@ -34,14 +34,14 @@ algorithms:
   MANN-KDTree:
     axis_selector: variance
 
-  MANN-NNDescent-pruned-continuous:
-    k: 32
-    max_iterations: 5
-    convergence_threshold: 0.01
-    sample_rate: 0.5
-    symmetry_policy: pruned
-    apply_symmetry_continuously: true
-    ef_search: 64
+  # MANN-NNDescent-pruned-continuous:
+  #   k: 32
+  #   max_iterations: 5
+  #   convergence_threshold: 0.01
+  #   sample_rate: 0.5
+  #   symmetry_policy: pruned
+  #   apply_symmetry_continuously: true
+  #   ef_search: 64
 
   MANN-NNDescent-pruned-deferred:
     k: 32

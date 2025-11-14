@@ -52,6 +52,16 @@ class ManifoldANNWrapper(BaseANNWrapper):
         self._index = None
         self._data = None
 
+    def _neighbors_to_ids(self, jl_neighbors):
+        """Convert Julia neighbor structs to 0-indexed Python ids."""
+        ids = jl.ManifoldANN.neighbor_ids(jl_neighbors)
+        return [int(idx) - 1 for idx in ids]
+
+    def _batch_neighbors_to_ids(self, jl_neighbor_batches):
+        """Convert Julia neighbor batches to 0-indexed Python ids."""
+        id_batches = jl.ManifoldANN.neighbor_ids(jl_neighbor_batches)
+        return [[int(idx) - 1 for idx in batch] for batch in id_batches]
+
     def _get_distance_function(self):
         """Get the appropriate Julia distance function for the metric.
 
@@ -94,8 +104,7 @@ class ManifoldANNWrapper(BaseANNWrapper):
         # Note: Julia uses 1-based indexing, so we need to convert
         result = jl.query(self._index, self._data, query_jl, n)
 
-        # Convert from Julia 1-indexed to Python 0-indexed
-        return [int(idx) - 1 for idx in result]
+        return self._neighbors_to_ids(result)
 
     def query_batch(self, queries, n):
         """Query for nearest neighbors of multiple queries at once.
@@ -119,8 +128,7 @@ class ManifoldANNWrapper(BaseANNWrapper):
         # Call Julia batch query function - crosses boundary only ONCE
         results_jl = jl.query(self._index, self._data, queries_jl, n)
 
-        # Convert from Julia 1-indexed to Python 0-indexed
-        return [[int(idx) - 1 for idx in result] for result in results_jl]
+        return self._batch_neighbors_to_ids(results_jl)
 
     @staticmethod
     def is_available():
@@ -233,7 +241,7 @@ class ManifoldANN_LSH(ManifoldANNWrapper):
         else:
             result = jl.query(self._index, self._data, query_jl, n)
 
-        return [int(idx) - 1 for idx in result]
+        return self._neighbors_to_ids(result)
 
     def __str__(self):
         cap_str = (
@@ -357,7 +365,7 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
         # Call with ef_search parameter
         result = jl.query(self._index, self._data, query_jl, n, ef_search=self._ef_search)
 
-        return [int(idx) - 1 for idx in result]
+        return self._neighbors_to_ids(result)
 
     def __str__(self):
         return (
@@ -504,7 +512,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             n,
             ef_search=self._ef_search,
         )
-        return [int(idx) - 1 for idx in result]
+        return self._neighbors_to_ids(result)
 
     def query_batch(self, queries, n):
         """Batch query variant that respects ef_search."""
@@ -517,7 +525,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             n,
             ef_search=self._ef_search,
         )
-        return [[int(idx) - 1 for idx in result] for result in results]
+        return self._batch_neighbors_to_ids(results)
 
     def __str__(self):
         symmetry_mode = "continuous" if self._apply_symmetry_continuously else "deferred"

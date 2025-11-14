@@ -46,10 +46,11 @@ using LinearAlgebra
         # Query with a random point
         q = rand(Float32, n_dims)
         neighbors = query(index, X, q, k_neighbors)
+        ids = neighbor_ids(neighbors)
 
-        @test length(neighbors) <= k_neighbors
-        @test all(1 .<= neighbors .<= n_points)
-        @test length(unique(neighbors)) == length(neighbors)  # No duplicates
+        @test length(ids) <= k_neighbors
+        @test all(1 .<= ids .<= n_points)
+        @test length(unique(ids)) == length(ids)  # No duplicates
     end
 
     @testset "Identity transform pass-through" begin
@@ -67,9 +68,10 @@ using LinearAlgebra
 
         q = rand(Float32, n_dims)
         neighbors = query(index, X, q, k_neighbors)
+        ids = neighbor_ids(neighbors)
 
-        @test length(neighbors) <= k_neighbors
-        @test all(1 .<= neighbors .<= n_points)
+        @test length(ids) <= k_neighbors
+        @test all(1 .<= ids .<= n_points)
     end
 
     @testset "Two-level hierarchy" begin
@@ -100,7 +102,7 @@ using LinearAlgebra
         q = rand(Float32, n_dims)
         neighbors = query(index, X, q, k_neighbors)
 
-        @test length(neighbors) <= k_neighbors
+        @test length(neighbor_ids(neighbors)) <= k_neighbors
     end
 
     @testset "build_ivf_hnsw_index convenience" begin
@@ -117,7 +119,7 @@ using LinearAlgebra
         @test ivf isa MultiLevelIndex
         q = rand(Float32, n_dims)
         neighbors = query(ivf, X, q, k_neighbors)
-        @test length(neighbors) <= k_neighbors
+        @test length(neighbor_ids(neighbors)) <= k_neighbors
 
         queries = rand(Float32, n_dims, 5)
         batch = query(ivf, X, queries, k_neighbors)

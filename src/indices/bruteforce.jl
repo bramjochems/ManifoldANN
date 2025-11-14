@@ -50,19 +50,24 @@ function query(
     k::Integer;
 ) where {T}
     _validate_dimensions(index, data, q)
+    S = float(T)
     n_points = size(data, 2)
     k = min(k, n_points)
-    k <= 0 && return Int[]
+    k <= 0 && return Neighbor{S}[]
 
     # Compute distances with multithreading support
-    dists = Vector{Float64}(undef, n_points)
+    dists = Vector{S}(undef, n_points)
     @inbounds Threads.@threads for j = 1:n_points
         dists[j] = index.distance(@view(data[:, j]), q)
     end
 
     # Partial sort to find k nearest neighbors
-    neighbors = partialsortperm(dists, 1:k)
-    return neighbors
+    ids = partialsortperm(dists, 1:k)
+    results = Vector{Neighbor{S}}(undef, length(ids))
+    @inbounds for (pos, id) in enumerate(ids)
+        results[pos] = Neighbor{S}(id, dists[id])
+    end
+    return results
 end
 
 """
@@ -81,7 +86,7 @@ function query(
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
 
     n_queries = size(queries, 2)
-    results = Vector{Vector{Int}}(undef, n_queries)
+    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
 
     @inbounds for i in 1:n_queries
         q = @view queries[:, i]
@@ -102,7 +107,7 @@ function query(
     queries::Vector{<:AbstractVector{T}},
     k::Integer;
 ) where {T}
-    isempty(queries) && return Vector{Vector{Int}}()
+    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
     queries_mat = reduce(hcat, queries)
     return query(index, data, queries_mat, k)
 end

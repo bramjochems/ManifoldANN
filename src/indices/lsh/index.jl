@@ -61,24 +61,30 @@ function query(
     candidate_cap::Union{Nothing,Int} = nothing,
 ) where {T<:BlasFloat}
     validate_index_dimensions(index, data, q)
-    k <= 0 && return Int[]
+    S = float(T)
+    k <= 0 && return Neighbor{S}[]
 
     candidates = _collect_candidates(index, q)
-    isempty(candidates) && return Int[]
+    isempty(candidates) && return Neighbor{S}[]
 
     if candidate_cap !== nothing && length(candidates) > candidate_cap
         resize!(candidates, candidate_cap)
     end
 
     dist_fn = distance_function(index.tables[1].hash_function)
-    distances = similar(candidates, Float64)
+    distances = Vector{S}(undef, length(candidates))
     @inbounds for (i, id) in enumerate(candidates)
         distances[i] = dist_fn(@view(data[:, id]), q)
     end
 
     actual_k = min(k, length(candidates))
     perm = partialsortperm(distances, 1:actual_k)
-    return candidates[perm]
+    results = Vector{Neighbor{S}}(undef, actual_k)
+    @inbounds for (pos, idx) in enumerate(perm)
+        id = candidates[idx]
+        results[pos] = Neighbor{S}(id, distances[idx])
+    end
+    return results
 end
 
 """
@@ -97,7 +103,7 @@ function query(
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
 
     n_queries = size(queries, 2)
-    results = Vector{Vector{Int}}(undef, n_queries)
+    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
 
     @inbounds for i in 1:n_queries
         q = @view queries[:, i]
@@ -119,7 +125,7 @@ function query(
     k::Integer;
     kwargs...
 ) where {T<:BlasFloat}
-    isempty(queries) && return Vector{Vector{Int}}()
+    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
     queries_mat = reduce(hcat, queries)
     return query(index, data, queries_mat, k; kwargs...)
 end

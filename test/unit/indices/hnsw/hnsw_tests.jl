@@ -15,7 +15,9 @@ using ManifoldANN
             approx = query(hnsw, data, q, k; ef_search = 80)
             truth = query(brute, data, q, k)
             @test length(approx) == k
-            overlap = length(intersect(Set(approx), Set(truth))) / k
+            approx_ids = neighbor_ids(approx)
+            truth_ids = neighbor_ids(truth)
+            overlap = length(intersect(Set(approx_ids), Set(truth_ids))) / k
             push!(recalls, overlap)
         end
         avg_recall = sum(recalls) / length(recalls)

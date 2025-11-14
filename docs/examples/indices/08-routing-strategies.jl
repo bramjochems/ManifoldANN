@@ -98,7 +98,13 @@ for (label, index) in sort(collect(indices), by=x->x[1])
 
         # Compute recall
         truth = ground_truth[i]
-        recall = length(intersect(Set(approx_neighbors), Set(truth))) / k_neighbors
+        recall =
+            length(
+                intersect(
+                    neighbor_ids(approx_neighbors) |> Set,
+                    neighbor_ids(truth) |> Set,
+                ),
+            ) / k_neighbors
         push!(recalls, recall)
     end
 

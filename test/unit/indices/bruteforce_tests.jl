@@ -24,7 +24,7 @@ end
     index = build_index(BruteForceIndex, data)
     q = [0.25, 0.0]
     neighbors = query(index, data, q, 2)
-    @test neighbors == [1, 2]
+    @test neighbor_ids(neighbors) == [1, 2]
 
     # Reduce data columns to trigger consistency error.
     smaller = data[:, 1:2]
@@ -56,5 +56,5 @@ end
     expanded = hcat(data, new_point, new_points)
     q = [0.5, 0.5]
     neighbors = query(index, expanded, q, 3)
-    @test length(neighbors) == 3
+    @test length(neighbor_ids(neighbors)) == 3
 end

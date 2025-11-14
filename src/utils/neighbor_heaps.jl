@@ -14,6 +14,36 @@ struct Neighbor{T<:AbstractFloat}
 end
 
 """
+    neighbor_ids(neighbors)
+
+Extract the point identifiers stored in `neighbors`. The returned vector is a
+copy so callers can mutate it without affecting the original neighbor list.
+"""
+@inline function neighbor_ids(neighbors::AbstractVector{<:Neighbor})
+    ids = Vector{Int}(undef, length(neighbors))
+    @inbounds for i in eachindex(neighbors)
+        ids[i] = neighbors[i].id
+    end
+    return ids
+end
+
+"""
+    neighbor_ids(neighbor_batches)
+
+Extract neighbor identifiers for each query independently. Returns a vector of
+`Vector{Int}` matching the structure of the input batches.
+"""
+function neighbor_ids(
+    neighbor_batches::AbstractVector{<:AbstractVector{<:Neighbor}},
+)
+    results = Vector{Vector{Int}}(undef, length(neighbor_batches))
+    @inbounds for i in eachindex(neighbor_batches)
+        results[i] = neighbor_ids(neighbor_batches[i])
+    end
+    return results
+end
+
+"""
     BoundedMaxHeap{T}
 
 Max-heap that maintains at most `capacity` elements, automatically evicting
