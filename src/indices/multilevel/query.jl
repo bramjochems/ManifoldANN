@@ -8,6 +8,13 @@ The query process:
 4. Merge results using the merge strategy
 """
 
+struct BucketProxy
+    count::Int
+end
+
+Base.length(proxy::BucketProxy) = proxy.count
+Base.eachindex(proxy::BucketProxy) = Base.OneTo(proxy.count)
+
 """
     query(index::MultiLevelIndex, data, q, k; kwargs...) -> Vector{Neighbor}
 
@@ -113,13 +120,17 @@ function _query_recursive(
     assignment = result.assignment
 
     # Step 2: Select indices to probe based on routing strategy
-    probe_indices = select_indices(node.routing_strategy, assignment, node.indices)
+    route_domain = node.bucket_lookup === nothing ?
+        node.indices :
+        BucketProxy(length(node.bucket_lookup))
+    probe_indices = select_indices(node.routing_strategy, assignment, route_domain)
+    child_positions = _resolve_child_positions(node, probe_indices)
 
     # Step 3: Query each selected child index
     distance_type = _child_distance_type(node, data)
     results = Vector{Vector{Neighbor{distance_type}}}()
 
-    for child_idx in probe_indices
+    for child_idx in child_positions
         child = node.indices[child_idx]
         child_data = _resolve_child_data(node, child_idx, data)
 
@@ -136,6 +147,21 @@ function _query_recursive(
     end
 
     return results
+end
+
+function _resolve_child_positions(node::TransformedIndex, probe_indices::AbstractVector{Int})
+    node.bucket_lookup === nothing && return probe_indices
+    lookup = node.bucket_lookup
+    selected = Vector{Int}()
+    reserve = length(probe_indices)
+    reserve > 0 && sizehint!(selected, reserve)
+    @inbounds for bucket in probe_indices
+        (bucket < 1 || bucket > length(lookup)) && continue
+        child_idx = lookup[bucket]
+        child_idx == 0 && continue
+        push!(selected, child_idx)
+    end
+    return selected
 end
 
 """

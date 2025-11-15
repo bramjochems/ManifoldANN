@@ -15,6 +15,7 @@ The distance vector enables top-K routing strategies for multi-probe search.
 - `init`: Initialization strategy (`:random` or `:kmeans_plus_plus`)
 - `max_iters`: Maximum Lloyd iterations (default: 100)
 - `tol`: Convergence tolerance (default: 1e-6)
+- `centroid_type`: Storage precision for learned centroids (configurable via keyword, default `Float32`)
 - `centroids`: Learned centroids (d × k matrix, set by `fit!`)
 
 # Examples
@@ -36,27 +37,28 @@ result = transform(t, q)
 # result.assignment.distances = [d1, d2, ..., d100] (distances to all centroids)
 ```
 """
-mutable struct KMeansTransform{D<:SemiMetric} <: AbstractTransform
+mutable struct KMeansTransform{D<:SemiMetric,TC<:AbstractFloat} <: AbstractTransform
     k::Int
     distance::D
     init::Symbol
     max_iters::Int
     tol::Float64
-    centroids::Union{Nothing, Matrix{Float32}}
+    centroids::Union{Nothing, Matrix{TC}}
 
     function KMeansTransform(;
         k::Int,
         distance::D,
         init::Symbol=:kmeans_plus_plus,
         max_iters::Int=100,
-        tol::Float64=1e-6
+        tol::Float64=1e-6,
+        centroid_type::Type{<:AbstractFloat}=Float32,
     ) where {D<:SemiMetric}
         @assert k > 0 "Number of clusters must be positive"
         @assert init in (:random, :kmeans_plus_plus) "init must be :random or :kmeans_plus_plus"
         @assert max_iters > 0 "max_iters must be positive"
         @assert tol > 0 "tol must be positive"
 
-        new{D}(k, distance, init, max_iters, tol, nothing)
+        new{D, centroid_type}(k, distance, init, max_iters, tol, nothing)
     end
 end
 
@@ -89,7 +91,7 @@ Learn k cluster centroids from training data using Lloyd's algorithm.
 # Effects
 - Sets `t.centroids` to learned centroid matrix (d × k)
 """
-function fit!(t::KMeansTransform, X::Matrix{T}) where {T<:Real}
+function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:AbstractFloat,T<:Real}
     d, n = size(X)
 
     @assert t.k <= n "Cannot fit $(t.k) clusters with only $n points"
@@ -112,8 +114,8 @@ function fit!(t::KMeansTransform, X::Matrix{T}) where {T<:Real}
         tol=t.tol
     )
 
-    # Store fitted centroids
-    t.centroids = centroids
+    # Store fitted centroids using the configured storage precision
+    t.centroids = centroids isa Matrix{TC} ? centroids : Matrix{TC}(centroids)
 
     return t
 end

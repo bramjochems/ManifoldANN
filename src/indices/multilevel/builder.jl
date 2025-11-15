@@ -104,35 +104,62 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
             capture_data = !preserves,
         )
 
-        # Step 3b: Build child index for each partition (in parallel)
-        # CRITICAL: Must deepcopy child_config for each partition!
-        #
-        # TransformedConfig is immutable but holds references to mutable transform objects.
-        # Without deepcopy, all children would share the same transform instance, and each
-        # fit! call would overwrite the previous partition's parameters. This would break
-        # multi-level hierarchies completely - all sibling nodes would end up with parameters
-        # learned from only the last partition.
-        #
-        # OPTIMIZATION: Build children in parallel since each partition is independent after deepcopy.
-        # This provides near-linear speedup for IVF indices with many clusters.
-        n_partitions = length(id_mappings)
-        children = Vector{AbstractANNIndex}(undef, n_partitions)
-        stored_child_data = preserves ? nothing : partitions
+        # Step 3b: Build children only for non-empty partitions
+        bucket_lookup = fill(0, length(id_mappings))
+        child_inputs = Any[]
+        child_id_mappings = Vector{Vector{Int}}()
+        child_bucket_ids = Int[]
 
-        Threads.@threads for i in 1:n_partitions
-            child_input = preserves ?
-                _view_partition(X, id_mappings[i]) :
-                stored_child_data[i]
-            children[i] = _build_from_config(child_input, deepcopy(config.child_config))
+        for bucket_id in eachindex(id_mappings)
+            ids = id_mappings[bucket_id]
+            isempty(ids) && continue
+            push!(child_bucket_ids, bucket_id)
+            push!(child_id_mappings, ids)
+            child_input = preserves ? _view_partition(X, ids) : partitions[bucket_id]
+            push!(child_inputs, child_input)
         end
 
-        # Step 4: Create TransformedIndex with ID mappings and optional stored data
+        n_children = length(child_inputs)
+        n_children > 0 ||
+            throw(
+                ArgumentError(
+                    "Transform produced no non-empty buckets; cannot build child indices",
+                ),
+            )
+
+        # Build the first child eagerly to determine the concrete container type
+        first_child =
+            _build_from_config(child_inputs[1], deepcopy(config.child_config))
+        ChildType = typeof(first_child)
+        children = Vector{ChildType}(undef, n_children)
+        children[1] = first_child
+
+        stored_child_data = preserves ? nothing : Vector{typeof(child_inputs[1])}(undef, n_children)
+        if !preserves
+            stored_child_data[1] = child_inputs[1]
+        end
+
+        # Build remaining children in parallel
+        Threads.@threads for idx in 2:n_children
+            config_copy = deepcopy(config.child_config)
+            children[idx] = _build_from_config(child_inputs[idx], config_copy)
+            if !preserves
+                stored_child_data[idx] = child_inputs[idx]
+            end
+        end
+
+        # Populate lookup after construction to avoid races
+        @inbounds for (pos, bucket_id) in enumerate(child_bucket_ids)
+            bucket_lookup[bucket_id] = pos
+        end
+
         return TransformedIndex(
             config.transform,
             config.routing,
             children,
-            id_mappings,
+            child_id_mappings,
             stored_child_data,
+            bucket_lookup,
         )
     else
         # Step 3a: No bucketing - transform all data
@@ -154,6 +181,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
             children,
             nothing,
             stored_child_data,
+            nothing,
         )
     end
 end

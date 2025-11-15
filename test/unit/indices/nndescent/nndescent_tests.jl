@@ -30,7 +30,8 @@ using Test
     end
 
     graph = materialize_graph(index)
-    @test graph.k == k
+    # With FullSymmetry (default), realized k can be > configured k due to reverse edges
+    @test graph.k >= k
     @test length(graph.neighbors) == size(data, 2)
 end
 

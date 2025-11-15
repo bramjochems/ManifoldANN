@@ -63,15 +63,15 @@ struct ExhaustiveRouting <: AbstractRoutingStrategy end
     select_indices(
         strategy::AbstractRoutingStrategy,
         assignment,
-        indices::Vector{I}
-    )::Vector{Int} where {I<:AbstractANNIndex}
+        indices
+    )::Vector{Int}
 
 Select which child indices to probe based on routing strategy and assignment info.
 
 # Arguments
 - `strategy`: Routing strategy to use
 - `assignment`: Transform assignment information (e.g., `KMeansAssignment`)
-- `indices`: Vector of all available child indices
+- `indices`: Abstract vector or proxy whose length encodes the number of routed children
 
 # Returns
 - Vector of integer positions into `indices` identifying children to probe
@@ -94,8 +94,8 @@ function select_indices end
 function select_indices(
     strategy::TopKRouting,
     assignment::KMeansAssignment,
-    indices::Vector{I}
-) where {I<:AbstractANNIndex}
+    indices,
+)
     n_children = length(indices)
     n_children > 0 || return Int[]
 
@@ -121,7 +121,7 @@ end
 function select_indices(
     ::ExhaustiveRouting,
     assignment,  # Ignored
-    indices::Vector{I}
-) where {I<:AbstractANNIndex}
+    indices,
+)
     return collect(eachindex(indices))
 end

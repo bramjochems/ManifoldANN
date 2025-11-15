@@ -19,6 +19,7 @@ contain other TransformedIndex nodes or terminal indices, forming an arbitrary t
 - `indices::Vector{I}`: Child indices (may be TransformedIndex or terminal indices)
 - `id_mappings::Union{Nothing, Vector{Vector{Int}}}`: Maps local IDs to global IDs for bucketing transforms
 - `child_data::C`: Optional per-child datasets (only stored when the transform changes the representation)
+- `bucket_lookup::Union{Nothing, Vector{Int}}`: Maps original bucket ids to positions in `indices`
 
 # Type Parameters
 - `T`: Type of transform
@@ -41,6 +42,7 @@ struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: Abstrac
     indices::Vector{I}
     id_mappings::Union{Nothing, Vector{Vector{Int}}}
     child_data::C  # Either `nothing` or per-child data matrices
+    bucket_lookup::Union{Nothing, Vector{Int}}
 
     function TransformedIndex(
         transform::T,
@@ -48,8 +50,16 @@ struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: Abstrac
         indices::Vector{I},
         id_mappings::Union{Nothing, Vector{Vector{Int}}}=nothing,
         child_data::C=nothing,
+        bucket_lookup::Union{Nothing, Vector{Int}}=nothing,
     ) where {T<:AbstractTransform, I<:AbstractANNIndex, C}
         isempty(indices) && throw(ArgumentError("Must have at least one child index"))
-        new{T, I, C}(transform, routing_strategy, indices, id_mappings, child_data)
+        new{T, I, C}(
+            transform,
+            routing_strategy,
+            indices,
+            id_mappings,
+            child_data,
+            bucket_lookup,
+        )
     end
 end

@@ -141,5 +141,6 @@ end
 
 function materialize_graph(index::NNDescentIndex)
     adjacency = [copy(neigh) for neigh in index.neighbors]
-    return KNNGraph(adjacency, index.k, false, nothing)
+    realized_k = isempty(adjacency) ? 0 : maximum(length.(adjacency))
+    return KNNGraph(adjacency, realized_k, false, nothing)
 end
