@@ -19,15 +19,15 @@ callers must still pass `data` when querying. Keywords:
 function build_index(
     ::Type{NNDescentIndex},
     data::AbstractMatrix{T};
-    k::Int = 32,
-    max_iterations::Int = 10,
-    convergence_threshold::Float64 = 1e-3,
+    k::Int = NNDESCENT_DEFAULT_K,
+    max_iterations::Int = NNDESCENT_DEFAULT_MAX_ITERATIONS,
+    convergence_threshold::Float64 = NNDESCENT_DEFAULT_CONVERGENCE_THRESHOLD,
     sampling_policy::Union{AbstractNNDescentSamplingPolicy,Symbol,Nothing} = nothing,
     symmetry_policy::Union{AbstractSymmetryPolicy,Symbol,Nothing} = nothing,
     apply_symmetry_continuously::Bool = false,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_squared_distance,
-    max_candidate_neighbors::Int = 64,
+    max_candidate_neighbors::Int = NNDESCENT_DEFAULT_MAX_CANDIDATE_NEIGHBORS,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -179,20 +179,24 @@ function _run_nndescent!(
     max_candidate_neighbors::Int,
 ) where {T}
     n = length(graph)
-    denom = n * k
-    for _ in 1:max_iterations
-        updates = 0
-        @inbounds for i in 1:n
-            node = graph[i]
+    total_edges = n * k  # Total edges in graph (used to compute improvement ratio)
+    for iteration in 1:max_iterations
+        updates = 0  # Count of successful neighbor updates this iteration
+        @inbounds for node_idx in 1:n
+            node = graph[node_idx]
             isempty(node.new_neighbors) && continue
 
+            # Sample candidates for pairing (bounded to prevent memory explosion)
             new_candidates =
                 _sample_neighbor_ids(node.new_neighbors, max_candidate_neighbors, rng)
             isempty(new_candidates) && continue
             old_candidates =
                 _sample_neighbor_ids(node.old_neighbors, max_candidate_neighbors, rng)
 
-            # Pair each new neighbor with other new neighbors
+            # NN-Descent core: evaluate all pairs of (new, new) and (new, old) candidates
+            # This local join operation discovers transitive neighbors efficiently
+
+            # Pair each new neighbor with other new neighbors (avoid self-pairs)
             for new_idx in 1:length(new_candidates)
                 src = new_candidates[new_idx]
                 for inner_idx in (new_idx + 1):length(new_candidates)
@@ -216,11 +220,12 @@ function _run_nndescent!(
         end
 
         # Move all "new" neighbors to "old" for next iteration
-        @inbounds for i in 1:n
-            _transition_neighbors!(graph[i])
+        @inbounds for node_idx in 1:n
+            _transition_neighbors!(graph[node_idx])
         end
 
-        improvement = denom == 0 ? 0.0 : updates / denom
+        # Compute relative improvement as fraction of total possible edges updated
+        improvement = total_edges == 0 ? 0.0 : updates / total_edges
         if improvement < convergence_threshold
             break
         end

@@ -49,8 +49,8 @@ mutable struct KMeansTransform{D<:SemiMetric,TC<:AbstractFloat} <: AbstractTrans
         k::Int,
         distance::D,
         init::Symbol=:kmeans_plus_plus,
-        max_iters::Int=100,
-        tol::Float64=1e-6,
+        max_iters::Int=KMEANS_DEFAULT_MAX_ITERATIONS,
+        tol::Float64=KMEANS_DEFAULT_TOLERANCE,
         centroid_type::Type{<:AbstractFloat}=Float32,
     ) where {D<:SemiMetric}
         @assert k > 0 "Number of clusters must be positive"

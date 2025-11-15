@@ -36,11 +36,11 @@ originating from the hash family.
 function distance_function end
 
 # Helper utilities shared across hash families.
-const _MAX_HASH_BITS = 64
+# Note: MAX_HASH_BITS is defined in utils/constants.jl
 
 pack_bits(bits::AbstractVector{Bool}) = begin
-    length(bits) <= _MAX_HASH_BITS ||
-        throw(ArgumentError("Hash length $(length(bits)) exceeds supported $_MAX_HASH_BITS bits"))
+    length(bits) <= MAX_HASH_BITS ||
+        throw(ArgumentError("Hash length $(length(bits)) exceeds supported $MAX_HASH_BITS bits"))
     value = UInt64(0)
     @inbounds for (i, flag) in enumerate(bits)
         flag || continue

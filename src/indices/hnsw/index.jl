@@ -10,9 +10,9 @@ querying.
 function build_index(
     ::Type{HNSWIndex},
     data::AbstractMatrix{T};
-    M::Int = 16,
-    ef_construction::Int = 200,
-    ef_search::Int = 64,
+    M::Int = HNSW_DEFAULT_M,
+    ef_construction::Int = HNSW_DEFAULT_EF_CONSTRUCTION,
+    ef_search::Int = HNSW_DEFAULT_EF_SEARCH,
     planner::Union{AbstractLayerPlanner,Nothing} = nothing,
     neighbor_policy::Union{AbstractNeighborPolicy,Symbol,Nothing} = nothing,
     traversal_policy::Union{AbstractTraversalPolicy,Nothing} = nothing,
@@ -27,7 +27,7 @@ function build_index(
         throw(ArgumentError("ef_construction must be at least 1"))
     ef_search >= 1 || throw(ArgumentError("ef_search must be at least 1"))
 
-    planner === nothing && (planner = DefaultLayerPlanner(1 / log(max(M, 2))))
+    planner === nothing && (planner = DefaultLayerPlanner(HNSW_ML_NORMALIZATION_FACTOR / log(max(M, 2))))
     neighbor_policy = _resolve_neighbor_policy(neighbor_policy, M)
     traversal_policy === nothing && (traversal_policy = GreedyTraversalPolicy(ef_search))
 

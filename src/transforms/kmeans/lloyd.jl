@@ -37,8 +37,8 @@ function lloyd!(
     centroids::Matrix,
     X::Matrix,
     distance::SemiMetric;
-    max_iters::Int=100,
-    tol::Float64=1e-6
+    max_iters::Int=KMEANS_DEFAULT_MAX_ITERATIONS,
+    tol::Float64=KMEANS_DEFAULT_TOLERANCE
 )
     d, n = size(X)
     d_c, k = size(centroids)

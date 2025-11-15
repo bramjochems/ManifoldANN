@@ -5,8 +5,6 @@ Convenience builder for IVF (KMeans) + HNSW multi-level indices.
 using ...ManifoldANN: default_distance
 using Distances: Euclidean, SemiMetric
 
-const DEFAULT_IVF_ROUTING = 8
-
 """
     build_ivf_hnsw_index(
         X::AbstractMatrix;
@@ -46,14 +44,14 @@ so callers can benchmark IVF-style hierarchies without manually constructing con
 function build_ivf_hnsw_index(
     X::AbstractMatrix;
     nlist::Int,
-    routing_k::Int=DEFAULT_IVF_ROUTING,
+    routing_k::Int=IVF_DEFAULT_NPROBE,
     kmeans_distance::SemiMetric = Euclidean(),
     kmeans_init::Symbol = :kmeans_plus_plus,
-        kmeans_max_iters::Int = 5,
-    kmeans_tol::Float64 = 1e-4,
-    hnsw_M::Int = 16,
-    hnsw_ef_construction::Int = 200,
-    hnsw_ef_search::Int = 64,
+    kmeans_max_iters::Int = 5,  # Fewer iterations for faster IVF build
+    kmeans_tol::Float64 = 1e-4,  # Relaxed tolerance for faster IVF build
+    hnsw_M::Int = HNSW_DEFAULT_M,
+    hnsw_ef_construction::Int = HNSW_DEFAULT_EF_CONSTRUCTION,
+    hnsw_ef_search::Int = HNSW_DEFAULT_EF_SEARCH,
     hnsw_neighbor_policy::Symbol = :diversified,
     merge_strategy::AbstractMergeStrategy = SimpleMerge(),
     distance::Function = default_distance,

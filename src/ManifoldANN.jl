@@ -2,6 +2,7 @@ module ManifoldANN
 
 include("ann_index.jl")
 include("graphs/knn_graph.jl")
+include("utils/constants.jl")
 include("utils/random_utils.jl")
 include("utils/validation.jl")
 include("utils/eval_utils.jl")

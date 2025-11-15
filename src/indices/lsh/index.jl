@@ -24,8 +24,8 @@ supports_mutation(::LSHIndex) = true
 function build_index(
     ::Type{LSHIndex},
     data::AbstractMatrix{T};
-    n_tables::Integer = 8,
-    hash_length::Integer = 16,
+    n_tables::Integer = LSH_DEFAULT_N_TABLES,
+    hash_length::Integer = LSH_DEFAULT_HASH_LENGTH,
     hash_factory::Function = make_random_hyperplane_hash,
     rng::AbstractRNG = Random.default_rng(),
     hash_kwargs...,
@@ -134,8 +134,8 @@ function _collect_candidates(index::LSHIndex, q::AbstractVector)
     candidates = Int[]
     n_tables = length(index.tables)
     n_tables == 0 && return candidates
-    # Reasonable initial guess: ~32 hits per table.
-    sizehint!(candidates, n_tables * 32)
+    # Pre-allocate based on expected candidates per table
+    sizehint!(candidates, n_tables * LSH_EXPECTED_CANDIDATES_PER_TABLE)
     for table in index.tables
         h = hash_point(table.hash_function, q)
         bucket = get(table.buckets, h, nothing)

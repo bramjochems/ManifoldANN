@@ -92,7 +92,7 @@ struct TraversalState{T}
     best::BestCandidatesHeap{T}                    # max-heap of closest candidates
 end
 
-GreedyTraversalPolicy(; ef_search::Int = 64) = GreedyTraversalPolicy(ef_search)
+GreedyTraversalPolicy(; ef_search::Int = HNSW_DEFAULT_EF_SEARCH) = GreedyTraversalPolicy(ef_search)
 
 function initialize_state(policy::GreedyTraversalPolicy, entry::NeighborCandidate{T}) where {T}
     best_heap = BestCandidatesHeap{T}(NeighborCandidate{T}[], policy.ef_search)
