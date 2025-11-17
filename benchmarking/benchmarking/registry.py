@@ -10,6 +10,7 @@ from .wrappers.manifoldann import (
     ManifoldANN_KDTree,
     ManifoldANN_HNSW,
     ManifoldANN_IVFHNSW,
+    ManifoldANN_IVFFlat,
     ManifoldANN_NNDescent,
 )
 from .wrappers.annoy import Annoy
@@ -28,6 +29,7 @@ ALGORITHM_REGISTRY: Dict[str, Type[BaseANNWrapper]] = {
     "MANN-KDTree": ManifoldANN_KDTree,
     "MANN-HNSW": ManifoldANN_HNSW,
     "MANN-IVF-HNSW": ManifoldANN_IVFHNSW,
+    "MANN-IVF-Flat": ManifoldANN_IVFFlat,
     "MANN-NNDescent": ManifoldANN_NNDescent,
     # External libraries
     "Annoy": Annoy,

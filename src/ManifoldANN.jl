@@ -13,8 +13,11 @@ include("indices/kdtree.jl")
 include("indices/hnsw.jl")
 include("indices/nndescent.jl")
 
-# Transform module
+# Transform module (must come before indices that depend on it)
 include("transforms/transforms.jl")
+
+# Indices that depend on transforms
+include("indices/faiss_ivf.jl")
 
 # Multi-level indices
 include("indices/multilevel/multilevel_index.jl")
@@ -26,6 +29,7 @@ export AbstractANNIndex,
        LSHIndex,
        KDTreeIndex,
        HNSWIndex,
+       IVFFlatIndex,
        NNDescentIndex,
        UniformPairSampling,
        FullSymmetry,

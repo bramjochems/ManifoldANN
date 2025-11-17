@@ -30,6 +30,9 @@ algorithms:
     ef_construction: 200
     ef_search: 64
     neighbor_policy: diversified
+  MANN-IVF-Flat:
+    nlist: 100
+    nprobe: 10
 
   MANN-KDTree:
     axis_selector: variance

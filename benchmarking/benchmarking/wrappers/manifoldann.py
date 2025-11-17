@@ -468,6 +468,69 @@ class ManifoldANN_IVFHNSW(ManifoldANNWrapper):
         return "ManifoldANN-IVF-HNSW"
 
 
+class ManifoldANN_IVFFlat(ManifoldANNWrapper):
+    """Wrapper for the Julia IVF-Flat index."""
+
+    def __init__(
+        self,
+        metric,
+        nlist=100,
+        nprobe=10,
+        kmeans_init="kmeans_plus_plus",
+        kmeans_max_iters=5,
+        kmeans_tol=1e-4,
+    ):
+        super().__init__(metric)
+        self._nlist = int(nlist)
+        self._nprobe = int(nprobe)
+        self._kmeans_init = kmeans_init
+        self._kmeans_max_iters = int(kmeans_max_iters)
+        self._kmeans_tol = float(kmeans_tol)
+
+    def _kmeans_metric(self):
+        if self._metric == "angular":
+            return jl.seval("ManifoldANN.Distances.CosineDist()")
+        return jl.seval("ManifoldANN.Distances.Euclidean()")
+
+    def fit(self, X):
+        """Build the IVF-Flat index."""
+        super().fit(X)
+        distance_fn = self._get_distance_function()
+        kmeans_metric = self._kmeans_metric()
+        self._index = jl.build_index(
+            jl.IVFFlatIndex,
+            self._data,
+            nlist=self._nlist,
+            nprobe=self._nprobe,
+            distance=distance_fn,
+            centroid_metric=kmeans_metric,
+        )
+
+    def query(self, v, n):
+        """Query IVF-Flat."""
+        query_vec = np.asfortranarray(v, dtype=np.float32)
+        query_jl = self._to_vector(query_vec)
+        result = jl.query(self._index, self._data, query_jl, n, nprobe=self._nprobe)
+        return self._neighbors_to_ids(result)
+
+    def query_batch(self, queries, n):
+        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+        queries_jl = self._to_matrix(queries_fortran)
+        results = jl.query(self._index, self._data, queries_jl, n, nprobe=self._nprobe)
+        return self._batch_neighbors_to_ids(results)
+
+    def __str__(self):
+        return (
+            "ManifoldANN-IVF-Flat("
+            f"nlist={self._nlist}, nprobe={self._nprobe}, "
+            f"kmeans_init={self._kmeans_init}, kmeans_max_iters={self._kmeans_max_iters})"
+        )
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-IVF-Flat"
+
+
 class ManifoldANN_NNDescent(ManifoldANNWrapper):
     """Wrapper for ManifoldANN NNDescentIndex."""
 

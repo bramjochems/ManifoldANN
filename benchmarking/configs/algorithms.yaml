@@ -42,6 +42,12 @@ algorithms:
     language: Julia
     type: quantization
     description: KMeans coarse quantization with HNSW per cluster
+  MANN-IVF-Flat:
+    name: IVF-Flat
+    source: ManifoldANN
+    language: Julia
+    type: quantization
+    description: IVF-Flat index optimized for speed (KMeans + inverted lists)
 
   MANN-NNDescent:
     name: NN-Descent
