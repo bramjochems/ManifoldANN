@@ -16,7 +16,8 @@ using ...ManifoldANN:
     partition_by_transform,
     apply_transform_batch,
     default_distance,
-    preserves_data
+    preserves_data,
+    take_pending_assignments!
 
 """
     build_index(
@@ -95,6 +96,13 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
     sample_result = ManifoldANN.transform(config.transform, X[:, 1])
 
     preserves = ManifoldANN.preserves_data(config.transform)
+    precomputed_assignments = preserves ?
+        ManifoldANN.take_pending_assignments!(config.transform) :
+        nothing
+    if precomputed_assignments !== nothing && length(precomputed_assignments) != size(X, 2)
+        # Safety: discard mismatched assignments rather than erroring
+        precomputed_assignments = nothing
+    end
 
     if has_bucketing(sample_result.assignment)
         # Step 3a: Partition data by bucket assignments
@@ -102,6 +110,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
             X,
             config.transform;
             capture_data = !preserves,
+            precomputed_assignments = preserves ? precomputed_assignments : nothing,
         )
 
         # Step 3b: Build children only for non-empty partitions

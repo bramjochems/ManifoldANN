@@ -6,6 +6,18 @@ This document tracks improvement tasks for ManifoldANN, organized by priority. I
 
 ## 🔴 High Priority
 
+### Improve MultiLevel IVF-HNSW + Add PQ Transform
+
+**Context:** Benchmarks (`benchmarking/benchmarking/wrappers/faiss.py`) currently pit our KMeans→HNSW `build_ivf_hnsw_index` helper against FAISS `IndexIVFFlat`. FAISS lacks PQ in our harness yet still builds in ~0.3s and serves ~6K QPS, whereas `MANN-IVF` takes ~6s to build and ~600 QPS to query the same workload. We need to narrow this 10× gap without sacrificing clarity, and lay the groundwork for IVF+PQ support so we can explore FAISS-like recall/latency trade-offs.
+
+**Tasks:**
+- [ ] Profile current IVF build/query time to identify dominant costs (KMeans iterations, routing, HNSW child builds, merge overhead)
+- [ ] Design ADR describing how ProductQuantizationTransform fits under `src/transforms/` (codebooks, encoding format, deterministic seeds)
+- [ ] Implement PQ transform + utilities, ensure multi-level indices can store/use PQ codes while respecting `AbstractANNIndex` contracts
+- [ ] Integrate PQ stage after KMeans routing (KMeans → PQ → HNSW) with optional raw-vector cache for re-ranking
+- [ ] Extend benchmarking configs to compare IVF, IVF+PQ, and FAISS baselines; document build/query metrics
+- [ ] Add tests/examples covering PQ encoding accuracy, determinism, and IVF+PQ usage
+
 ### Complete NN-Descent Symmetrization Investigation
 
 **Context:** On at least one dataset, **deferred symmetrization outperforms continuous symmetrization** in terms of recall. This is unexpected and needs resolution before publication.

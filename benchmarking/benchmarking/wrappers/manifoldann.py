@@ -46,6 +46,29 @@ class ManifoldANNWrapper(BaseANNWrapper):
             warmup_index = jl.build_index(jl.BruteForceIndex, warmup_data)
             jl.query(warmup_index, warmup_data, warmup_query, 5)
 
+            # Warmup a tiny IVF-HNSW build to avoid JIT in timed runs
+            try:
+                jl.eval(
+                    """
+                    begin
+                        warmup_ivf = build_ivf_hnsw_index(
+                            warmup_data;
+                            nlist=4,
+                            routing_k=2,
+                            kmeans_max_iters=2,
+                            hnsw_M=8,
+                            hnsw_ef_construction=40,
+                            hnsw_ef_search=16,
+                            distance=default_distance,
+                        )
+                        warmup_ivf
+                    end
+                    """
+                )
+            except Exception:
+                # If warmup fails, skip without breaking benchmarks
+                pass
+
             print("✓ ManifoldANN warmup complete")
             ManifoldANNWrapper._julia_initialized = True
 

@@ -44,6 +44,8 @@ mutable struct KMeansTransform{D<:SemiMetric,TC<:AbstractFloat} <: AbstractTrans
     max_iters::Int
     tol::Float64
     centroids::Union{Nothing, Matrix{TC}}
+    centroid_norms::Union{Nothing, Vector{TC}}
+    pending_assignments::Union{Nothing, Vector{Int}}
 
     function KMeansTransform(;
         k::Int,
@@ -58,7 +60,7 @@ mutable struct KMeansTransform{D<:SemiMetric,TC<:AbstractFloat} <: AbstractTrans
         @assert max_iters > 0 "max_iters must be positive"
         @assert tol > 0 "tol must be positive"
 
-        new{D, centroid_type}(k, distance, init, max_iters, tol, nothing)
+        new{D, centroid_type}(k, distance, init, max_iters, tol, nothing, nothing, nothing)
     end
 end
 
@@ -116,6 +118,8 @@ function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:A
 
     # Store fitted centroids using the configured storage precision
     t.centroids = centroids isa Matrix{TC} ? centroids : Matrix{TC}(centroids)
+    t.centroid_norms = vec(sum(abs2, t.centroids; dims=1))
+    t.pending_assignments = assignments
 
     return t
 end
@@ -142,10 +146,16 @@ function transform(t::KMeansTransform, x::AbstractVector)
         error("KMeansTransform must be fitted before transforming")
     end
 
-    # Compute distances to all centroids
-    distances = compute_distances(x, t.centroids, t.distance)
+    # Compute distances to all centroids using cached centroid norms when possible
+    distances = compute_distances(x, t.centroids, t.distance, t.centroid_norms)
 
     return TransformResult(x, KMeansAssignment(distances))
+end
+
+function take_pending_assignments!(t::KMeansTransform)
+    assignments = t.pending_assignments
+    t.pending_assignments = nothing
+    return assignments
 end
 
 preserves_data(::KMeansTransform) = true

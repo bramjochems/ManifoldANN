@@ -39,6 +39,16 @@ struct TransformResult{T,B}
 end
 
 """
+    take_pending_assignments!(transform::AbstractTransform) -> Union{Nothing,Vector{Int}}
+
+Retrieve any cached bucket assignments produced during `fit!` and clear them
+from the transform. The default implementation returns `nothing`; transforms
+that can reuse training assignments (e.g., `KMeansTransform`) should override
+this to provide a freshly allocated vector for one-time consumption.
+"""
+take_pending_assignments!(::AbstractTransform) = nothing
+
+"""
     preserves_data(transform::AbstractTransform) -> Bool
 
 Return true when `transform` leaves the underlying data representation unchanged.

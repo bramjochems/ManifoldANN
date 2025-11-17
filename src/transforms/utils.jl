@@ -43,7 +43,12 @@ function get_bucket_assignment(assignment::KMeansAssignment)
 end
 
 """
-    partition_by_transform(X::AbstractMatrix, transform::AbstractTransform; capture_data::Bool = true)
+    partition_by_transform(
+        X::AbstractMatrix,
+        transform::AbstractTransform;
+        capture_data::Bool = true,
+        precomputed_assignments::Union{Nothing,Vector{Int}} = nothing,
+    )
 
 Partition data matrix `X` into buckets according to the transform's bucketing.
 
@@ -62,74 +67,106 @@ Returns optional child datasets plus ID mappings from local to global IDs.
   - `partitions`: `nothing` if `capture_data == false`, otherwise a vector of matrices
     containing transformed data grouped per bucket
   - `id_mappings[i]` maps local IDs in partition `i` to global IDs in `X`
+
+# Notes
+- `precomputed_assignments` allows callers to reuse cluster assignments obtained
+  during `fit!` for transforms that preserve the original data representation.
 """
 function partition_by_transform(
     X::AbstractMatrix,
     trans::AbstractTransform;
     capture_data::Bool=true,
+    precomputed_assignments::Union{Nothing, Vector{Int}}=nothing,
 )
     d, n = size(X)
     n > 0 || throw(ArgumentError("Cannot partition empty dataset"))
 
-    # Peek at first point to determine output type when capturing data
     if capture_data
-        first_result = ManifoldANN.transform(trans, X[:, 1])
-        if !has_bucketing(first_result.assignment)
-            error("Transform does not produce bucketing information")
-        end
-
-        first_data = first_result.data
-        first_data isa AbstractVector ||
-            throw(ArgumentError("Transform data must be a vector, got $(typeof(first_data))"))
-
-        DataVec = typeof(first_data)
-        stored_data = Vector{DataVec}(undef, n)
-        stored_data[1] = first_data
-        start_idx = 2
-    else
-        stored_data = nothing
-        start_idx = 1
+        partitions, id_mappings = _partition_with_data(X, trans)
+        return partitions, id_mappings
     end
 
-    # First pass: determine bucket assignments
+    if precomputed_assignments !== nothing
+        length(precomputed_assignments) == n ||
+            throw(
+                ArgumentError(
+                    "Expected $(n) assignments, got $(length(precomputed_assignments))",
+                ),
+            )
+        return _finalize_partitions(precomputed_assignments, nothing, n)
+    end
+
     assignments = Vector{Int}(undef, n)
-    if capture_data
-        assignments[1] = get_bucket_assignment(first_result.assignment)
-    end
-
-    for j in start_idx:n
+    for j in 1:n
         x = @view X[:, j]
         result = ManifoldANN.transform(trans, x)
         if !has_bucketing(result.assignment)
             error("Transform does not produce bucketing information")
         end
         assignments[j] = get_bucket_assignment(result.assignment)
-        if capture_data
-            stored_data[j] = result.data
-        end
     end
 
-    # Determine number of buckets and count points per bucket
+    return _finalize_partitions(assignments, nothing, n)
+end
+
+function _partition_with_data(X::AbstractMatrix, trans::AbstractTransform)
+    n = size(X, 2)
+    assignments = Vector{Int}(undef, n)
+
+    first_result = ManifoldANN.transform(trans, @view X[:, 1])
+    if !has_bucketing(first_result.assignment)
+        error("Transform does not produce bucketing information")
+    end
+    first_data = first_result.data
+    first_data isa AbstractVector ||
+        throw(ArgumentError("Transform data must be a vector, got $(typeof(first_data))"))
+    DataVec = typeof(first_data)
+    stored_data = Vector{DataVec}(undef, n)
+    stored_data[1] = first_data
+    assignments[1] = get_bucket_assignment(first_result.assignment)
+
+    for j in 2:n
+        x = @view X[:, j]
+        result = ManifoldANN.transform(trans, x)
+        if !has_bucketing(result.assignment)
+            error("Transform does not produce bucketing information")
+        end
+        assignments[j] = get_bucket_assignment(result.assignment)
+        stored_data[j] = result.data
+    end
+
+    partitions, id_mappings = _finalize_partitions(assignments, stored_data, n)
+    return partitions, id_mappings
+end
+
+function _finalize_partitions(
+    assignments::Vector{Int},
+    stored_data::Union{Nothing, Vector{<:AbstractVector}},
+    n::Int,
+)
     num_buckets = maximum(assignments)
+    num_buckets > 0 ||
+        throw(ArgumentError("Transform produced invalid bucket assignments"))
+
     bucket_sizes = zeros(Int, num_buckets)
     for assignment in assignments
+        (assignment >= 1 && assignment <= num_buckets) ||
+            throw(ArgumentError("Assignment out of bounds: $assignment"))
         bucket_sizes[assignment] += 1
     end
 
-    # Allocate partition matrices and ID mappings
     partitions =
-        capture_data ? _allocate_partitions(stored_data, bucket_sizes, num_buckets) : nothing
+        stored_data === nothing ? nothing : _allocate_partitions(stored_data, bucket_sizes, num_buckets)
     id_mappings = [Vector{Int}(undef, bucket_sizes[i]) for i in 1:num_buckets]
 
-    # Fill partitions and ID mappings
     bucket_indices = ones(Int, num_buckets)
     for j in 1:n
         bucket = assignments[j]
         local_idx = bucket_indices[bucket]
-        if capture_data
+        if partitions !== nothing
             partitions[bucket][:, local_idx] = stored_data[j]
         end
-        id_mappings[bucket][local_idx] = j  # Store global ID
+        id_mappings[bucket][local_idx] = j
         bucket_indices[bucket] += 1
     end
 

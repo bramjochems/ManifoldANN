@@ -159,12 +159,17 @@ Compute distances from a single point to all centroids.
 - Uses BLAS-optimized GEMV for Euclidean distances (query-time critical path)
 - Falls back to loop for other metrics
 """
-function compute_distances(x::AbstractVector, centroids::Matrix, distance::SemiMetric)
+function compute_distances(
+    x::AbstractVector,
+    centroids::Matrix,
+    distance::SemiMetric,
+    centroid_norms::Union{Nothing, AbstractVector}=nothing,
+)
     # Fast path for Euclidean distance
     if distance isa Euclidean
-        return compute_distances_euclidean(x, centroids)
+        return compute_distances_euclidean(x, centroids, centroid_norms)
     elseif distance isa SqEuclidean
-        return compute_distances_sqeuclidean(x, centroids)
+        return compute_distances_sqeuclidean(x, centroids, centroid_norms)
     end
 
     # Generic fallback
@@ -184,7 +189,11 @@ end
 BLAS-optimized Euclidean distance for a single query point to all centroids.
 Uses GEMV (matrix-vector multiply) for optimal performance.
 """
-function compute_distances_euclidean(x::AbstractVector{T}, centroids::Matrix{T}) where {T}
+function compute_distances_euclidean(
+    x::AbstractVector{T},
+    centroids::Matrix{T},
+    centroid_norms::Union{Nothing, AbstractVector{T}}=nothing,
+) where {T}
     k = size(centroids, 2)
     distances = Vector{T}(undef, k)
 
@@ -197,7 +206,7 @@ function compute_distances_euclidean(x::AbstractVector{T}, centroids::Matrix{T})
 
     # Compute distances: ||ci - x||² = ||ci||² + ||x||² - 2(ci·x)
     @inbounds for i in 1:k
-        centroid_norm_sq = sum(abs2, view(centroids, :, i))
+        centroid_norm_sq = centroid_norms === nothing ? sum(abs2, view(centroids, :, i)) : centroid_norms[i]
         sq_dist = centroid_norm_sq + x_norm_sq - 2 * dots[i]
         distances[i] = sqrt(max(sq_dist, zero(T)))
     end
@@ -210,7 +219,11 @@ end
 
 BLAS-optimized squared Euclidean distance for a single query point.
 """
-function compute_distances_sqeuclidean(x::AbstractVector{T}, centroids::Matrix{T}) where {T}
+function compute_distances_sqeuclidean(
+    x::AbstractVector{T},
+    centroids::Matrix{T},
+    centroid_norms::Union{Nothing, AbstractVector{T}}=nothing,
+) where {T}
     k = size(centroids, 2)
     distances = Vector{T}(undef, k)
 
@@ -218,7 +231,7 @@ function compute_distances_sqeuclidean(x::AbstractVector{T}, centroids::Matrix{T
     dots = centroids' * x  # BLAS GEMV
 
     @inbounds for i in 1:k
-        centroid_norm_sq = sum(abs2, view(centroids, :, i))
+        centroid_norm_sq = centroid_norms === nothing ? sum(abs2, view(centroids, :, i)) : centroid_norms[i]
         sq_dist = centroid_norm_sq + x_norm_sq - 2 * dots[i]
         distances[i] = max(sq_dist, zero(T))
     end
