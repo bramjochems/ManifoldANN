@@ -34,6 +34,7 @@ include("graphs/weighted_knn_graph.jl")
 
 # Geodesic distance model
 include("geodesic/geodesic_model.jl")
+include("geodesic/refinement.jl")
 
 export AbstractANNIndex,
        AbstractGraphIndex,
@@ -165,6 +166,13 @@ export AbstractANNIndex,
        build_geodesic_model,
        geodesic_distance,
        shortest_path_with_path,
-       all_pairs_geodesic_distances
+       all_pairs_geodesic_distances,
+       # Geodesic refinement
+       AbstractGeodesicRefinement,
+       RefinedPath,
+       refine_path,
+       NoRefinement,
+       SubdivisionSmoothing,
+       CurvatureCorrectedDistance
 
 end
