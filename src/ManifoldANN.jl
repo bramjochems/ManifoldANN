@@ -22,6 +22,19 @@ include("indices/faiss_ivf.jl")
 # Multi-level indices
 include("indices/multilevel/multilevel_index.jl")
 
+# Local geometry estimation (for geodesic distance)
+include("geometry/local_geometry.jl")
+include("geometry/pca.jl")
+include("geometry/criteria.jl")
+include("geometry/neighborhood.jl")
+include("geometry/estimator.jl")
+
+# Weighted kNN graph (geodesic-aware edge weights)
+include("graphs/weighted_knn_graph.jl")
+
+# Geodesic distance model
+include("geodesic/geodesic_model.jl")
+
 export AbstractANNIndex,
        AbstractGraphIndex,
        AbstractLSHHash,
@@ -84,6 +97,74 @@ export AbstractANNIndex,
        MultiLevelIndex,
        build_ivf_hnsw_index,
        Neighbor,
-       neighbor_ids
+       neighbor_ids,
+       # Local geometry estimation
+       AbstractLocalGeometryMethod,
+       AbstractLocalGeometry,
+       PCAMethod,
+       PCAGeometry,
+       fit_geometry,
+       local_distance,
+       supports_projection,
+       project,
+       reconstruct,
+       intrinsic_dimension,
+       center,
+       explained_variance_ratio,
+       total_variance,
+       fit_error,
+       # Selection criteria for neighborhood strategies
+       AbstractSelectionCriterion,
+       FitErrorCriterion,
+       DistortionCriterion,
+       SubspaceAngleCriterion,
+       evaluate_point,
+       evaluate_neighborhood,
+       compare_geometries,
+       passes_threshold,
+       subspace_angle,
+       # Neighborhood strategies (composable with any geometry method)
+       AbstractNeighborhoodStrategy,
+       FixedNeighborhood,
+       AdaptiveNeighborhood,
+       ExpandingNeighborhood,
+       NeighborhoodResult,
+       select_neighbors,
+       # Geometry estimator (composes strategy + method)
+       LocalGeometryEstimator,
+       EstimatedGeometry,
+       unwrap_geometry,
+       used_neighbor_count,
+       refinement_iterations,
+       max_reconstruction_error,
+       recenter,
+       # Weighted kNN graph
+       WeightedKNNGraph,
+       build_weighted_graph,
+       # Edge weight modes
+       AbstractEdgeWeightMode,
+       SourceTangent,
+       SymmetricMean,
+       SymmetricMax,
+       # Tangent sharing modes
+       AbstractTangentSharingMode,
+       NoSharing,
+       ShareSimilarTangents,
+       node_geometry,
+       edge_weight,
+       neighbors,
+       neighbor_weights,
+       neighbors_with_weights,
+       total_edge_weight,
+       mean_edge_weight,
+       edge_weight_statistics,
+       unique_geometry_count,
+       geometry_sharing_ratio,
+       # Geodesic distance model
+       GeodesicDistanceModel,
+       build_geodesic_model,
+       geodesic_distance,
+       shortest_path_with_path,
+       all_pairs_geodesic_distances
 
 end
