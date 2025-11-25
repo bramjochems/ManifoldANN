@@ -244,24 +244,36 @@ function smooth_path_on_manifold(method::SubdivisionSmoothing,
 
         # Smooth interior points only (keep endpoints fixed)
         for i in 2:n-1
-            # Average of neighbors
-            avg = (points[i-1] + points[i+1]) / 2
-
             # Find local tangent plane (interpolate from nearby graph nodes)
             geom = find_local_geometry(model, data, points[i])
 
-            # Project the averaged point onto the tangent plane centered at current point
-            # Strategy: project (avg - current) onto tangent space, then add back
-            displacement = avg - points[i]
-
             if supports_projection(geom)
-                # Project displacement onto tangent space
-                tangent_displacement = project_to_tangent_space(geom, points[i], displacement)
+                # Unwrap if EstimatedGeometry
+                actual_geom = geom isa ManifoldANN.EstimatedGeometry ? unwrap_geometry(geom) : geom
+
+                # Recenter tangent plane to current point
+                recentered_geom = recenter(actual_geom, points[i])
+
+                # Project neighbors to tangent space, average there, then reconstruct
+                # This computes the manifold-aware average (not ambient space chord)
+                tangent_coords_prev = project(recentered_geom, points[i-1])
+                tangent_coords_next = project(recentered_geom, points[i+1])
+
+                # Average in tangent space (linear space)
+                avg_tangent_coords = (tangent_coords_prev + tangent_coords_next) / 2
+
+                # Reconstruct to get the averaged point in ambient space
+                avg_point = reconstruct(recentered_geom, avg_tangent_coords)
+
+                # Compute displacement
+                displacement = avg_point - points[i]
 
                 # Update with damping
-                new_points[i] = points[i] + damping * tangent_displacement
+                new_points[i] = points[i] + damping * displacement
             else
-                # Fallback: just use averaging without projection
+                # Fallback: ambient space averaging (no manifold awareness)
+                avg = (points[i-1] + points[i+1]) / 2
+                displacement = avg - points[i]
                 new_points[i] = points[i] + damping * displacement
             end
 
@@ -332,14 +344,20 @@ function project_to_tangent_space(geom::AbstractLocalGeometry,
         return vector
     end
 
+    # Recenter the geometry to the current point before projecting.
+    # This is critical: PCAGeometry's project/reconstruct operate relative to geom.center,
+    # so we must recenter to ensure zero displacement remains zero (prevents drift in
+    # SubdivisionSmoothing and ensures convergence to stationary solution).
+    recentered_geom = recenter(actual_geom, center)
+
     # Use the public project/reconstruct interface to project the vector
     # Strategy: project(geom, center + v) gives tangent coords of v
     #           reconstruct(geom, coords) gives center + projected_v
     #           Subtract center to get projected_v
 
     # Project the vector: shift, project, reconstruct, unshift
-    tangent_coords = project(actual_geom, center + vector)
-    reconstructed = reconstruct(actual_geom, tangent_coords)
+    tangent_coords = project(recentered_geom, center + vector)
+    reconstructed = reconstruct(recentered_geom, tangent_coords)
     tangent_component = reconstructed - center
 
     return tangent_component
