@@ -18,6 +18,13 @@ Experimental Julia package for approximate nearest neighbours (ANN) on manifolds
   - Configurable routing strategies (`TopKRouting`, `ExhaustiveRouting`)
   - See `docs/examples/indices/06-ivf-index.jl` and `docs/transforms.md` for details
 
+## Geometry and Geodesic Distances
+
+- Local geometry is fitted with `PCAMethod` plus a neighborhood strategy via `LocalGeometryEstimator`. Strategies include `FixedNeighborhood`, shrinking `AdaptiveNeighborhood` (with `FitErrorCriterion` or `DistortionCriterion`), and growing `ExpandingNeighborhood` (with `DistortionCriterion` or `SubspaceAngleCriterion`), letting you tune the set of points used in each PCA tangent plane.
+- Weighted graphs (`build_weighted_graph`) carry per-node tangent planes and edge weights computed with configurable modes: `SourceTangent` (fast, asymmetric), `SymmetricMean`, or `SymmetricMax`. Tangent planes can be unique per node (`NoSharing`) or reused when nearby planes are similar (`ShareSimilarTangents`).
+- `build_geodesic_model` wraps an ANN index, weighted graph, and geometry method to answer geodesic distance queries. It supports node-to-node, point-to-node, and point-to-point queries by combining local tangent distances with Dijkstra shortest paths on the weighted graph.
+- See runnable examples under `docs/examples/geodesic/` (e.g., `02-strategy-comparison.jl`) for end-to-end usage and strategy comparisons.
+
 ## Developing
 
 There's a Makefile to automate common tasks:
