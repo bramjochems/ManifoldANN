@@ -16,6 +16,9 @@ include("indices/nndescent.jl")
 # Transform module (must come before indices that depend on it)
 include("transforms/transforms.jl")
 
+# Preprocessing transforms (dimensionality reduction)
+include("preprocessing/preprocessing.jl")
+
 # Indices that depend on transforms
 include("indices/faiss_ivf.jl")
 
@@ -31,6 +34,9 @@ include("geometry/estimator.jl")
 
 # Weighted kNN graph (geodesic-aware edge weights)
 include("graphs/weighted_knn_graph.jl")
+
+# Graph curvature (Ollivier-Ricci curvature and filtering)
+include("graphs/refinement/refinement.jl")
 
 # Geodesic distance model
 include("geodesic/geodesic_model.jl")
@@ -85,6 +91,13 @@ export AbstractANNIndex,
        get_bucket_assignment,
        partition_by_transform,
        apply_transform_batch,
+       # Preprocessing transforms
+       PCATransform,
+       RandomProjectionTransform,
+       inverse_transform,
+       target_dimension,
+       suggested_dimension,
+       preserves_data,
        # Multi-level indices
        AbstractIndexConfig,
        TerminalConfig,
@@ -173,6 +186,23 @@ export AbstractANNIndex,
        refine_path,
        NoRefinement,
        SubdivisionSmoothing,
-       CurvatureCorrectedDistance
+       CurvatureCorrectedDistance,
+       # Graph refinement (curvature-based filtering)
+       NodeNeighborhood,
+       EdgeNeighborhoodView,
+       CurvatureResult,
+       AbstractCurvatureSolver,
+       FastMatchingSolver,
+       BruteForceSolver,
+       GenericOTSolver,
+       uniform_neighborhood,
+       create_edge_view,
+       is_positive_curvature,
+       passes_threshold,
+       can_handle,
+       compute_curvature,
+       filter_graph,
+       compute_all_curvatures,
+       curvature_statistics
 
 end

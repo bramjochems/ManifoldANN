@@ -60,14 +60,14 @@ indices can avoid caching redundant copies of the dataset. The default is
 preserves_data(::AbstractTransform) = false
 
 """
-    fit!(transform::AbstractTransform, X::Matrix)
+    fit!(transform::AbstractTransform, X::AbstractMatrix)
 
 Fit the transform to training data `X` (each column is a data point).
 
 This method learns any parameters needed by the transform (e.g., cluster centroids,
 quantization codebooks, projection matrices).
 """
-function fit!(::AbstractTransform, ::Matrix)
+function fit!(::AbstractTransform, ::AbstractMatrix)
     error("fit! not implemented for this transform type")
 end
 
