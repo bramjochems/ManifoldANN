@@ -8,6 +8,7 @@
 /benchmarking/ann-benchmarks/
 /benchmarking/venv/
 /benchmarking/__pycache__/
+/benchmarking/output/
 
 # Python
 __pycache__/
