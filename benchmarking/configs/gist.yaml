@@ -1,21 +1,13 @@
-# Last.fm dataset configuration
-dataset: lastfm-64-dot
-metric: angular
+# GIST dataset configuration
+dataset: gist-960-euclidean
+metric: euclidean
 n_train: 10000
 n_test: 1000
 
 algorithms:
-  MANN-BruteForce: {}
-
   MANN-LSH:
-    n_tables: 16
-    hash_length: 6
-
-  # MANN-HNSW-heuristic:
-  #   M: 16
-  #   ef_construction: 200
-  #   ef_search: 50
-  #   neighbor_policy: heuristic
+    n_tables: 20
+    hash_length: 8
 
   MANN-HNSW-diversified:
     M: 16
@@ -24,21 +16,12 @@ algorithms:
     neighbor_policy: diversified
 
   MANN-IVF-HNSW:
-    nlist: 120
-    routing_k: 10
+    nlist: 256
+    routing_k: 16
     M: 16
     ef_construction: 200
     ef_search: 64
     neighbor_policy: diversified
-
-  # MANN-NNDescent-pruned-continuous:
-  #   k: 32
-  #   max_iterations: 5
-  #   convergence_threshold: 0.01
-  #   sample_rate: 0.5
-  #   symmetry_policy: pruned
-  #   apply_symmetry_continuously: true
-  #   ef_search: 64
 
   MANN-NNDescent-pruned-deferred:
     k: 32
@@ -76,8 +59,8 @@ algorithms:
     ef_search: 50
 
   FAISS-IVF:
-    nlist: 100
-    nprobe: 10
+    nlist: 200
+    nprobe: 16
 
   HNSW-jl:
     M: 16
