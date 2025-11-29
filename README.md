@@ -55,7 +55,7 @@ make benchmark ARGS="--list-configs"
 
 The benchmark target automatically uses the virtual environment if available.
 
-See [`benchmarking/README.md`](benchmarking/README.md) and [`benchmarking/REFACTOR_SUMMARY.md`](benchmarking/REFACTOR_SUMMARY.md) for detailed benchmarking documentation.
+See [`benchmarking/README.md`](benchmarking/README.md) for detailed benchmarking documentation.
 
 
 ## Directory Layout
