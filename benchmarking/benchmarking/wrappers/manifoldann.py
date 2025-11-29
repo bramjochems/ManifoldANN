@@ -89,12 +89,14 @@ class ManifoldANNWrapper(BaseANNWrapper):
         """Get the appropriate Julia distance function for the metric.
 
         Returns:
-            Julia function for computing distances (squared variant for use in priority queues)
+            Julia function for computing distances (matching ground truth computation)
         """
         if self._metric == "angular":
-            return jl.ManifoldANN.squared_cosine_distance
+            # Use cosine_distance (1 - cosine_sim) to match ground truth
+            return jl.ManifoldANN.cosine_distance
         else:  # euclidean
-            return jl.ManifoldANN.default_squared_distance
+            # Use Euclidean distance (with sqrt) to match ground truth
+            return jl.ManifoldANN.default_distance
 
     def fit(self, X):
         """Build the index from training data.

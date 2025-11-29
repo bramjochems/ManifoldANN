@@ -78,6 +78,7 @@ export AbstractANNIndex,
        recall_at_k,
        default_distance,
        default_squared_distance,
+       cosine_distance,
        squared_cosine_distance,
        # Transforms
        AbstractTransform,
