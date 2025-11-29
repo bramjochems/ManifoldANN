@@ -27,6 +27,11 @@ if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
 # Now safe to import other modules
 import time
 import argparse
+import json
+import csv
+import shutil
+import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -104,7 +109,151 @@ def _verify_julia_threading():
         pass
 
 
-def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None):
+def get_git_info():
+    """Get current git commit SHA and dirty state.
+
+    Returns:
+        dict with 'sha' and 'dirty' keys, or None if not in git repo
+    """
+    try:
+        # Get current commit SHA
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+
+        # Check if repo is dirty
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        dirty = len(status) > 0
+
+        return {"sha": sha, "dirty": dirty}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def create_output_directory(base_dir: str = None):
+    """Create timestamped output directory.
+
+    Args:
+        base_dir: Base directory for outputs (defaults to output/ relative to this script)
+
+    Returns:
+        Path object for the created directory
+    """
+    if base_dir is None:
+        # Use output directory relative to this script's location
+        script_dir = Path(__file__).parent
+        base_dir = script_dir / "output"
+    else:
+        base_dir = Path(base_dir)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    output_dir = base_dir / f"results_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def save_metadata(output_dir: Path, config_name: str, config: dict,
+                  cli_args: dict, git_info: dict):
+    """Save metadata JSON file with run information.
+
+    Args:
+        output_dir: Output directory path
+        config_name: Name of the config used
+        config: Configuration dictionary
+        cli_args: Command-line arguments
+        git_info: Git information (SHA and dirty state)
+    """
+    metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "git": git_info,
+        "cli_arguments": cli_args,
+        "dataset_config": {
+            "config_name": config_name,
+            "dataset": config.get("dataset"),
+            "metric": config.get("metric"),
+            "n_train": config.get("n_train"),
+            "n_test": config.get("n_test"),
+        }
+    }
+
+    metadata_path = output_dir / "metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    print(f"✓ Saved metadata to {metadata_path}")
+
+
+def copy_config_files(output_dir: Path, config_name: str):
+    """Copy configuration files to output directory.
+
+    Args:
+        output_dir: Output directory path
+        config_name: Name of the dataset config used
+    """
+    # Use configs directory relative to this script's location
+    script_dir = Path(__file__).parent
+    config_dir = script_dir / "configs"
+
+    # Always copy algorithms.yaml
+    algorithms_yaml = config_dir / "algorithms.yaml"
+    if algorithms_yaml.exists():
+        shutil.copy(algorithms_yaml, output_dir / "algorithms.yaml")
+        print(f"✓ Copied algorithms.yaml")
+
+    # Copy dataset config
+    dataset_config = config_dir / f"{config_name}.yaml"
+    if dataset_config.exists():
+        shutil.copy(dataset_config, output_dir / f"{config_name}.yaml")
+        print(f"✓ Copied {config_name}.yaml")
+
+
+def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k: int):
+    """Save results to CSV file.
+
+    Args:
+        output_dir: Output directory path
+        results: List of successful result dictionaries
+        failed_algorithms: List of failed algorithm info
+        k: Number of neighbors used
+    """
+    csv_path = output_dir / "results.csv"
+
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+
+        # Write header
+        writer.writerow(["algorithm", "qps", f"recall@{k}", "build_time", "status", "error"])
+
+        # Write successful results
+        for r in results:
+            writer.writerow([
+                r["name"],
+                f"{r['qps']:.2f}",
+                f"{r['recall']:.4f}",
+                f"{r['build_time']:.2f}",
+                "success",
+                ""
+            ])
+
+        # Write failed algorithms
+        for failed in failed_algorithms:
+            writer.writerow([
+                failed["name"],
+                "N/A",
+                "N/A",
+                "N/A",
+                "failed",
+                failed.get("error", "Unknown error")
+            ])
+
+    print(f"✓ Saved results to {csv_path}")
+
+
+def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False):
     """Run benchmarks for a single dataset configuration.
 
     Args:
@@ -113,6 +262,7 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         k: Number of neighbors to retrieve
         n_train: Number of training points (None uses config, 0 uses full dataset)
         n_test: Number of test queries (None uses config, 0 uses full dataset)
+        save_output: If True, save results to timestamped directory under benchmarking/output/
     """
     # Load configuration and algorithm metadata
     print("=" * 80)
@@ -120,6 +270,21 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     print("=" * 80)
     config = load_config(config_name)
     algo_metadata = load_algorithm_metadata()
+
+    # Setup output directory if requested
+    output_dir = None
+    if save_output:
+        output_dir = create_output_directory()
+        print(f"\n📁 Output directory: {output_dir}")
+
+        # Get git info
+        git_info = get_git_info()
+        if git_info:
+            dirty_str = " (dirty)" if git_info["dirty"] else ""
+            print(f"📝 Git commit: {git_info['sha'][:8]}{dirty_str}")
+        else:
+            print("⚠️  Not in a git repository")
+            git_info = {"sha": None, "dirty": None}
 
     dataset_name = config["dataset"]
     metric = config["metric"]
@@ -146,6 +311,7 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     print(f"{'=' * 80}\n")
 
     results = []
+    failed_algorithms = []
 
     # Iterate through configured algorithms
     for algo_name, algo_params in config["algorithms"].items():
@@ -154,10 +320,22 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         print(f"{'─' * 80}")
 
         # Create algorithm instance
-        algo = create_algorithm(algo_name, metric, algo_params or {})
+        try:
+            algo = create_algorithm(algo_name, metric, algo_params or {})
+        except ValueError as e:
+            print(f"✗ Error: {e}")
+            failed_algorithms.append({
+                "name": algo_name,
+                "error": str(e)
+            })
+            continue
 
         if algo is None:
             print(f"⚠️  Skipped (library not available)")
+            failed_algorithms.append({
+                "name": algo_name,
+                "error": "Library not available"
+            })
             continue
 
         print(f"Configuration: {algo}")
@@ -205,9 +383,16 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             })
 
         except Exception as e:
-            print(f"✗ Error: {e}")
+            error_msg = str(e)
+            print(f"✗ Error: {error_msg}")
             import traceback
             traceback.print_exc()
+
+            # Track failed algorithm
+            failed_algorithms.append({
+                "name": algo_name,
+                "error": error_msg
+            })
             continue
 
     # Print summary
@@ -243,6 +428,31 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         print()
 
     print(f"{'=' * 80}\n")
+
+    # Save outputs if requested
+    if save_output and output_dir:
+        print(f"{'=' * 80}")
+        print("Saving Results")
+        print(f"{'=' * 80}\n")
+
+        # Save metadata
+        cli_args = {
+            "config": config_name,
+            "data_dir": data_dir,
+            "k": k,
+            "n_train": n_train,
+            "n_test": n_test,
+        }
+        save_metadata(output_dir, config_name, config, cli_args, git_info)
+
+        # Copy config files
+        copy_config_files(output_dir, config_name)
+
+        # Save results CSV
+        save_results_csv(output_dir, results, failed_algorithms, k)
+
+        print(f"\n✓ All results saved to: {output_dir}")
+        print(f"{'=' * 80}\n")
 
 
 def main():
@@ -315,6 +525,12 @@ Available datasets:
         help="List available algorithms and their status",
     )
 
+    parser.add_argument(
+        "--save-output",
+        action="store_true",
+        help="Save results to timestamped directory under benchmarking/output/",
+    )
+
     args = parser.parse_args()
 
     # Handle --list-configs
@@ -335,7 +551,7 @@ Available datasets:
         return
 
     # Run benchmark
-    run_benchmark(args.config, args.data_dir, args.k, args.n_train, args.n_test)
+    run_benchmark(args.config, args.data_dir, args.k, args.n_train, args.n_test, args.save_output)
 
 
 if __name__ == "__main__":
