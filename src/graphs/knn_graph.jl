@@ -20,19 +20,31 @@ Base.iterate(graph::KNNGraph) = iterate(graph.neighbors)
 Base.iterate(graph::KNNGraph, state) = iterate(graph.neighbors, state)
 
 """
-    build_knn_graph(index, data; k, include_self=false, query_kwargs...)
+    build_knn_graph(index, data; k, include_self=false, directed=true, query_kwargs...)
 
 Construct a `KNNGraph` by querying `index` with every column of `data`. The
 `k` parameter either comes from the caller or, if omitted, from
 `configured_k(index)`. When `include_self=false` (default) the graph omits
 self-loops and will raise an error if the index cannot supply enough
 non-self neighbors.
+
+# Arguments
+- `directed::Bool=true`: If `false`, symmetrize the graph by taking the union of
+  i→j and j→i edges.
+
+  **⚠️ Warning**: This changes the semantics of `k`:
+  - After symmetrization, `graph.k` becomes the **maximum degree** across all nodes
+  - Individual nodes may have varying degrees (typically 1.5-2x the original k)
+  - The original k is preserved in `graph.metadata.original_k`
+  - This is required for Ollivier-Ricci curvature (orcml configuration)
+  - Downstream code should NOT assume `graph.k == original_k` for undirected graphs
 """
 function build_knn_graph(
     index::AbstractANNIndex,
     data::AbstractMatrix{T};
     k::Union{Nothing,Integer} = nothing,
     include_self::Bool = false,
+    directed::Bool = true,
     metadata::Union{Nothing,AbstractVector} = nothing,
     query_kwargs...,
 ) where {T}
@@ -54,9 +66,18 @@ function build_knn_graph(
         adjacency[col] = _prepare_neighbors(ids, col, resolved_k, include_self)
     end
 
-    stored_metadata = _prepare_metadata(metadata, n_points)
+    # Symmetrize if requested
+    original_k = resolved_k  # Store original k before potential update
+    if !directed
+        adjacency = _symmetrize_adjacency(adjacency, n_points)
+        # Update k to reflect actual max degree after symmetrization
+        resolved_k = maximum(length(neighbors) for neighbors in adjacency)
+    end
 
-    return KNNGraph(adjacency, resolved_k, include_self, stored_metadata)
+    # Create graph metadata (structural + optional node-level)
+    graph_metadata = _create_graph_metadata(original_k, directed, metadata, n_points)
+
+    return KNNGraph(adjacency, resolved_k, include_self, graph_metadata)
 end
 
 function _resolve_graph_k(index::AbstractANNIndex, k::Union{Nothing,Integer})
@@ -132,12 +153,71 @@ function _prepare_metadata(metadata, n_points::Int)
     return collect(metadata)
 end
 
-has_metadata(graph::KNNGraph) = graph.metadata !== nothing
+"""
+    _create_graph_metadata(original_k, directed, node_metadata, n_points)
+
+Create graph metadata structure containing both structural and node-level information.
+
+The metadata is a named tuple with:
+- `original_k`: The k value requested at graph construction (before symmetrization)
+- `directed`: Whether the graph is directed (false = symmetrized)
+- `node_metadata`: Optional per-node metadata (or nothing)
+
+This structure allows downstream code to:
+1. Access the original k for algorithms that need it (e.g., effective_epsilon)
+2. Determine if graph is directed or undirected (important for geodesic metrics)
+3. Attach custom per-node data (labels, coordinates, etc.)
+"""
+function _create_graph_metadata(
+    original_k::Int,
+    directed::Bool,
+    node_metadata::Union{Nothing,AbstractVector},
+    n_points::Int
+)
+    stored_node_metadata = _prepare_metadata(node_metadata, n_points)
+
+    return (
+        original_k = original_k,
+        directed = directed,
+        node_metadata = stored_node_metadata
+    )
+end
+
+"""
+    _symmetrize_adjacency(adjacency, n_points)
+
+Symmetrize a directed k-NN graph by taking the union of i→j and j→i edges.
+If node i has j in its k-NN, and/or j has i in its k-NN, then both i and j
+will have each other as neighbors in the symmetrized graph.
+
+This creates an undirected graph where nodes may have varying degrees
+(typically more than the original k).
+"""
+function _symmetrize_adjacency(adjacency::Vector{Vector{Int}}, n_points::Int)
+    # Use sets for efficient union
+    symmetric = [Set{Int}() for _ in 1:n_points]
+
+    # Add all edges and their reverse
+    for i in 1:n_points
+        for j in adjacency[i]
+            push!(symmetric[i], j)  # i→j
+            push!(symmetric[j], i)  # j→i (reverse)
+        end
+    end
+
+    # Convert back to sorted vectors
+    return [sort!(collect(s)) for s in symmetric]
+end
+
+has_metadata(graph::KNNGraph) = graph.metadata !== nothing && graph.metadata.node_metadata !== nothing
 
 function node_metadata(graph::KNNGraph, i::Integer)
     graph.metadata !== nothing ||
         throw(ArgumentError("Graph does not store metadata"))
-    return graph.metadata[i]
+    graph.metadata.node_metadata !== nothing ||
+        throw(ArgumentError("Graph does not store node-level metadata"))
+    return graph.metadata.node_metadata[i]
 end
 
+# Access structural metadata (original_k, directed)
 graph_metadata(graph::KNNGraph) = graph.metadata

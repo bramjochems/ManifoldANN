@@ -111,30 +111,28 @@ neighborhoods = Dict{Int,NodeNeighborhood{Float64}}(
     i => uniform_neighborhood(i, graph[i], Float64) for i in 1:n_points
 )
 
-# Test FastMatchingSolver (Hungarian)
-println("FastMatchingSolver (Hungarian algorithm):")
-time_fast_hungarian = @elapsed begin
+# Test HungarianSolver
+println("HungarianSolver (Hungarian algorithm):")
+time_hungarian = @elapsed begin
     for (x, y) in sample_edges
         edge_view = create_edge_view(neighborhoods[x], neighborhoods[y], distance_fn(x, y))
-        if can_handle(FastMatchingSolver(use_hungarian=true), edge_view)
-            compute_curvature(FastMatchingSolver(use_hungarian=true), edge_view, distance_fn)
+        if can_handle(HungarianSolver(), edge_view)
+            compute_curvature(HungarianSolver(), edge_view, distance_fn)
         end
     end
 end
-@printf("  Time: %.3f ms (%.3f μs/edge)\n", time_fast_hungarian * 1000, time_fast_hungarian * 1e6 / length(sample_edges))
+@printf("  Time: %.3f ms (%.3f μs/edge)\n", time_hungarian * 1000, time_hungarian * 1e6 / length(sample_edges))
 println()
 
-# Test FastMatchingSolver (Brute force, for small k)
-println("FastMatchingSolver (brute force matching):")
-time_fast_brute = @elapsed begin
+# Test NetworkSimplexSolver
+println("NetworkSimplexSolver (network flow):")
+time_simplex = @elapsed begin
     for (x, y) in sample_edges
         edge_view = create_edge_view(neighborhoods[x], neighborhoods[y], distance_fn(x, y))
-        if can_handle(FastMatchingSolver(use_hungarian=false), edge_view)
-            compute_curvature(FastMatchingSolver(use_hungarian=false), edge_view, distance_fn)
-        end
+        compute_curvature(NetworkSimplexSolver(), edge_view, distance_fn)
     end
 end
-@printf("  Time: %.3f ms (%.3f μs/edge)\n", time_fast_brute * 1000, time_fast_brute * 1e6 / length(sample_edges))
+@printf("  Time: %.3f ms (%.3f μs/edge)\n", time_simplex * 1000, time_simplex * 1e6 / length(sample_edges))
 println()
 
 # Test GenericOTSolver (LP)

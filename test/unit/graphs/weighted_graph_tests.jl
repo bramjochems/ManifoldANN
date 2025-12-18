@@ -176,7 +176,7 @@ end
     wg = build_weighted_graph(method, graph, data)
 
     @test has_metadata(wg)
-    @test graph_metadata(wg) == labels
+    @test graph_metadata(wg).node_metadata == labels
 
     for i in 1:n
         @test node_metadata(wg, i) == "point_$i"

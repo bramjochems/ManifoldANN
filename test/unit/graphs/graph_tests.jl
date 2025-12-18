@@ -30,13 +30,16 @@ using ManifoldANN
     metadata = ["p$(i)" for i in 1:size(data, 2)]
     graph_with_metadata = build_knn_graph(index, data; k = 2, metadata = metadata)
     @test has_metadata(graph_with_metadata)
-    @test graph_metadata(graph_with_metadata) == metadata
+    @test graph_metadata(graph_with_metadata).node_metadata == metadata
+    @test graph_metadata(graph_with_metadata).original_k == 2
+    @test graph_metadata(graph_with_metadata).directed == true
     for i in 1:length(graph_with_metadata)
         @test node_metadata(graph_with_metadata, i) == metadata[i]
     end
 
     @test !has_metadata(graph)
-    @test graph_metadata(graph) === nothing
+    @test graph_metadata(graph).node_metadata === nothing
+    @test graph_metadata(graph).original_k == 2
     @test_throws ArgumentError node_metadata(graph, 1)
 
     @test_throws ArgumentError build_knn_graph(index, data; k = 0)

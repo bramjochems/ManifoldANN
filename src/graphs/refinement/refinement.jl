@@ -10,11 +10,15 @@ for improving geodesic distance estimates on kNN graphs.
 - **Graph Filtering**: Remove low-curvature edges that cut across the manifold
 - **Multiple Solvers**: Fast matching, Hungarian algorithm, LP solver, greedy heuristic
 
-# Curvature Solvers
+# Optimal Transport Solvers
 
-1. **FastMatchingSolver**: O(k³) via Hungarian algorithm for uniform measures
-2. **GenericOTSolver**: Exact OT via LP or greedy heuristic for non-uniform measures
-3. **BruteForceSolver**: O(k!) exhaustive search for verification (small k only)
+Available OT solvers for curvature computation:
+1. **HungarianSolver**: O(k³) exact OT for uniform distributions (Hungarian.jl)
+2. **SinkhornSolver**: O(k² × iter) approximate OT for any distribution (OptimalTransport.jl)
+3. **NetworkSimplexSolver**: O(k² log k) exact OT for any distribution (OptimalTransport.jl)
+4. **LPReferenceSolver**: O(k³) reference implementation (HiGHS)
+5. **GreedySolver**: O(k² log k) fast approximate OT
+6. **GenericOTSolver**: Convenience wrapper (maps to specific solvers)
 
 # Example
 ```julia

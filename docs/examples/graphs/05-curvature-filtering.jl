@@ -131,17 +131,17 @@ for (x, y) in sample_edges
     edge_dist = distance_fn(x, y)
     edge_view = create_edge_view(x_nb, y_nb, edge_dist)
 
-    # FastMatchingSolver
-    if can_handle(FastMatchingSolver(), edge_view)
-        result_fast = compute_curvature(FastMatchingSolver(), edge_view, distance_fn)
-        println("Edge ($x, $y) [FastMatching]: κ = $(round(result_fast.curvature, digits=3))")
+    # HungarianSolver
+    if can_handle(HungarianSolver(), edge_view)
+        result_hungarian = compute_curvature(HungarianSolver(), edge_view, distance_fn)
+        println("Edge ($x, $y) [Hungarian]:  κ = $(round(result_hungarian.curvature, digits=3))")
     else
-        println("Edge ($x, $y): FastMatching cannot handle (degrees differ or non-uniform)")
+        println("Edge ($x, $y): Hungarian cannot handle (degrees differ or non-uniform)")
     end
 
-    # GenericOTSolver
-    result_generic = compute_curvature(GenericOTSolver(), edge_view, distance_fn)
-    println("Edge ($x, $y) [GenericOT]:     κ = $(round(result_generic.curvature, digits=3))")
+    # NetworkSimplexSolver
+    result_simplex = compute_curvature(NetworkSimplexSolver(), edge_view, distance_fn)
+    println("Edge ($x, $y) [NetworkSimplex]: κ = $(round(result_simplex.curvature, digits=3))")
     println()
 end
 

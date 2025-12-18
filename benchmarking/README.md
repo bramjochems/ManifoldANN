@@ -1,6 +1,8 @@
 # ManifoldANN Benchmarking
 
-Python wrapper for ManifoldANN with benchmarking against ann-benchmarks algorithms (hnswlib, Annoy).
+Python wrapper for ManifoldANN with benchmarking for:
+1. **ANN algorithms** - Compare against ann-benchmarks (hnswlib, Annoy, FAISS)
+2. **ORC (Ollivier-Ricci Curvature)** - Compare Julia vs Python implementations
 
 ## Quick Start
 
@@ -12,7 +14,7 @@ cd benchmarking
 source venv/bin/activate
 ```
 
-### Run Benchmark
+### Run ANN Benchmark
 ```bash
 python benchmark.py
 # or from repo root
@@ -21,23 +23,54 @@ make benchmark
 
 Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.
 
+### Run ORC Benchmark
+```bash
+# Optional: Install orcml for comparison
+./install_orcml.sh
+
+# Run benchmark
+python benchmark_orc.py
+# or from repo root
+make benchmark-orc
+```
+
+Compares ORC curvature computation across ManifoldANN (Julia), GraphRicciCurvature (Python), and orcml (Python).
+
+📖 **Full documentation**: See [ORC_BENCHMARK.md](ORC_BENCHMARK.md)
+
 ## Files
+
+### ANN Benchmarking
 
 - **`manifoldann_wrapper.py`** - Python↔Julia bridge using juliacall
   - Wraps: LSH, HNSW, KDTree, NN-Descent, BruteForce
   - Supports batch queries for performance
 
-- **`benchmark.py`** - Benchmark script
+- **`benchmark.py`** - ANN benchmark script
   - Tests ManifoldANN vs hnswlib vs Annoy (plus optional FAISS, SciPy KDTree)
   - Measures QPS, recall@10, build time
   - Automatically uses batch queries for Julia algorithms
   - Compares both `neighbor_policy=heuristic` and `neighbor_policy=diversified` HNSW variants
   - Includes the NN-Descent index so build-time/recall trade-offs can be compared directly
+
 - **`fetch_ann_benchmarks.sh`** - Clones the upstream ann-benchmarks repo (pinned commit)
+
+### ORC Benchmarking
+
+- **`benchmark_orc.py`** - ORC curvature benchmark script
+  - Compares ManifoldANN (Julia) vs GraphRicciCurvature (Python) vs orcml (Python)
+  - Tests different OT solvers (Hungarian, NetworkSimplex, Sinkhorn, etc.)
+  - Compares ORC methods (default vs orcml configuration)
+  - Outputs CSV with method, solver, source, edges, and timing
+
+- **`ORC_BENCHMARK.md`** - Complete ORC benchmarking documentation
+
+### Common
 
 - **`setup.sh`** - Automated setup (venv + dependencies)
 - **`requirements.txt`** - Python dependencies
 - **`data/`** - Cached datasets from ann-benchmarks
+- **`results/orc/`** - ORC benchmark outputs (CSV files)
 
 ## Usage
 

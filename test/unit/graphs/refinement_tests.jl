@@ -76,8 +76,8 @@ using Random
         @test !passes_threshold(result_neg, 0.0)
     end
 
-    @testset "FastMatchingSolver - can_handle" begin
-        solver = FastMatchingSolver()
+    @testset "HungarianSolver - can_handle" begin
+        solver = HungarianSolver()
 
         # Case 1: Same degree, uniform measures - CAN handle
         x_neighbors = [3, 4, 5, 6]
@@ -135,8 +135,8 @@ using Random
         @test Set(edge_view.unique_x) == Set([1, 3])
         @test Set(edge_view.unique_y) == Set([2, 5])
 
-        # Use FastMatchingSolver
-        solver = FastMatchingSolver(use_hungarian=false)
+        # Use HungarianSolver
+        solver = HungarianSolver()
         @test can_handle(solver, edge_view)
 
         result = compute_curvature(solver, edge_view, distance_fn)
@@ -145,7 +145,7 @@ using Random
         @test result.x_id == 2
         @test result.y_id == 3
         @test result.edge_distance ≈ 1.0
-        @test result.solver_type == :fast_matching
+        @test result.solver_type == :hungarian  # FastMatchingSolver now returns HungarianSolver
 
         # Wasserstein distance computation:
         # Shared: node 4 has zero cost
@@ -181,7 +181,7 @@ using Random
         result = compute_curvature(solver, edge_view, distance_fn)
 
         @test result isa CurvatureResult{Float64}
-        @test result.solver_type == :generic_ot
+        @test result.solver_type == :greedy  # GenericOTSolver now returns specific solver type
         @test result.wasserstein_distance >= 0
         @test result.edge_distance == edge_dist
     end
@@ -209,7 +209,7 @@ using Random
         result_lp = compute_curvature(solver_lp, edge_view, distance_fn)
 
         @test result_sinkhorn isa CurvatureResult{Float64}
-        @test result_sinkhorn.solver_type == :generic_ot
+        @test result_sinkhorn.solver_type == :sinkhorn  # GenericOTSolver now returns specific solver type
         @test result_sinkhorn.wasserstein_distance >= 0
 
         # Sinkhorn should be close to exact LP solution (within regularization tolerance)

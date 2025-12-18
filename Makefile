@@ -2,7 +2,7 @@ PYTHON ?= python3
 VENV_DIR := benchmarking/venv
 VENV_ACTIVATE := venv/bin/activate
 
-.PHONY: test format benchmark benchmark-setup clean
+.PHONY: test format benchmark benchmark-setup benchmark-orc clean
 
 test:
 	julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
@@ -23,6 +23,18 @@ benchmark:
 		echo "Virtual environment not found. Run 'make benchmark-setup' first."; \
 		echo "Falling back to system Python..."; \
 		cd benchmarking && $(PYTHON) benchmark.py $(ARGS); \
+	fi
+
+# Run ORC (Ollivier-Ricci Curvature) benchmarks
+# Compares ManifoldANN (Julia) vs GraphRicciCurvature (Python) vs orcml (Python)
+benchmark-orc:
+	@if [ -d "$(VENV_DIR)" ]; then \
+		echo "Using virtual environment at $(VENV_DIR)"; \
+		cd benchmarking && . $(VENV_ACTIVATE) && python benchmark_orc.py $(ARGS); \
+	else \
+		echo "Virtual environment not found. Run 'make benchmark-setup' first."; \
+		echo "Falling back to system Python..."; \
+		cd benchmarking && $(PYTHON) benchmark_orc.py $(ARGS); \
 	fi
 
 clean:

@@ -72,7 +72,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 echo "Installing benchmarking package with dependencies..."
 pip install -e ".[all]"
-echo "✓ Package installed in editable mode with all optional dependencies"
+echo "✓ Package installed in editable mode with all optional dependencies (ANN + ORC)"
 
 # ============================================================
 # 3. Setup Julia environments

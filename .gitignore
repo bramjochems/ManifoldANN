@@ -9,6 +9,11 @@
 /benchmarking/venv/
 /benchmarking/__pycache__/
 /benchmarking/output/
+/benchmarking/results/
+
+# Local benchmarking environments / outputs (legacy)
+/benchmark_env/
+/benchmark_results/
 
 # Python
 __pycache__/

@@ -31,17 +31,26 @@ Two transform types following the `AbstractTransform` interface:
 - `EdgeNeighborhoodView`: Decomposes neighborhoods (shared/unique sets)
 - `CurvatureResult`: Stores computed curvature and metadata
 
-#### Curvature Solvers
-1. **FastMatchingSolver**: For uniform measures with equal degrees
-   - ✅ Brute force O(k!) for k ≤ 8 (fully implemented)
-   - ⚠️ Hungarian O(k³) (placeholder - needs Hungarian.jl)
+#### Optimal Transport Solvers
+1. **HungarianSolver**: For uniform measures with equal degrees
+   - Hungarian algorithm O(k³) (Hungarian.jl)
+   - Exact solution
 
-2. **GenericOTSolver**: For non-uniform or unequal degree cases
-   - ✅ Greedy coupling (fast approximation, fully implemented)
-   - ⚠️ LP solver (exact OT, placeholder - needs JuMP.jl)
-   - ⚠️ Sinkhorn (entropic regularization, placeholder)
+2. **NetworkSimplexSolver**: For any distribution
+   - Network flow algorithm (OptimalTransport.jl + Tulip)
+   - Exact solution
 
-3. **BruteForceSolver**: For verification (small k only)
+3. **SinkhornSolver**: Approximate solver
+   - Entropy-regularized OT (OptimalTransport.jl)
+   - Fast but requires regularization tuning
+
+4. **GreedySolver**: Fast heuristic
+   - Greedy coupling O(k² log k)
+   - Approximate solution
+
+5. **LPReferenceSolver**: Reference implementation
+   - General LP solver (JuMP + HiGHS)
+   - Exact solution
 
 #### Graph Filtering Functions
 - `filter_graph`: Remove low-curvature edges
@@ -67,19 +76,15 @@ Two transform types following the `AbstractTransform` interface:
 
 #### Implementation Guide
 ✅ **`docs/CURVATURE_SOLVER_IMPLEMENTATION.md`**
-- Detailed guide for implementing Hungarian algorithm
-- Guide for implementing LP solver
-- Performance comparison tables
-- Accuracy benchmarks
-- Integration checklist
-- Production recommendations
+- Implementation notes and benchmarks for the curvature solvers
+- Usage guidance and performance comparisons
 
 ### 4. Tests
 
 All tests passing:
 - ✅ PCA Transform: 33 tests
 - ✅ Random Projection: 38 tests
-- ✅ Graph Refinement: 120 tests
+- ✅ Graph Refinement: 120 tests (Hungarian, LP, Sinkhorn, greedy)
 
 ## Quick Start
 
@@ -104,38 +109,8 @@ filtered = filter_graph(
 )
 ```
 
-## What's Needed for Full Implementation
-
-### Hungarian Algorithm Integration
-
-**Why**: O(k³) vs O(k!) - essential for k > 8
-
-**Steps**:
-1. Add `Hungarian = "e91730f6-4275-51fb-a7a0-7064cfbd3b39"` to Project.toml
-2. Replace `_solve_hungarian_matching` placeholder
-3. Add comparison tests
-
-**Impact**: Makes FastMatchingSolver practical for all k values
-
-### LP Solver Integration
-
-**Why**: Exact OT for non-uniform measures
-
-**Steps**:
-1. Add JuMP and HiGHS to Project.toml
-2. Implement `_solve_lp_ot` using JuMP
-3. Add accuracy tests vs greedy
-
-**Impact**: Exact curvature computation for all edge types
-
-### Comparison Implementation
-
-The implementation guide (`docs/CURVATURE_SOLVER_IMPLEMENTATION.md`) provides:
-- Complete code for Hungarian integration
-- Complete code for LP integration
-- Comprehensive comparison example template
-- Performance benchmarks
-- Test cases
+## Status: Complete (Preprocessing + Curvature)
+All preprocessing transforms, curvature solvers, filtering utilities, and accompanying tests/examples are implemented and wired into the package.
 
 ## File Structure
 
@@ -148,7 +123,7 @@ src/
 ├── graphs/refinement/
 │   ├── refinement.jl                       # Module entry
 │   ├── types.jl                            # ✅ Data structures
-│   ├── solvers.jl                          # ⚠️ Solvers (2/5 complete)
+│   ├── solvers.jl                          # ✅ All solvers implemented
 │   └── filtering.jl                        # ✅ Graph filtering
 
 test/unit/
@@ -190,17 +165,12 @@ julia --project=. docs/examples/graphs/05-curvature-filtering.jl
 | PCA transform | O(d × k) | k=target dim |
 | Random projection fit | O(1) | Just generate matrix |
 | Random projection transform | O(d × k) | Matrix multiplication |
-| FastMatching (brute) | O(k!) | Practical for k ≤ 8 |
-| GenericOT (greedy) | O(k² log k) | Fast approximation |
-| Graph filtering | O(E × k³) | E=edges, with brute force |
-
-### After Hungarian/LP Integration
-
-| Component | Complexity | Notes |
-|-----------|-----------|-------|
-| FastMatching (Hungarian) | O(k³) | Practical for all k |
+| FastMatching (Hungarian) | O(k³) | Exact, uniform measures |
+| FastMatching (brute) | O(k!) | Exact for small k |
 | GenericOT (LP) | O(k³) | Exact OT |
-| Graph filtering | O(E × k³) | Much faster for k > 8 |
+| GenericOT (Sinkhorn) | O(k² · iters) | Approximate OT |
+| GenericOT (greedy) | O(k² log k) | Fast heuristic |
+| Graph filtering | O(E × k³) | Dominated by solver choice |
 
 ## Design Decisions
 
@@ -210,26 +180,6 @@ julia --project=. docs/examples/graphs/05-curvature-filtering.jl
 4. **Consistency**: Extends existing `AbstractTransform` interface
 5. **Modularity**: Clean separation between preprocessing and refinement
 6. **Default Config**: FastMatching + GenericOT fallback
-
-## Next Steps
-
-To complete the implementation:
-
-1. **Add Hungarian.jl** (highest priority)
-   - Enables FastMatchingSolver for practical k values
-   - Required for production use with k > 8
-
-2. **Add JuMP + HiGHS** (recommended)
-   - Exact OT for non-uniform measures
-   - Better accuracy than greedy heuristic
-
-3. **Create comparison benchmark** (optional)
-   - Use provided template in implementation guide
-   - Quantify accuracy/performance tradeoffs
-
-4. **Integrate with thesis code** (when ready)
-   - Use as preprocessing for experiments
-   - Compare geodesic distance estimates
 
 ## References
 

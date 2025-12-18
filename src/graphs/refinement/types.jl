@@ -40,6 +40,55 @@ function uniform_neighborhood(node_id::Int, neighbors::Vector{Int}, ::Type{T}=Fl
 end
 
 """
+    build_neighborhood(node_id::Int, neighbors::Vector{Int},
+                      other_endpoint::Union{Nothing,Int}=nothing,
+                      exclude_endpoint::Bool=false, ::Type{T}=Float64) where T
+
+Build a NodeNeighborhood with optional endpoint exclusion.
+
+# Arguments
+- `node_id::Int`: The node for which to build the neighborhood
+- `neighbors::Vector{Int}`: The node's neighbors from the k-NN graph
+- `other_endpoint::Union{Nothing,Int}`: The other endpoint of the edge being considered
+- `exclude_endpoint::Bool`: Whether to exclude `other_endpoint` from the neighborhood
+- `::Type{T}`: Floating point type for probabilities (default: Float64)
+
+# Returns
+- `NodeNeighborhood{T}`: Neighborhood with uniform probability distribution
+
+# Notes
+- If `exclude_endpoint=true` and the neighborhood becomes empty after exclusion,
+  returns a neighborhood with the original neighbors (fallback to avoid empty neighborhoods)
+- Used by orcml approach: when computing κ(x,y), use N(x)\\{y} and N(y)\\{x}
+
+# References
+- orcml: https://github.com/TristanSaidi/orcml (src/ollivier_ricci.py, lines 79-85)
+"""
+function build_neighborhood(
+    node_id::Int,
+    neighbors::Vector{Int},
+    other_endpoint::Union{Nothing,Int}=nothing,
+    exclude_endpoint::Bool=false,
+    ::Type{T}=Float64
+) where {T<:AbstractFloat}
+    # Apply endpoint exclusion if requested
+    filtered_neighbors = if exclude_endpoint && other_endpoint !== nothing
+        filter(n -> n != other_endpoint, neighbors)
+    else
+        neighbors
+    end
+
+    # Fallback: if neighborhood becomes empty, use original neighbors
+    # (this can happen if the only neighbor is the other endpoint)
+    if isempty(filtered_neighbors)
+        filtered_neighbors = neighbors
+    end
+
+    # Create uniform neighborhood
+    return uniform_neighborhood(node_id, filtered_neighbors, T)
+end
+
+"""
     EdgeNeighborhoodView{T}
 
 Decomposed edge neighborhoods (shared/unique sets) for curvature computation.
