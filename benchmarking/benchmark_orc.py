@@ -16,6 +16,7 @@ import csv
 import os
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -98,9 +99,22 @@ def generate_test_data(n, dim, k, seed=42):
     jl.seval(f'test_graph_directed = ManifoldANN.build_knn_graph(test_index, test_data; k={k}, directed=true)')
     jl.seval(f'test_graph_undirected = ManifoldANN.build_knn_graph(test_index, test_data; k={k}, directed=false)')
 
+    # Estimate data scale for Sinkhorn regularization (sample 100 pairs)
+    jl.seval('''
+        sample_size = min(100, size(test_data, 2))
+        distances = Float64[]
+        for i in 1:sample_size
+            for j in i+1:sample_size
+                push!(distances, norm(test_data[:, i] - test_data[:, j]))
+            end
+        end
+        data_scale = mean(distances)
+    ''')
+    data_scale = float(jl.data_scale)
+
     # Get data as numpy array
     data = np.array(jl.test_data).T  # Convert to n × d
-    return data
+    return data, data_scale
 
 
 def benchmark_julia_orc(n, k, solver_name, solver_code, config_name, graph_directed, cost_metric, denom_metric, exclude_endpoints):
@@ -151,6 +165,8 @@ def benchmark_graphricci(data, k):
 
     # Build k-NN graph
     knn = kneighbors_graph(data, k, mode='distance', include_self=False)
+    # Ensure float type to avoid precision warnings in OT solver
+    knn = knn.astype(np.float64)
 
     results = []
 
@@ -252,7 +268,79 @@ def benchmark_orcml(data, k):
     }
 
 
-def run_benchmarks(sizes, k, dim, runs, output_dir):
+def compute_summary_statistics(all_results):
+    """
+    Compute summary statistics across runs for each configuration.
+
+    Groups results by (n, k, dim, method, solver, source) and computes
+    statistics for n_edges, n_edges_pruned, mean_curvature, and time_sec.
+
+    Returns:
+        List of dictionaries containing summary statistics
+    """
+    # Group results by configuration
+    grouped = defaultdict(list)
+
+    for result in all_results:
+        # Create key from configuration (excluding run number)
+        key = (
+            result['n'],
+            result['k'],
+            result['dim'],
+            result['method'],
+            result['solver'],
+            result['source']
+        )
+        grouped[key].append(result)
+
+    # Compute statistics for each group
+    summary_results = []
+
+    for key, results in grouped.items():
+        n, k, dim, method, solver, source = key
+
+        # Extract metrics across runs
+        times = [r['time_sec'] for r in results]
+        n_edges_list = [r['n_edges'] for r in results]
+        n_edges_pruned_list = [r['n_edges_pruned'] for r in results]
+        mean_curvatures = [r['mean_curvature'] for r in results]
+
+        summary = {
+            'n': n,
+            'k': k,
+            'dim': dim,
+            'method': method,
+            'solver': solver,
+            'source': source,
+            'runs': len(results),
+            # Time statistics
+            'time_mean': np.mean(times),
+            'time_std': np.std(times, ddof=1) if len(times) > 1 else 0.0,
+            'time_min': np.min(times),
+            'time_max': np.max(times),
+            # Edge count (should be constant for same n,k)
+            'n_edges': int(np.mean(n_edges_list)),
+            # Pruned edges statistics
+            'n_edges_pruned_mean': np.mean(n_edges_pruned_list),
+            'n_edges_pruned_min': int(np.min(n_edges_pruned_list)),
+            'n_edges_pruned_max': int(np.max(n_edges_pruned_list)),
+            # Curvature percentiles (distribution across runs)
+            'curvature_min': np.min(mean_curvatures),
+            'curvature_p25': np.percentile(mean_curvatures, 25),
+            'curvature_p50': np.percentile(mean_curvatures, 50),
+            'curvature_p75': np.percentile(mean_curvatures, 75),
+            'curvature_max': np.max(mean_curvatures),
+        }
+
+        summary_results.append(summary)
+
+    # Sort by n, method, solver for easier reading
+    summary_results.sort(key=lambda x: (x['n'], x['method'], x['solver']))
+
+    return summary_results
+
+
+def run_benchmarks(sizes, k_values, dim, runs, output_dir):
     """Run complete benchmark suite"""
 
     # Setup Julia
@@ -261,12 +349,11 @@ def run_benchmarks(sizes, k, dim, runs, output_dir):
     # Results storage
     all_results = []
 
-    # Julia solver configurations
-    julia_solvers = [
+    # Julia solver configurations (Sinkhorn will be configured per-dataset)
+    julia_solvers_base = [
         ('Hungarian', 'ManifoldANN.HungarianSolver()'),
         ('NetworkSimplex', 'ManifoldANN.NetworkSimplexSolver()'),
         ('LPReference', 'ManifoldANN.LPReferenceSolver()'),
-        ('Sinkhorn', 'ManifoldANN.SinkhornSolver(reg=0.1)'),
     ]
 
     # ORC configurations
@@ -276,55 +363,63 @@ def run_benchmarks(sizes, k, dim, runs, output_dir):
     ]
 
     for n in sizes:
-        print(f"\n{'='*80}")
-        print(f"Benchmarking: n={n}, k={k}, dim={dim}")
-        print(f"{'='*80}")
+        for k in k_values:
+            print(f"\n{'='*80}")
+            print(f"Benchmarking: n={n}, k={k}, dim={dim}")
+            print(f"{'='*80}")
 
-        for run in range(runs):
-            print(f"\n  Run {run+1}/{runs}")
+            for run in range(runs):
+                print(f"\n  Run {run+1}/{runs}")
 
-            # Generate test data
-            seed = 42 + run
-            data = generate_test_data(n, dim, k, seed)
+                # Generate test data and estimate scale for Sinkhorn
+                seed = 42 + run
+                data, data_scale = generate_test_data(n, dim, k, seed)
 
-            # Benchmark Julia with different configurations
-            for config_name, directed, cost_metric, denom_metric, exclude_endpoints in orc_configs:
-                for solver_name, solver_code in julia_solvers:
-                    try:
-                        result = benchmark_julia_orc(
-                            n, k, solver_name, solver_code,
-                            config_name, directed, cost_metric, denom_metric, exclude_endpoints
-                        )
-                        result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
-                        all_results.append(result)
-                        print(f"    ✓ {config_name:12s} {solver_name:15s} {result['time_sec']:.3f}s")
-                    except Exception as e:
-                        print(f"    ✗ {config_name:12s} {solver_name:15s} ERROR: {e}")
+                # Configure Sinkhorn solver based on data scale
+                # Rule of thumb: reg ≈ 10-20% of mean distance
+                sinkhorn_reg = 0.15 * data_scale
+                julia_solvers = julia_solvers_base + [
+                    ('Sinkhorn', f'ManifoldANN.SinkhornSolver(reg={sinkhorn_reg:.6f}, maxiter=2000, atol=1e-6)')
+                ]
 
-            # Benchmark GraphRicciCurvature (Python)
-            if GRAPH_RICCI_AVAILABLE:
-                try:
-                    grc_results = benchmark_graphricci(data, k)
-                    if grc_results:
-                        for result in grc_results:
+                # Benchmark Julia with different configurations
+                for config_name, directed, cost_metric, denom_metric, exclude_endpoints in orc_configs:
+                    for solver_name, solver_code in julia_solvers:
+                        try:
+                            result = benchmark_julia_orc(
+                                n, k, solver_name, solver_code,
+                                config_name, directed, cost_metric, denom_metric, exclude_endpoints
+                            )
                             result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
                             all_results.append(result)
-                            print(f"    ✓ GraphRicciCurvature {result['solver']:10s} {result['time_sec']:.3f}s")
-                except Exception as e:
-                    print(f"    ✗ GraphRicciCurvature ERROR: {e}")
+                            print(f"    ✓ {config_name:12s} {solver_name:15s} {result['time_sec']:.3f}s")
+                        except Exception as e:
+                            print(f"    ✗ {config_name:12s} {solver_name:15s} ERROR: {e}")
 
-            # Benchmark orcml
-            if ORCML_AVAILABLE:
-                try:
-                    result = benchmark_orcml(data, k)
-                    if result:
-                        result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
-                        all_results.append(result)
-                        print(f"    ✓ orcml               {result['time_sec']:.3f}s")
-                except Exception as e:
-                    print(f"    ✗ orcml ERROR: {e}")
+                # Benchmark GraphRicciCurvature (Python)
+                if GRAPH_RICCI_AVAILABLE:
+                    try:
+                        grc_results = benchmark_graphricci(data, k)
+                        if grc_results:
+                            for result in grc_results:
+                                result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
+                                all_results.append(result)
+                                print(f"    ✓ GraphRicciCurvature {result['solver']:10s} {result['time_sec']:.3f}s")
+                    except Exception as e:
+                        print(f"    ✗ GraphRicciCurvature ERROR: {e}")
 
-    # Save results
+                # Benchmark orcml
+                if ORCML_AVAILABLE:
+                    try:
+                        result = benchmark_orcml(data, k)
+                        if result:
+                            result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
+                            all_results.append(result)
+                            print(f"    ✓ orcml               {result['time_sec']:.3f}s")
+                    except Exception as e:
+                        print(f"    ✗ orcml ERROR: {e}")
+
+    # Save detailed results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = output_dir / f"orc_benchmark_{timestamp}.csv"
 
@@ -336,19 +431,35 @@ def run_benchmarks(sizes, k, dim, runs, output_dir):
         writer.writeheader()
         writer.writerows(all_results)
 
+    # Compute and save summary statistics
+    summary_results = compute_summary_statistics(all_results)
+    summary_file = output_dir / f"orc_benchmark_{timestamp}_summary.csv"
+
+    with open(summary_file, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=[
+            'n', 'k', 'dim', 'method', 'solver', 'source', 'runs',
+            'time_mean', 'time_std', 'time_min', 'time_max',
+            'n_edges',
+            'n_edges_pruned_mean', 'n_edges_pruned_min', 'n_edges_pruned_max',
+            'curvature_min', 'curvature_p25', 'curvature_p50', 'curvature_p75', 'curvature_max'
+        ])
+        writer.writeheader()
+        writer.writerows(summary_results)
+
     print(f"\n{'='*80}")
-    print(f"Results saved to: {output_file}")
+    print(f"Detailed results saved to: {output_file}")
+    print(f"Summary statistics saved to: {summary_file}")
     print(f"{'='*80}")
 
-    return output_file
+    return output_file, summary_file
 
 
 def main():
     parser = argparse.ArgumentParser(description='Comprehensive ORC Benchmark')
     parser.add_argument('--sizes', type=str, default='1000',
                        help='Comma-separated graph sizes (default: 1000)')
-    parser.add_argument('--k', type=int, default=20,
-                       help='Number of neighbors (default: 20)')
+    parser.add_argument('--k', type=str, default='20',
+                       help='Comma-separated k values (number of neighbors, default: 20)')
     parser.add_argument('--dim', type=int, default=50,
                        help='Data dimensionality (default: 50)')
     parser.add_argument('--runs', type=int, default=3,
@@ -358,8 +469,9 @@ def main():
 
     args = parser.parse_args()
 
-    # Parse sizes
+    # Parse sizes and k values
     sizes = [int(s.strip()) for s in args.sizes.split(',')]
+    k_values = [int(k.strip()) for k in args.k.split(',')]
 
     # Create output directory
     output_dir = Path(__file__).parent / args.output_dir
@@ -369,7 +481,7 @@ def main():
     print("ORC CURVATURE BENCHMARK")
     print("="*80)
     print(f"Graph sizes: {sizes}")
-    print(f"k (neighbors): {args.k}")
+    print(f"k values (neighbors): {k_values}")
     print(f"Dimensionality: {args.dim}")
     print(f"Runs per config: {args.runs}")
     print(f"Output directory: {output_dir}")
@@ -379,8 +491,8 @@ def main():
     print(f"  orcml: {'✓' if ORCML_AVAILABLE else '✗'}")
     print("="*80)
 
-    # Run benchmarks
-    run_benchmarks(sizes, args.k, args.dim, args.runs, output_dir)
+    # Run benchmarks for all combinations
+    run_benchmarks(sizes, k_values, args.dim, args.runs, output_dir)
 
 
 if __name__ == '__main__':
