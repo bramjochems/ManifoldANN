@@ -9,10 +9,11 @@ Python wrapper for ManifoldANN with benchmarking for:
 ### Setup
 ```bash
 cd benchmarking
-./setup.sh  # Creates venv, installs dependencies
-./fetch_ann_benchmarks.sh  # Clones pinned ann-benchmarks repo
-source venv/bin/activate
+./setup.sh  # Creates .venv, installs dependencies, clones orcml
+source .venv/bin/activate
 ```
+
+**Note**: PyNNDescent is excluded from benchmarks because it requires `llvmlite` (Python <3.10 only). Running all packages on Python 3.9 just for PyNNDescent would be unfair for modern comparisons. See [Dependency Groups](#dependency-groups) below.
 
 ### Run ANN Benchmark
 ```bash
@@ -25,16 +26,19 @@ Compares ManifoldANN (Julia) against hnswlib and Annoy on Fashion-MNIST.
 
 ### Run ORC Benchmark
 ```bash
-# Optional: Install orcml for comparison
-./install_orcml.sh
-
 # Run benchmark
 python benchmark_orc.py
 # or from repo root
 make benchmark-orc
 ```
 
-Compares ORC curvature computation across ManifoldANN (Julia), GraphRicciCurvature (Python), and orcml (Python).
+Compares ORC curvature computation across ManifoldANN (Julia) and GraphRicciCurvature (Python).
+
+**Note on orcml**: The orcml reference implementation is cloned during setup but may not work in benchmarks due to:
+- Dependency version constraints (giotto-ph requires Python <3.11)
+- Potential API changes in the orcml repository
+
+For exact validation against orcml, see `scripts/test_orcml_exact_match.jl` which compares ManifoldANN's implementation with orcml on specific test cases.
 
 📖 **Full documentation**: See [ORC_BENCHMARK.md](ORC_BENCHMARK.md)
 
@@ -67,10 +71,40 @@ Compares ORC curvature computation across ManifoldANN (Julia), GraphRicciCurvatu
 
 ### Common
 
-- **`setup.sh`** - Automated setup (venv + dependencies)
-- **`requirements.txt`** - Python dependencies
+- **`setup.sh`** - Automated setup (.venv + dependencies + orcml)
+- **`pyproject.toml`** - Package metadata and dependency groups
 - **`data/`** - Cached datasets from ann-benchmarks
 - **`results/orc/`** - ORC benchmark outputs (CSV files)
+- **`external/orcml/`** - ORC reference implementation (auto-cloned by setup.sh)
+
+## Dependency Groups
+
+The benchmarking package uses optional dependency groups in `pyproject.toml`:
+
+- **`orc-only`** - Just ORC benchmarking dependencies (Python 3.10+)
+  ```bash
+  uv pip install -e ".[orc-only]"
+  ```
+
+- **`ann-modern`** - Modern ANN comparison libraries (Python 3.10+)
+  ```bash
+  uv pip install -e ".[ann-modern]"  # Annoy, HNSWlib, FAISS, SciPy
+  ```
+
+- **`ann-complete`** - All ANN libraries including PyNNDescent (Python 3.9 only)
+  ```bash
+  uv pip install -e ".[ann-complete]"  # Requires Python 3.9
+  ```
+
+- **`all`** - ORC + modern ANN (excludes PyNNDescent, works on Python 3.10+)
+  ```bash
+  uv pip install -e ".[all]"  # Default for setup.sh
+  ```
+
+**PyNNDescent exclusion**: PyNNDescent requires `llvmlite` which only supports Python <3.10. Forcing the entire environment to Python 3.9 would be unfair for benchmarking modern packages like FAISS and HNSWlib on their latest Python versions. To re-enable PyNNDescent:
+1. Use Python 3.9
+2. Uncomment PyNNDescent in `benchmarking/registry.py`
+3. Uncomment PyNNDescent in dataset configs (e.g., `configs/fashion-mnist.yaml`)
 
 ## Usage
 

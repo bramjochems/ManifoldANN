@@ -17,7 +17,10 @@ from .wrappers.annoy import Annoy
 from .wrappers.hnswlib import HNSWlib
 from .wrappers.faiss import FAISS_IVF
 from .wrappers.scipy import SciPy_KDTree
-from .wrappers.pynndescent import PyNNDescent
+# PyNNDescent excluded: requires llvmlite which only supports Python <3.10
+# This forces the entire environment to Python 3.9, unfair for modern package comparisons
+# To re-enable: uncomment the import below and add "PyNNDescent" to ALGORITHM_REGISTRY
+# from .wrappers.pynndescent import PyNNDescent
 from .wrappers.julia_external import NearestNeighbors_KDTree, HNSW_jl, NearestNeighborDescent_jl
 
 
@@ -36,7 +39,7 @@ ALGORITHM_REGISTRY: Dict[str, Type[BaseANNWrapper]] = {
     "HNSWlib": HNSWlib,
     "FAISS-IVF": FAISS_IVF,
     "SciPy-KDTree": SciPy_KDTree,
-    "PyNNDescent": PyNNDescent,
+    # "PyNNDescent": PyNNDescent,  # Excluded: Python <3.10 required (llvmlite constraint)
     "NearestNeighbors-KDTree": NearestNeighbors_KDTree,
     "HNSW-jl": HNSW_jl,
     "NearestNeighborDescent-jl": NearestNeighborDescent_jl,

@@ -546,7 +546,7 @@ uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 version = "0.5.16"
 
 [[deps.ManifoldANN]]
-deps = ["Distances", "ExactOptimalTransport", "HiGHS", "Hungarian", "JuMP", "JuliaFormatter", "LinearAlgebra", "OptimalTransport", "Random", "Statistics", "Tables", "Tulip"]
+deps = ["Distances", "HiGHS", "Hungarian", "JuMP", "JuliaFormatter", "LinearAlgebra", "OptimalTransport", "Random", "Statistics", "Tables", "Tulip"]
 path = "/home/bram/projects/mai/thesis/code/ManifoldANN"
 uuid = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
 version = "0.1.0"

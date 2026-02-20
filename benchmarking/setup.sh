@@ -10,7 +10,7 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/venv"
+VENV_DIR="$SCRIPT_DIR/.venv"
 PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 
 echo "=================================================="
@@ -48,7 +48,14 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 if [ ! -d "$VENV_DIR" ]; then
     echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
+    # Prefer uv if available, fall back to python3 -m venv
+    if command -v uv &> /dev/null; then
+        echo "Using uv to create virtual environment..."
+        uv venv "$VENV_DIR"
+    else
+        echo "Using python3 -m venv..."
+        python3 -m venv "$VENV_DIR"
+    fi
     echo "✓ Virtual environment created at $VENV_DIR"
 else
     echo "✓ Virtual environment already exists at $VENV_DIR"
@@ -58,9 +65,11 @@ fi
 echo "Activating virtual environment..."
 source "$VENV_DIR/bin/activate"
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip --quiet
+# Upgrade pip (unless using uv)
+if ! command -v uv &> /dev/null; then
+    echo "Upgrading pip..."
+    pip install --upgrade pip --quiet
+fi
 
 # ============================================================
 # 2. Install benchmarking package
@@ -71,15 +80,57 @@ echo "Step 2: Install Benchmarking Package"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 echo "Installing benchmarking package with dependencies..."
-pip install -e ".[all]"
+# Use uv if available for faster installation
+if command -v uv &> /dev/null; then
+    echo "Using uv for package installation..."
+    uv pip install -e ".[all]"
+else
+    pip install -e ".[all]"
+fi
 echo "✓ Package installed in editable mode with all optional dependencies (ANN + ORC)"
 
 # ============================================================
-# 3. Setup Julia environments
+# 3. Clone orcml (optional ORC benchmark dependency)
 # ============================================================
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Step 3: Julia Environments"
+echo "Step 3: Clone orcml (ORC reference implementation)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+ORCML_DIR="$SCRIPT_DIR/external/orcml"
+
+if [ ! -d "$ORCML_DIR" ]; then
+    echo "Cloning orcml from GitHub..."
+    mkdir -p "$SCRIPT_DIR/external"
+    git clone https://github.com/TristanSaidi/orcml.git "$ORCML_DIR"
+    echo "✓ orcml cloned to $ORCML_DIR"
+else
+    echo "✓ orcml already exists at $ORCML_DIR"
+    # Optionally update it
+    echo "Updating orcml..."
+    cd "$ORCML_DIR" && git pull || echo "  (update failed - continuing with existing version)"
+    cd "$SCRIPT_DIR"
+fi
+
+# Install minimal orcml dependencies (skip incompatible ones)
+echo "Installing minimal orcml dependencies..."
+# Only install what we actually need for ORC computation:
+# - scikit-learn (for k-NN graph building)
+# - tqdm (for progress bars)
+# Other deps are already installed or not needed for basic ORC
+if command -v uv &> /dev/null; then
+    uv pip install scikit-learn tqdm || echo "  (Some orcml dependencies failed - orcml may not be available)"
+else
+    pip install scikit-learn tqdm || echo "  (Some orcml dependencies failed - orcml may not be available)"
+fi
+echo "✓ Minimal dependencies installed (orcml may require Python <3.11 for full functionality)"
+
+# ============================================================
+# 4. Setup Julia environments
+# ============================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "Step 4: Julia Environments"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 if [ "$JULIA_AVAILABLE" = true ]; then
@@ -117,6 +168,7 @@ echo "Summary:"
 echo "  ✓ Python venv at: $VENV_DIR"
 echo "  ✓ Benchmarking package installed (editable)"
 echo "  ✓ Optional ANN libraries installed (Annoy, HNSWlib, FAISS, SciPy)"
+echo "  ⚠ orcml cloned (may not be functional on Python 3.11+ due to dependency constraints)"
 if [ "$JULIA_AVAILABLE" = true ]; then
     echo "  ✓ ManifoldANN Julia environment"
     echo "  ✓ Benchmark Julia environment (NearestNeighbors.jl, HNSW.jl)"
@@ -131,8 +183,9 @@ echo ""
 echo "To run benchmarks:"
 echo "  make benchmark ARGS=\"fashion-mnist\""
 echo "  make benchmark ARGS=\"--list-configs\""
+echo "  make benchmark-orc"
 echo ""
 echo "Or directly:"
-echo "  cd benchmarking && source venv/bin/activate"
+echo "  cd benchmarking && source .venv/bin/activate"
 echo "  python benchmark.py nytimes"
 echo ""

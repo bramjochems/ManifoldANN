@@ -1,6 +1,6 @@
 PYTHON ?= python3
-VENV_DIR := benchmarking/venv
-VENV_ACTIVATE := venv/bin/activate
+VENV_DIR := benchmarking/.venv
+VENV_ACTIVATE := .venv/bin/activate
 
 .PHONY: test format benchmark benchmark-setup benchmark-orc clean
 

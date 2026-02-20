@@ -79,11 +79,12 @@ algorithms:
     nlist: 100
     nprobe: 10
 
-  PyNNDescent:
-    n_neighbors: 30
-    diversify_prob: 1.0
-    pruning_degree_multiplier: 1.5
-
+  # PyNNDescent - EXCLUDED (requires Python <3.10)
+  # To re-enable: uncomment below and add back to registry.py
+  # PyNNDescent:
+  #   n_neighbors: 30
+  #   diversify_prob: 1.0
+  #   pruning_degree_multiplier: 1.5
 
   HNSW-jl:
     M: 16

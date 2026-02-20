@@ -48,20 +48,31 @@ except ImportError:
 ORCML_AVAILABLE = False
 try:
     # Try common locations
-    for path in ['/tmp/orcml', str(Path.home() / 'orcml'), '../orcml']:
+    # Priority: 1) benchmarking/external/orcml (set by make benchmark-setup)
+    #           2) /tmp/orcml, ~/orcml, ../orcml (backward compatibility)
+    benchmark_dir = Path(__file__).parent
+    for path in [
+        benchmark_dir / 'external' / 'orcml',  # Installed by setup.sh
+        '/tmp/orcml',
+        Path.home() / 'orcml',
+        benchmark_dir.parent / 'orcml'  # ../orcml relative to ManifoldANN/
+    ]:
         orcml_path = Path(path)
         if orcml_path.exists():
             sys.path.insert(0, str(orcml_path))
-            from src.utils.graph_utils import build_knn_graph, compute_eff_eps
-            from src.ollivier_ricci import OllivierRicciCurvature as ORCMLCurvature
+            # Import orcml functions - uses internal _get_nn_graph function
+            from src.utils.graph_utils import _get_nn_graph as orcml_get_nn_graph
+            from src.ollivier_ricci import OllivierRicci as ORCMLCurvature
             ORCML_AVAILABLE = True
             print(f"✓ orcml found at {orcml_path}")
             break
-except ImportError:
+except ImportError as e:
+    print(f"Debug: orcml import failed: {e}")
     pass
 
 if not ORCML_AVAILABLE:
-    print("Warning: orcml not available. Clone from: https://github.com/TristanSaidi/orcml")
+    print("Warning: orcml not available. Run 'make benchmark-setup' to install it automatically.")
+    print("        Or clone manually from: https://github.com/TristanSaidi/orcml")
 
 
 def setup_julia():
@@ -224,48 +235,51 @@ def benchmark_graphricci(data, k):
 
 
 def benchmark_orcml(data, k):
-    """Benchmark orcml reference implementation"""
+    """Benchmark orcml reference implementation
+
+    Uses orcml's internal API:
+    - _get_nn_graph: builds undirected k-NN graph with effective_eps on edges
+    - OllivierRicci: computes curvatures using the graph
+    """
     if not ORCML_AVAILABLE:
         return None
 
-    # Build k-NN graph (orcml uses undirected)
-    from sklearn.neighbors import NearestNeighbors
-    nbrs = NearestNeighbors(n_neighbors=k+1).fit(data)
-    distances, indices = nbrs.kneighbors(data)
+    try:
+        # Build k-NN graph using orcml's internal function
+        # Returns NetworkX Graph with 'effective_eps' already set on edges
+        G, A = orcml_get_nn_graph(data, mode='nbrs', n_neighbors=k)
 
-    # Remove self-loops
-    indices = indices[:, 1:]
-    distances = distances[:, 1:]
+        # Compute ORC using orcml
+        # weight="effective_eps" tells it to use the effective_eps edge attribute
+        start = time.perf_counter()
+        orc = ORCMLCurvature(G, weight="effective_eps", verbose="ERROR")
+        orc.compute_ricci_curvature()
+        elapsed = time.perf_counter() - start
 
-    # Build graph structure for orcml
-    G = {}
-    for i in range(len(data)):
-        G[i] = list(indices[i])
+        # Extract curvature values from graph edges
+        curvatures = []
+        for u, v in G.edges():
+            if 'ricciCurvature' in G[u][v]:
+                curvatures.append(G[u][v]['ricciCurvature'])
 
-    # Compute effective epsilon
-    eff_eps = compute_eff_eps(data, indices, k)
+        n_edges = len(curvatures)
+        n_edges_pruned = sum(1 for c in curvatures if c < 0)
+        mean_curvature = np.mean(curvatures) if curvatures else 0.0
 
-    # Compute ORC
-    start = time.perf_counter()
-    orc = ORCMLCurvature(G, data, eff_eps, exclude_edge_endpoints=True)
-    curvatures = orc.compute_ricci_curvature()
-    elapsed = time.perf_counter() - start
-
-    # Extract curvature values
-    curvature_values = list(curvatures.values())
-    n_edges = len(curvature_values)
-    n_edges_pruned = sum(1 for c in curvature_values if c < 0)
-    mean_curvature = np.mean(curvature_values) if curvature_values else 0.0
-
-    return {
-        'method': 'ORC-orcml',
-        'solver': 'Hungarian',
-        'source': 'orcml',
-        'n_edges': n_edges,
-        'n_edges_pruned': n_edges_pruned,
-        'mean_curvature': mean_curvature,
-        'time_sec': elapsed
-    }
+        return {
+            'method': 'ORC-orcml',
+            'solver': 'OTD',  # orcml uses OTD (network simplex) by default
+            'source': 'orcml',
+            'n_edges': n_edges,
+            'n_edges_pruned': n_edges_pruned,
+            'mean_curvature': mean_curvature,
+            'time_sec': elapsed
+        }
+    except Exception as e:
+        print(f"      orcml ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def compute_summary_statistics(all_results):
@@ -408,14 +422,16 @@ def run_benchmarks(sizes, k_values, dim, runs, output_dir):
                     except Exception as e:
                         print(f"    ✗ GraphRicciCurvature ERROR: {e}")
 
-                # Benchmark orcml
+                # Benchmark orcml (optional - may have API compatibility issues)
                 if ORCML_AVAILABLE:
                     try:
                         result = benchmark_orcml(data, k)
-                        if result:
+                        if result and result['n_edges'] > 0:  # Only include if curvatures were computed
                             result.update({'n': n, 'k': k, 'dim': dim, 'run': run})
                             all_results.append(result)
                             print(f"    ✓ orcml               {result['time_sec']:.3f}s")
+                        elif result:
+                            print(f"    ⚠ orcml: No curvatures computed (API may have changed)")
                     except Exception as e:
                         print(f"    ✗ orcml ERROR: {e}")
 
