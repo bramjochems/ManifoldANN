@@ -209,6 +209,9 @@ export AbstractANNIndex,
        compute_curvature,
        filter_graph,
        compute_all_curvatures,
-       curvature_statistics
+       curvature_statistics,
+       # Graph analysis utilities
+       compute_jaccard_scores,
+       compute_gabriel_mask
 
 end
