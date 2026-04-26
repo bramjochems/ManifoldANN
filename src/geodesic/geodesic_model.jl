@@ -44,6 +44,13 @@ struct GeodesicDistanceModel{I<:AbstractANNIndex, W<:WeightedKNNGraph, M<:Abstra
     index::I
     weighted_graph::W
     method::M
+    diagnostics::EstimatorDiagnostics
+end
+
+# Backwards-compatible inner-type-stable constructor (no diagnostics specified).
+function GeodesicDistanceModel(index::AbstractANNIndex, wg::WeightedKNNGraph,
+                                method::AbstractLocalGeometryMethod)
+    GeodesicDistanceModel(index, wg, method, EstimatorDiagnostics())
 end
 
 # ============================================================================
@@ -60,9 +67,22 @@ Build a geodesic distance model from an ANN index and data.
 - `index::AbstractANNIndex`: ANN index for neighbor queries
 - `data::AbstractMatrix`: Data matrix (dimensions × points)
 - `k::Int=10`: Number of neighbors for the kNN graph
+- `edge_estimator::AbstractEdgeGeodesicEstimator=EuclideanChord()`: per-edge
+  geodesic distance estimator used to weight every edge of the kNN graph
+  before Dijkstra. Pass [`CurvatureFreeSymmetric`](@ref) to use the
+  curvature-free symmetric estimator from Chapter 6 of the thesis
+  (§6.2.2–§6.2.3, equation `eq:geod-sym`); see also
+  [`TangentProjectedSymmetricMean`](@ref). The default
+  [`EuclideanChord`](@ref) reproduces the classical Isomap-style edge length.
 
 # Returns
 A `GeodesicDistanceModel` ready for geodesic distance queries.
+
+When `edge_estimator` is [`CurvatureFreeSymmetric`](@ref), edges on which
+the raw formula returns a negative value (a sign that the Taylor expansion
+is invalid for that edge) are silently replaced by the Euclidean chord; a
+single warning summarising the count is emitted at build time, and the
+count is exposed through [`diagnostics`](@ref).
 
 # Example
 ```julia
@@ -74,19 +94,92 @@ model = build_geodesic_model(method, index, data; k=15)
 
 # Query geodesic distance
 d = geodesic_distance(model, data, 1, 100)
+
+# Use the curvature-free symmetric estimator from Chapter 6
+model_cf = build_geodesic_model(method, index, data; k=15,
+                                 edge_estimator=CurvatureFreeSymmetric())
 ```
 
-See also: [`GeodesicDistanceModel`](@ref), [`geodesic_distance`](@ref)
+See also: [`GeodesicDistanceModel`](@ref), [`geodesic_distance`](@ref),
+[`AbstractEdgeGeodesicEstimator`](@ref).
 """
 function build_geodesic_model(method::AbstractLocalGeometryMethod,
                                index::AbstractANNIndex,
                                data::AbstractMatrix;
-                               k::Int=10)
-    # Build weighted graph (includes building kNN graph internally)
+                               k::Int=10,
+                               edge_estimator::AbstractEdgeGeodesicEstimator=EuclideanChord())
+    # Build weighted graph (includes building kNN graph internally).
+    # We always need its `geometries`; the edge weights it computes (via the
+    # SourceTangent default of `build_weighted_graph`) are immediately
+    # overwritten below by the per-edge geodesic estimator.
     weighted_graph = build_weighted_graph(method, index, data; k=k)
 
-    GeodesicDistanceModel(index, weighted_graph, method)
+    diagnostics = _apply_edge_estimator!(weighted_graph, edge_estimator, data)
+
+    GeodesicDistanceModel(index, weighted_graph, method, diagnostics)
 end
+
+"""
+    _apply_edge_estimator!(wg::WeightedKNNGraph, estimator, data) -> EstimatorDiagnostics
+
+Overwrite the edge weights of `wg` in place with values computed by
+`estimator`. Returns an [`EstimatorDiagnostics`](@ref) with bookkeeping for
+the negative-value fallback used by [`CurvatureFreeSymmetric`](@ref).
+"""
+function _apply_edge_estimator!(wg::WeightedKNNGraph, estimator::AbstractEdgeGeodesicEstimator,
+                                 data::AbstractMatrix)
+    n = length(wg)
+    n_neg = 0
+    n_edges = 0
+    geometries = wg.geometries
+
+    for i in 1:n
+        neighbor_indices = wg.graph[i]
+        weights = wg.edge_weights[i]
+        @assert length(weights) == length(neighbor_indices)
+        for (j, neighbor_idx) in enumerate(neighbor_indices)
+            n_edges += 1
+            d = _scored_edge!(estimator, i, neighbor_idx, data, geometries, n_neg)
+            weights[j] = d.value
+            n_neg = d.n_neg
+        end
+    end
+
+    if estimator isa CurvatureFreeSymmetric && n_neg > 0
+        @warn "CurvatureFreeSymmetric: $(n_neg) of $(n_edges) edges produced a negative raw value and were replaced by the Euclidean chord. This may indicate edges that are too long, high curvature, or noisy tangent estimates."
+    end
+
+    return EstimatorDiagnostics(n_neg, n_edges)
+end
+
+# Specialised per-estimator scoring so that we can both fill the weight and
+# update the negative-fallback counter without paying for the count update on
+# estimators that cannot trip it.
+function _scored_edge!(estimator::AbstractEdgeGeodesicEstimator, x_id::Int, y_id::Int,
+                       data::AbstractMatrix, geometries, n_neg::Int)
+    val = compute_edge_distance(estimator, x_id, y_id, data, geometries)
+    return (value = val, n_neg = n_neg)
+end
+
+function _scored_edge!(::CurvatureFreeSymmetric, x_id::Int, y_id::Int,
+                       data::AbstractMatrix, geometries, n_neg::Int)
+    raw, d_E, _ = _curvature_free_symmetric_raw(x_id, y_id, data, geometries)
+    if raw < 0
+        return (value = Float64(d_E), n_neg = n_neg + 1)
+    else
+        return (value = Float64(raw), n_neg = n_neg)
+    end
+end
+
+"""
+    diagnostics(model::GeodesicDistanceModel) -> EstimatorDiagnostics
+
+Return the [`EstimatorDiagnostics`](@ref) recorded when the model's edge
+weights were assigned. Use this to inspect, e.g., how many edges the
+[`CurvatureFreeSymmetric`](@ref) estimator had to replace with the
+Euclidean chord because its raw value was negative.
+"""
+diagnostics(model::GeodesicDistanceModel) = model.diagnostics
 
 # ============================================================================
 # Dijkstra's Algorithm (internal)

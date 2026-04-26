@@ -38,6 +38,9 @@ include("graphs/weighted_knn_graph.jl")
 # Graph curvature (Ollivier-Ricci curvature and filtering)
 include("graphs/refinement/refinement.jl")
 
+# Per-edge geodesic distance estimators (Chapter 6 of the thesis)
+include("geodesic/edge_estimator.jl")
+
 # Geodesic distance model
 include("geodesic/geodesic_model.jl")
 include("geodesic/refinement.jl")
@@ -175,6 +178,14 @@ export AbstractANNIndex,
        edge_weight_statistics,
        unique_geometry_count,
        geometry_sharing_ratio,
+       # Per-edge geodesic distance estimators
+       AbstractEdgeGeodesicEstimator,
+       EuclideanChord,
+       TangentProjectedSymmetricMean,
+       CurvatureFreeSymmetric,
+       compute_edge_distance,
+       EstimatorDiagnostics,
+       diagnostics,
        # Geodesic distance model
        GeodesicDistanceModel,
        build_geodesic_model,
