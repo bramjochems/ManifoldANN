@@ -122,6 +122,52 @@ const _D_T_Y = sqrt(2.0)
         @test diag.n_negative_fallbacks >= 0
     end
 
+    @testset "single-pass regression: build_geodesic_model with EuclideanChord matches build_weighted_graph" begin
+        # Locks in the single-pass behaviour: `build_geodesic_model` must
+        # not re-compute / overwrite edge weights with a different default
+        # rule before applying the requested `edge_weight=`. Equivalence
+        # with `build_weighted_graph` on the same `edge_weight=` is the
+        # cleanest way to assert that.
+        rng = MersenneTwister(2718)
+        data = randn(rng, 3, 50)
+        index = build_index(BruteForceIndex, data)
+        method = PCAMethod(intrinsic_dim=2)
+
+        model = build_geodesic_model(method, index, data; k=5,
+                                      edge_weight=EuclideanChord())
+        wg_direct = build_weighted_graph(method, index, data; k=5,
+                                          edge_weight=EuclideanChord())
+
+        for i in 1:length(model)
+            @test neighbors(model.weighted_graph, i) == neighbors(wg_direct, i)
+            @test neighbor_weights(model.weighted_graph, i) ==
+                  neighbor_weights(wg_direct, i)
+        end
+    end
+
+    @testset "single-pass regression: build_geodesic_model with CurvatureFreeSymmetric matches build_weighted_graph" begin
+        # Same single-pass guarantee as above, but for the curvature-free
+        # symmetric estimator -- which exercises the diagnostic-tracking
+        # branch of `_compute_edge_weights_and_diagnostics`. The numerical
+        # output must still match the public `build_weighted_graph` path
+        # bit-for-bit (both go through the same negative-fallback rule).
+        rng = MersenneTwister(2024_04_26)
+        data = randn(rng, 3, 50)
+        index = build_index(BruteForceIndex, data)
+        method = PCAMethod(intrinsic_dim=2)
+
+        model = build_geodesic_model(method, index, data; k=5,
+                                      edge_weight=CurvatureFreeSymmetric())
+        wg_direct = build_weighted_graph(method, index, data; k=5,
+                                          edge_weight=CurvatureFreeSymmetric())
+
+        for i in 1:length(model)
+            @test neighbors(model.weighted_graph, i) == neighbors(wg_direct, i)
+            @test neighbor_weights(model.weighted_graph, i) ==
+                  neighbor_weights(wg_direct, i)
+        end
+    end
+
     @testset "regression: build_geodesic_model with TangentProjectedSymmetricMean matches build_weighted_graph" begin
         # After unification, build_geodesic_model(...; edge_weight=W) and
         # build_weighted_graph(...; edge_weight=W) must produce identical
