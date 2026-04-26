@@ -42,9 +42,12 @@ end
 """
     DiversifiedNeighborPolicy
 
-Neighbor selection strategy mirroring Algorithm 3 from the HNSW paper. It
-favours diverse long-range connections by discarding candidates that are
-closer to an already-picked neighbor than to the query, which improves recall.
+Neighbor selection strategy mirroring Algorithm 4 (SELECT-NEIGHBORS-HEURISTIC)
+from the HNSW paper. It favours diverse long-range connections by discarding
+candidates that are closer to an already-picked neighbor than to the query,
+which improves recall. When the diversified pass selects fewer than `cap`
+neighbors, the remaining slots are filled from the rejected candidates by
+distance order (the `keepPrunedConnections` fallback in the paper).
 """
 struct DiversifiedNeighborPolicy <: AbstractNeighborPolicy
     M::Int

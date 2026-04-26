@@ -120,6 +120,16 @@ close_matches = sum(abs.(julia_curvs .- python_curvs) .< 1e-3)
 println("   Matches within 1e-6: $exact_matches / $(length(julia_curvs))")
 println("   Matches within 1e-3: $close_matches / $(length(julia_curvs))")
 
+# Persist matched (julia, python) curvature pairs for plotting
+pairs_path = "benchmark_results/manl_validation_pairs.csv"
+open(pairs_path, "w") do io
+    println(io, "julia_curvature,python_curvature,abs_diff")
+    for (jc, pc) in zip(julia_curvs, python_curvs)
+        println(io, "$(jc),$(pc),$(abs(jc - pc))")
+    end
+end
+println("   Matched pairs saved to $(pairs_path)")
+
 println("\n" * "="^70)
 if cor(julia_curvs, python_curvs) > 0.99
     println("✅ EXCELLENT MATCH!")
