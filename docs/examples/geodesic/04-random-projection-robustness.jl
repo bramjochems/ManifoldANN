@@ -119,7 +119,7 @@ function build_model(data; k::Int=K_NEIGHBORS)
         data;
         k=k,
         candidate_k=CANDIDATE_K,
-        edge_weight_mode=SymmetricMean(),
+        edge_weight=TangentProjectedSymmetricMean(),
     )
     return GeodesicDistanceModel(index, weighted_graph, estimator)
 end

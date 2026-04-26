@@ -1,8 +1,8 @@
 #=
 Example: Per-edge geodesic distance estimators
 
-Demonstrates the three `AbstractEdgeGeodesicEstimator` implementations on a
-small Swiss-roll patch. The same kNN graph is scored three ways:
+Demonstrates three `AbstractEdgeWeight` implementations on a small
+Swiss-roll patch. The same kNN graph is scored three ways:
 
   - `EuclideanChord`              -- the classical Isomap-style edge length
   - `TangentProjectedSymmetricMean` -- the symmetrised tangent-projected length
@@ -39,11 +39,11 @@ source, target = 1, n_points
 # ---------------------------------------------------------------------------
 models = (
     euclidean = build_geodesic_model(method, index, data; k=10,
-                                      edge_estimator=EuclideanChord()),
+                                      edge_weight=EuclideanChord()),
     tangent   = build_geodesic_model(method, index, data; k=10,
-                                      edge_estimator=TangentProjectedSymmetricMean()),
+                                      edge_weight=TangentProjectedSymmetricMean()),
     curvfree  = build_geodesic_model(method, index, data; k=10,
-                                      edge_estimator=CurvatureFreeSymmetric()),
+                                      edge_weight=CurvatureFreeSymmetric()),
 )
 
 println("=" ^ 64)

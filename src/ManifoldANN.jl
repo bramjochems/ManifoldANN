@@ -32,14 +32,17 @@ include("geometry/criteria.jl")
 include("geometry/neighborhood.jl")
 include("geometry/estimator.jl")
 
+# Per-edge weight abstraction (shared by weighted-graph and geodesic-model
+# layers; Chapter 6 of the thesis defines the curvature-free symmetric
+# weight, while the tangent-projection family is consumed both as ground
+# costs for ORC and as per-edge geodesic-distance estimates).
+include("graphs/edge_weight.jl")
+
 # Weighted kNN graph (geodesic-aware edge weights)
 include("graphs/weighted_knn_graph.jl")
 
 # Graph curvature (Ollivier-Ricci curvature and filtering)
 include("graphs/refinement/refinement.jl")
-
-# Per-edge geodesic distance estimators (Chapter 6 of the thesis)
-include("geodesic/edge_estimator.jl")
 
 # Geodesic distance model
 include("geodesic/geodesic_model.jl")
@@ -159,11 +162,17 @@ export AbstractANNIndex,
        # Weighted kNN graph
        WeightedKNNGraph,
        build_weighted_graph,
-       # Edge weight modes
-       AbstractEdgeWeightMode,
-       SourceTangent,
-       SymmetricMean,
-       SymmetricMax,
+       # Per-edge weight abstraction (shared by build_weighted_graph and
+       # build_geodesic_model)
+       AbstractEdgeWeight,
+       EuclideanChord,
+       TangentProjectedSourceOnly,
+       TangentProjectedSymmetricMean,
+       TangentProjectedSymmetricMax,
+       CurvatureFreeSymmetric,
+       compute_edge_weight,
+       EstimatorDiagnostics,
+       diagnostics,
        # Tangent sharing modes
        AbstractTangentSharingMode,
        NoSharing,
@@ -178,14 +187,6 @@ export AbstractANNIndex,
        edge_weight_statistics,
        unique_geometry_count,
        geometry_sharing_ratio,
-       # Per-edge geodesic distance estimators
-       AbstractEdgeGeodesicEstimator,
-       EuclideanChord,
-       TangentProjectedSymmetricMean,
-       CurvatureFreeSymmetric,
-       compute_edge_distance,
-       EstimatorDiagnostics,
-       diagnostics,
        # Geodesic distance model
        GeodesicDistanceModel,
        build_geodesic_model,

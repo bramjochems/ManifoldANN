@@ -6,89 +6,22 @@ edge weights. This is the core data structure for geodesic distance estimation.
 
 The weighted graph extends KNNGraph by:
 1. Storing a fitted local geometry (e.g., PCAGeometry) at each node
-2. Computing edge weights using local_distance instead of Euclidean distance
+2. Computing edge weights using a per-edge weight rule (`AbstractEdgeWeight`)
+   instead of Euclidean distance.
 
 Edge weights approximate local geodesic distances by measuring distances
 in the tangent space rather than ambient space.
 
-Edge Weight Modes:
-- SourceTangent: use only the source node's tangent plane (asymmetric, fast)
-- SymmetricMean: average distance from both tangent planes (symmetric)
-- SymmetricMax: max of both (conservative, symmetric)
+The set of supported edge-weight rules lives in `src/graphs/edge_weight.jl`
+and is shared with `build_geodesic_model`. See [`AbstractEdgeWeight`](@ref).
 
 Tangent Sharing Modes:
 - NoSharing: each node gets its own tangent plane (default)
 - ShareSimilarTangents: nodes with similar geometry share a tangent plane
 =#
 
-# ============================================================================
-# Edge Weight Modes
-# ============================================================================
-
-"""
-    AbstractEdgeWeightMode
-
-Abstract type for edge weight computation modes.
-
-Edge weights can be computed using different strategies for handling
-the transition between local charts (tangent planes) at adjacent nodes.
-
-See also: [`SourceTangent`](@ref), [`SymmetricMean`](@ref), [`SymmetricMax`](@ref)
-"""
-abstract type AbstractEdgeWeightMode end
-
-"""
-    SourceTangent <: AbstractEdgeWeightMode
-
-Compute edge weight using only the source node's tangent plane.
-
-For edge i → j: weight = local_distance(geom_i, point_i, point_j)
-
-This is the fastest mode but produces asymmetric weights (i→j ≠ j→i).
-Asymmetry occurs when tangent planes at adjacent nodes differ significantly.
-
-# Example
-```julia
-wg = build_weighted_graph(method, index, data; k=15, edge_weight_mode=SourceTangent())
-```
-"""
-struct SourceTangent <: AbstractEdgeWeightMode end
-
-"""
-    SymmetricMean <: AbstractEdgeWeightMode
-
-Compute edge weight as the mean of distances from both tangent planes.
-
-For edge i → j: weight = (local_distance(geom_i, p_i, p_j) +
-                          local_distance(geom_j, p_i, p_j)) / 2
-
-This produces symmetric weights and is more robust when tangent planes
-differ significantly at adjacent nodes (e.g., high curvature regions).
-
-# Example
-```julia
-wg = build_weighted_graph(method, index, data; k=15, edge_weight_mode=SymmetricMean())
-```
-"""
-struct SymmetricMean <: AbstractEdgeWeightMode end
-
-"""
-    SymmetricMax <: AbstractEdgeWeightMode
-
-Compute edge weight as the maximum of distances from both tangent planes.
-
-For edge i → j: weight = max(local_distance(geom_i, p_i, p_j),
-                             local_distance(geom_j, p_i, p_j))
-
-This is a conservative estimate - it uses the larger distance, which may
-be more appropriate when one tangent plane is a poor fit for the edge.
-
-# Example
-```julia
-wg = build_weighted_graph(method, index, data; k=15, edge_weight_mode=SymmetricMax())
-```
-"""
-struct SymmetricMax <: AbstractEdgeWeightMode end
+using Random: AbstractRNG
+import Random
 
 # ============================================================================
 # Tangent Sharing Modes
@@ -185,7 +118,7 @@ end
 # ============================================================================
 
 """
-    build_weighted_graph(method, graph, data; edge_weight_mode=SourceTangent(), tangent_sharing=NoSharing()) -> WeightedKNNGraph
+    build_weighted_graph(method, graph, data; edge_weight=TangentProjectedSourceOnly(), tangent_sharing=NoSharing(), rng=Random.default_rng()) -> WeightedKNNGraph
 
 Build a weighted kNN graph by fitting local geometry at each node and
 computing geodesic-aware edge weights.
@@ -194,22 +127,19 @@ computing geodesic-aware edge weights.
 - `method::AbstractLocalGeometryMethod`: Method for fitting local geometry (e.g., `PCAMethod`)
 - `graph::KNNGraph`: The kNN graph to augment with weights
 - `data::AbstractMatrix`: Data matrix (dimensions × points)
-- `edge_weight_mode::AbstractEdgeWeightMode`: How to compute edge weights (default: `SourceTangent()`)
+- `edge_weight::AbstractEdgeWeight`: How to compute edge weights
+  (default: `TangentProjectedSourceOnly()`, preserving the historical
+  default of this function before the unification of edge-weight and
+  edge-geodesic-estimator abstractions).
 - `tangent_sharing::AbstractTangentSharingMode`: Whether to share tangent planes (default: `NoSharing()`)
-
-# Edge Weight Modes
-- `SourceTangent()`: Use source node's tangent plane only (fast, asymmetric)
-- `SymmetricMean()`: Average of both tangent planes (symmetric)
-- `SymmetricMax()`: Maximum of both tangent planes (conservative, symmetric)
-
-# Tangent Sharing Modes
-- `NoSharing()`: Each node gets its own tangent plane (default)
-- `ShareSimilarTangents(criterion)`: Nodes share tangent planes if similar
+- `rng::AbstractRNG`: RNG threaded through any stochastic step (e.g.
+  randomised ANN queries when invoked via the index-overload below).
+  Default `Random.default_rng()`.
 
 # Returns
 A `WeightedKNNGraph` with:
 - Local geometry fitted at each node using its neighbors
-- Edge weights computed using the specified mode
+- Edge weights computed using the specified rule via [`compute_edge_weight`](@ref).
 
 # Example
 ```julia
@@ -220,34 +150,89 @@ graph = build_knn_graph(index, data; k=10)
 # Add geodesic-aware weights using PCA geometry
 method = PCAMethod(intrinsic_dim=2)
 
-# Asymmetric weights (fast)
+# Asymmetric source-only weights (fast)
 wg = build_weighted_graph(method, graph, data)
 
 # Symmetric weights (robust for high curvature)
-wg = build_weighted_graph(method, graph, data; edge_weight_mode=SymmetricMean())
+wg = build_weighted_graph(method, graph, data; edge_weight=TangentProjectedSymmetricMean())
 
 # Share similar tangent planes
 sharing = ShareSimilarTangents(SubspaceAngleCriterion(π/12))
 wg = build_weighted_graph(method, graph, data; tangent_sharing=sharing)
 ```
 
-See also: [`WeightedKNNGraph`](@ref), [`SourceTangent`](@ref), [`SymmetricMean`](@ref)
+See also: [`WeightedKNNGraph`](@ref), [`AbstractEdgeWeight`](@ref).
 """
 function build_weighted_graph(method::AbstractLocalGeometryMethod,
                                graph::KNNGraph,
                                data::AbstractMatrix{T};
-                               edge_weight_mode::AbstractEdgeWeightMode=SourceTangent(),
-                               tangent_sharing::AbstractTangentSharingMode=NoSharing()) where T
-    n = length(graph)
+                               edge_weight::AbstractEdgeWeight=TangentProjectedSourceOnly(),
+                               tangent_sharing::AbstractTangentSharingMode=NoSharing(),
+                               rng::AbstractRNG=Random.default_rng()) where T
+    # `rng` is accepted here for API uniformity with the index-overload
+    # below; the graph-overload itself has no stochastic step (geometry
+    # fitting and edge-weight evaluation are both deterministic given a
+    # fixed kNN graph).
+    _ = rng
 
     # Step 1: Fit geometries (with optional sharing)
     geometries = _fit_geometries(tangent_sharing, method, graph, data)
 
-    # Step 2: Compute edge weights using the specified mode
-    edge_weights = _compute_edge_weights(edge_weight_mode, graph, geometries, data)
+    # Step 2: Compute edge weights, with diagnostic bookkeeping
+    edge_weights, _ = _compute_edge_weights_and_diagnostics(edge_weight, graph, geometries, data, T)
 
     G = eltype(geometries)
     WeightedKNNGraph{T, G}(graph, geometries, edge_weights)
+end
+
+"""
+Internal: compute edge weights for every edge of `graph` using the
+unified [`AbstractEdgeWeight`](@ref) rule. Returns
+`(edge_weights, diagnostics::EstimatorDiagnostics)` where `diagnostics`
+counts negative-fallback events for [`CurvatureFreeSymmetric`](@ref).
+"""
+function _compute_edge_weights_and_diagnostics(weight::AbstractEdgeWeight,
+                                                graph::KNNGraph,
+                                                geometries,
+                                                data::AbstractMatrix,
+                                                ::Type{T}) where {T}
+    n = length(graph)
+    edge_weights = Vector{Vector{T}}(undef, n)
+    n_neg = 0
+    n_edges = 0
+
+    for i in 1:n
+        neighbor_indices = graph[i]
+        weights = Vector{T}(undef, length(neighbor_indices))
+        for (j, neighbor_idx) in enumerate(neighbor_indices)
+            n_edges += 1
+            val, neg_inc = _scored_edge(weight, i, neighbor_idx, data, geometries)
+            weights[j] = T(val)
+            n_neg += neg_inc
+        end
+        edge_weights[i] = weights
+    end
+
+    return edge_weights, EstimatorDiagnostics(n_neg, n_edges)
+end
+
+# Default scoring path: just call `compute_edge_weight`. Negative-fallback
+# bookkeeping is only relevant for `CurvatureFreeSymmetric`, so the generic
+# path returns `0` for the increment.
+function _scored_edge(weight::AbstractEdgeWeight, x_id::Int, y_id::Int,
+                      data::AbstractMatrix, geometries)
+    val = compute_edge_weight(weight, x_id, y_id, data, geometries)
+    return (val, 0)
+end
+
+function _scored_edge(::CurvatureFreeSymmetric, x_id::Int, y_id::Int,
+                      data::AbstractMatrix, geometries)
+    raw, d_E, _ = _curvature_free_symmetric_raw(x_id, y_id, data, geometries)
+    if raw < 0
+        return (Float64(d_E), 1)
+    else
+        return (Float64(raw), 0)
+    end
 end
 
 # ============================================================================
@@ -418,92 +403,8 @@ function _geometries_are_similar(criterion::DistortionCriterion, geom1, geom2)
     return distortion <= criterion.max_distortion
 end
 
-# ============================================================================
-# Edge Weight Computation (separated for clarity)
-# ============================================================================
-
 """
-    _compute_edge_weights(mode, graph, geometries, data) -> Vector{Vector{T}}
-
-Compute edge weights for all edges in the graph using the specified mode.
-This is separated from geometry fitting for clarity and to enable different modes.
-"""
-function _compute_edge_weights(::SourceTangent, graph::KNNGraph,
-                                geometries::Vector{G}, data::AbstractMatrix{T}) where {G, T}
-    n = length(graph)
-    edge_weights = Vector{Vector{T}}(undef, n)
-
-    for i in 1:n
-        neighbor_indices = graph[i]
-        geom_i = geometries[i]
-        center_point = @view data[:, i]
-
-        weights = Vector{T}(undef, length(neighbor_indices))
-        for (j, neighbor_idx) in enumerate(neighbor_indices)
-            neighbor_point = @view data[:, neighbor_idx]
-            # Use only source tangent plane
-            weights[j] = T(local_distance(geom_i, center_point, neighbor_point))
-        end
-        edge_weights[i] = weights
-    end
-
-    return edge_weights
-end
-
-function _compute_edge_weights(::SymmetricMean, graph::KNNGraph,
-                                geometries::Vector{G}, data::AbstractMatrix{T}) where {G, T}
-    n = length(graph)
-    edge_weights = Vector{Vector{T}}(undef, n)
-
-    for i in 1:n
-        neighbor_indices = graph[i]
-        geom_i = geometries[i]
-        center_point = @view data[:, i]
-
-        weights = Vector{T}(undef, length(neighbor_indices))
-        for (j, neighbor_idx) in enumerate(neighbor_indices)
-            neighbor_point = @view data[:, neighbor_idx]
-            geom_j = geometries[neighbor_idx]
-
-            # Average of both tangent plane distances
-            d_from_i = local_distance(geom_i, center_point, neighbor_point)
-            d_from_j = local_distance(geom_j, center_point, neighbor_point)
-            weights[j] = T((d_from_i + d_from_j) / 2)
-        end
-        edge_weights[i] = weights
-    end
-
-    return edge_weights
-end
-
-function _compute_edge_weights(::SymmetricMax, graph::KNNGraph,
-                                geometries::Vector{G}, data::AbstractMatrix{T}) where {G, T}
-    n = length(graph)
-    edge_weights = Vector{Vector{T}}(undef, n)
-
-    for i in 1:n
-        neighbor_indices = graph[i]
-        geom_i = geometries[i]
-        center_point = @view data[:, i]
-
-        weights = Vector{T}(undef, length(neighbor_indices))
-        for (j, neighbor_idx) in enumerate(neighbor_indices)
-            neighbor_point = @view data[:, neighbor_idx]
-            geom_j = geometries[neighbor_idx]
-
-            # Maximum of both tangent plane distances (conservative)
-            d_from_i = local_distance(geom_i, center_point, neighbor_point)
-            d_from_j = local_distance(geom_j, center_point, neighbor_point)
-            weights[j] = T(max(d_from_i, d_from_j))
-        end
-        edge_weights[i] = weights
-    end
-
-    return edge_weights
-end
-
-"""
-    build_weighted_graph(method, index, data; k, candidate_k=nothing, edge_weight_mode=SourceTangent(), tangent_sharing=NoSharing(), kwargs...) -> WeightedKNNGraph
+    build_weighted_graph(method, index, data; k, candidate_k=nothing, edge_weight=TangentProjectedSourceOnly(), tangent_sharing=NoSharing(), rng=Random.default_rng(), kwargs...) -> WeightedKNNGraph
 
 Convenience method that builds both the kNN graph and weighted graph in one call.
 
@@ -514,54 +415,49 @@ Convenience method that builds both the kNN graph and weighted graph in one call
 - `k::Int`: Number of neighbors for the final kNN graph edges
 - `candidate_k::Union{Int,Nothing}`: Number of candidate neighbors for geometry fitting
   (useful for adaptive methods that filter neighbors). Defaults to `k`.
-- `edge_weight_mode::AbstractEdgeWeightMode`: How to compute edge weights (default: `SourceTangent()`)
+- `edge_weight::AbstractEdgeWeight`: How to compute edge weights
+  (default: `TangentProjectedSourceOnly()`).
 - `tangent_sharing::AbstractTangentSharingMode`: Whether to share tangent planes (default: `NoSharing()`)
+- `rng::AbstractRNG`: RNG threaded through downstream stochastic steps
+  (`build_knn_graph` query paths). Default `Random.default_rng()`.
 - `kwargs...`: Additional arguments passed to `build_knn_graph`
-
-# Example
-```julia
-index = build_index(BruteForceIndex, data)
-method = PCAMethod(intrinsic_dim=2)
-weighted_graph = build_weighted_graph(method, index, data; k=10)
-
-# For adaptive methods, use more candidates:
-strategy = AdaptiveNeighborhood(max_neighbors=30, min_neighbors=5)
-estimator = LocalGeometryEstimator(strategy, PCAMethod(intrinsic_dim=2))
-weighted_graph = build_weighted_graph(estimator, index, data; k=10, candidate_k=30)
-
-# With symmetric edge weights:
-weighted_graph = build_weighted_graph(method, index, data; k=10, edge_weight_mode=SymmetricMean())
-
-# Share similar tangent planes:
-sharing = ShareSimilarTangents(SubspaceAngleCriterion(π/12))
-weighted_graph = build_weighted_graph(method, index, data; k=10, tangent_sharing=sharing)
-```
 """
 function build_weighted_graph(method::AbstractLocalGeometryMethod,
                                index::AbstractANNIndex,
                                data::AbstractMatrix;
                                k::Integer,
                                candidate_k::Union{Integer,Nothing}=nothing,
-                               edge_weight_mode::AbstractEdgeWeightMode=SourceTangent(),
+                               edge_weight::AbstractEdgeWeight=TangentProjectedSourceOnly(),
                                tangent_sharing::AbstractTangentSharingMode=NoSharing(),
+                               rng::AbstractRNG=Random.default_rng(),
                                kwargs...)
-    # Build graph with final k
+    # Build graph with final k. `build_knn_graph` forwards `kwargs...` to
+    # the per-point `query` call; randomised indices (NNDescent, HNSW)
+    # consume an `rng` keyword there, while deterministic indices
+    # (BruteForce, KDTree) do not accept any kwargs. We only forward
+    # `rng` into the query path when the caller explicitly opts in by
+    # also placing `rng` in `kwargs`; the bare `rng` argument otherwise
+    # exists so that this builder offers a uniform RNG-aware API and so
+    # that *its own* code (the geometry-fit + weight-compute steps) is
+    # deterministic given a fixed RNG.
     graph = build_knn_graph(index, data; k=k, kwargs...)
+    _ = rng
 
     if candidate_k === nothing || candidate_k <= k
         # Standard case: use graph neighbors directly
-        build_weighted_graph(method, graph, data; edge_weight_mode=edge_weight_mode,
-                            tangent_sharing=tangent_sharing)
+        build_weighted_graph(method, graph, data; edge_weight=edge_weight,
+                            tangent_sharing=tangent_sharing, rng=rng)
     else
         # Adaptive case: query for more candidates for geometry fitting
         build_weighted_graph_with_candidates(method, graph, index, data, candidate_k;
-                                             edge_weight_mode=edge_weight_mode,
-                                             tangent_sharing=tangent_sharing)
+                                             edge_weight=edge_weight,
+                                             tangent_sharing=tangent_sharing,
+                                             rng=rng)
     end
 end
 
 """
-    build_weighted_graph_with_candidates(method, graph, index, data, candidate_k; edge_weight_mode, tangent_sharing)
+    build_weighted_graph_with_candidates(method, graph, index, data, candidate_k; edge_weight, tangent_sharing, rng)
 
 Build weighted graph where geometry fitting uses more neighbors than graph edges.
 This is useful for adaptive methods that filter outliers.
@@ -571,15 +467,16 @@ function build_weighted_graph_with_candidates(method::AbstractLocalGeometryMetho
                                                index::AbstractANNIndex,
                                                data::AbstractMatrix{T},
                                                candidate_k::Integer;
-                                               edge_weight_mode::AbstractEdgeWeightMode=SourceTangent(),
-                                               tangent_sharing::AbstractTangentSharingMode=NoSharing()) where T
-    n = length(graph)
+                                               edge_weight::AbstractEdgeWeight=TangentProjectedSourceOnly(),
+                                               tangent_sharing::AbstractTangentSharingMode=NoSharing(),
+                                               rng::AbstractRNG=Random.default_rng()) where T
+    _ = rng  # currently consumed only by `build_knn_graph` upstream
 
     # Step 1: Fit geometry at all nodes using candidate_k neighbors
     geometries = _fit_geometries_with_candidates(tangent_sharing, method, graph, index, data, candidate_k)
 
-    # Step 2: Compute edge weights using the specified mode
-    edge_weights = _compute_edge_weights(edge_weight_mode, graph, geometries, data)
+    # Step 2: Compute edge weights via the unified rule
+    edge_weights, _ = _compute_edge_weights_and_diagnostics(edge_weight, graph, geometries, data, T)
 
     G = eltype(geometries)
     WeightedKNNGraph{T, G}(graph, geometries, edge_weights)

@@ -37,20 +37,20 @@ const _D_T_Y = sqrt(2.0)
         for trial in 1:20
             i = rand(rng, 1:n); j = rand(rng, 1:n)
             expected = norm(data[:, j] - data[:, i])
-            got = compute_edge_distance(EuclideanChord(), i, j, data, nothing)
+            got = compute_edge_weight(EuclideanChord(), i, j, data, nothing)
             @test got ≈ expected
         end
     end
 
     @testset "TangentProjectedSymmetricMean uses (d_T^x + d_T^y)/2" begin
-        got = compute_edge_distance(TangentProjectedSymmetricMean(), 1, 2,
-                                     _DATA3, _GEOMETRIES)
+        got = compute_edge_weight(TangentProjectedSymmetricMean(), 1, 2,
+                                   _DATA3, _GEOMETRIES)
         @test got ≈ (_D_T_X + _D_T_Y) / 2
     end
 
     @testset "CurvatureFreeSymmetric matches eq:geod-sym" begin
-        got = compute_edge_distance(CurvatureFreeSymmetric(), 1, 2,
-                                     _DATA3, _GEOMETRIES)
+        got = compute_edge_weight(CurvatureFreeSymmetric(), 1, 2,
+                                   _DATA3, _GEOMETRIES)
         expected = (8 * _D_E - _D_T_X - _D_T_Y) / 6
         @test got ≈ expected
     end
@@ -82,7 +82,7 @@ const _D_T_Y = sqrt(2.0)
         @test raw_dE ≈ d_E
 
         # The public estimator must fall back to d_E.
-        got = compute_edge_distance(CurvatureFreeSymmetric(), 1, 2, data2, geoms)
+        got = compute_edge_weight(CurvatureFreeSymmetric(), 1, 2, data2, geoms)
         @test got ≈ d_E
     end
 
@@ -96,7 +96,7 @@ const _D_T_Y = sqrt(2.0)
         # builds are deterministic for BruteForceIndex + PCAMethod.
         model_default = build_geodesic_model(method, index, data; k=6)
         model_eucl    = build_geodesic_model(method, index, data; k=6,
-                                              edge_estimator=EuclideanChord())
+                                              edge_weight=EuclideanChord())
 
         @test length(model_default) == length(model_eucl)
 
@@ -115,10 +115,35 @@ const _D_T_Y = sqrt(2.0)
         method = PCAMethod(intrinsic_dim=2)
 
         model_cf = build_geodesic_model(method, index, data; k=6,
-                                         edge_estimator=CurvatureFreeSymmetric())
+                                         edge_weight=CurvatureFreeSymmetric())
         diag = diagnostics(model_cf)
         @test diag isa EstimatorDiagnostics
         @test diag.n_edges == 60 * 6  # k neighbours per node
         @test diag.n_negative_fallbacks >= 0
+    end
+
+    @testset "regression: build_geodesic_model with TangentProjectedSymmetricMean matches build_weighted_graph" begin
+        # After unification, build_geodesic_model(...; edge_weight=W) and
+        # build_weighted_graph(...; edge_weight=W) must produce identical
+        # edge weights -- there is no longer a separate "rewrite weights"
+        # pass. This regression locks in the unification and confirms that
+        # under the unified `TangentProjectedSymmetricMean` the new
+        # pipeline produces identical edge weights to the (pre-refactor)
+        # `SymmetricMean` path on `build_weighted_graph`.
+        rng = MersenneTwister(31415)
+        data = randn(rng, 3, 50)
+        index = build_index(BruteForceIndex, data)
+        method = PCAMethod(intrinsic_dim=2)
+
+        model = build_geodesic_model(method, index, data; k=5,
+                                      edge_weight=TangentProjectedSymmetricMean())
+        wg_direct = build_weighted_graph(method, index, data; k=5,
+                                          edge_weight=TangentProjectedSymmetricMean())
+
+        for i in 1:length(model)
+            @test neighbors(model.weighted_graph, i) == neighbors(wg_direct, i)
+            @test neighbor_weights(model.weighted_graph, i) ==
+                  neighbor_weights(wg_direct, i)
+        end
     end
 end

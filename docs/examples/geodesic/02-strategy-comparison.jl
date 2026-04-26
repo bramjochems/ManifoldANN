@@ -435,9 +435,9 @@ println("Each node has its own tangent plane. When computing edge weight i→j,"
 println("the question is: which tangent plane(s) to use?")
 println()
 println("Modes:")
-println("  - SourceTangent: use only geom_i (asymmetric, fast)")
-println("  - SymmetricMean: average of geom_i and geom_j (symmetric)")
-println("  - SymmetricMax: max of both (conservative, symmetric)")
+println("  - TangentProjectedSourceOnly: use only geom_i (asymmetric, fast)")
+println("  - TangentProjectedSymmetricMean: average of geom_i and geom_j (symmetric)")
+println("  - TangentProjectedSymmetricMax: max of both (conservative, symmetric)")
 println()
 
 # Use the Fixed baseline strategy for this comparison
@@ -447,9 +447,9 @@ baseline_estimator = LocalGeometryEstimator(
 )
 
 edge_modes = [
-    ("SourceTangent (default)", SourceTangent()),
-    ("SymmetricMean", SymmetricMean()),
-    ("SymmetricMax", SymmetricMax()),
+    ("TangentProjectedSourceOnly (default)", TangentProjectedSourceOnly()),
+    ("TangentProjectedSymmetricMean", TangentProjectedSymmetricMean()),
+    ("TangentProjectedSymmetricMax", TangentProjectedSymmetricMax()),
 ]
 
 # Build weighted graphs with different edge weight modes
@@ -460,7 +460,7 @@ for (name, mode) in edge_modes
     print("  $name... ")
     t_start = time()
     wg = build_weighted_graph(baseline_estimator, index, data;
-                              k=K_NEIGHBORS, edge_weight_mode=mode)
+                              k=K_NEIGHBORS, edge_weight=mode)
     t_elapsed = time() - t_start
 
     # Compute total edge weight for comparison
