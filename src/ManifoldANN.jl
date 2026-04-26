@@ -210,6 +210,10 @@ export AbstractANNIndex,
        filter_graph,
        compute_all_curvatures,
        curvature_statistics,
+       # ORC-ManL compatibility profiles (orcml replication preset)
+       AbstractOrcMLCompatibilityProfile,
+       ManifoldANNDefault,
+       OrcmlExact,
        # Graph analysis utilities
        compute_jaccard_scores,
        compute_gabriel_mask

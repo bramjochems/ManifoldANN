@@ -40,4 +40,5 @@ stats = curvature_statistics(curvatures)
 
 include("types.jl")
 include("solvers.jl")
+include("effective_epsilon_policy.jl")
 include("filtering.jl")

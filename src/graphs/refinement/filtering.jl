@@ -6,45 +6,11 @@ using Statistics
 # ==============================================================================
 
 """
-    _get_original_k(graph::KNNGraph)
+    effective_epsilon(i, j, graph, data; profile=ManifoldANNDefault())
 
-Get the original k value used to construct the graph.
-
-For undirected graphs (built with `directed=false`), the graph is symmetrized,
-which increases node degrees. The original k is stored in metadata and represents
-the k requested at construction time, not the actual degree after symmetrization.
-
-For directed graphs, original_k == graph.k.
-"""
-function _get_original_k(graph::KNNGraph)
-    # Check if metadata has original_k field
-    if graph.metadata !== nothing &&
-       hasfield(typeof(graph.metadata), :original_k)
-        return graph.metadata.original_k
-    else
-        # Fallback: use current k (for legacy graphs or directed graphs)
-        return graph.k
-    end
-end
-
-"""
-    effective_epsilon(i::Int, j::Int, graph::KNNGraph, data::Matrix{T}) where T
-
-Compute effective epsilon (scale normalization) for an edge (i, j).
-
-This is the maximum of the mean k-NN distances for nodes i and j, used by orcml
-for scale-invariant curvature computation.
-
-# Algorithm
-1. Exclude the edge endpoints from each node's neighborhood
-2. Compute distances to all remaining neighbors
-3. Select k-nearest neighbors (handles undirected graphs with degree > k)
-4. Return max(mean(dists_i), mean(dists_j))
-
-# Why use original_k?
-For undirected graphs built with `directed=false`, nodes have varying degrees
-(typically > k due to symmetrization). We use the original k to select the
-k-nearest neighbors, ensuring consistent scale normalization.
+Compute effective epsilon (scale normalisation) for an edge (i, j) under
+the given [`AbstractOrcMLCompatibilityProfile`](@ref). This is a thin
+wrapper that dispatches to [`compute_effective_epsilon`](@ref).
 
 # References
 - orcml: https://github.com/TristanSaidi/orcml (src/utils/graph_utils.py, lines 34-61)
@@ -52,35 +18,10 @@ k-nearest neighbors, ensuring consistent scale normalization.
 function effective_epsilon(
     i::Int, j::Int,
     graph::KNNGraph,
-    data::AbstractMatrix{T}
+    data::AbstractMatrix{T};
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
-    # Get original k (handles both directed and undirected graphs)
-    k = _get_original_k(graph)
-
-    # Get neighbors excluding the other endpoint
-    neighbors_i = [neighbor for neighbor in graph[i] if neighbor != j]
-    neighbors_j = [neighbor for neighbor in graph[j] if neighbor != i]
-
-    # Compute distances to all neighbors
-    dists_i = [norm(data[:, i] - data[:, neighbor]) for neighbor in neighbors_i]
-    dists_j = [norm(data[:, j] - data[:, neighbor]) for neighbor in neighbors_j]
-
-    # Select k-nearest neighbors (important for undirected graphs with degree > k)
-    if length(dists_i) > k
-        sort!(dists_i)
-        dists_i = dists_i[1:k]
-    end
-    if length(dists_j) > k
-        sort!(dists_j)
-        dists_j = dists_j[1:k]
-    end
-
-    # Compute mean distances (with zero fallback for empty neighborhoods)
-    eps_i = isempty(dists_i) ? zero(Float64) : mean(dists_i)
-    eps_j = isempty(dists_j) ? zero(Float64) : mean(dists_j)
-
-    # Return maximum (orcml convention)
-    return max(eps_i, eps_j)
+    return compute_effective_epsilon(profile, i, j, graph, data)
 end
 
 """
@@ -110,7 +51,8 @@ O(n³) time complexity. Pre-compute once and reuse for all edges.
 function compute_shortest_paths(
     graph::KNNGraph,
     data::AbstractMatrix{T},
-    weight_type::Symbol
+    weight_type::Symbol;
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
     n = length(graph)
 
@@ -132,7 +74,7 @@ function compute_shortest_paths(
             if weight_type == :euclidean
                 weight = norm(data[:, i] - data[:, j])
             elseif weight_type == :normalized
-                weight = effective_epsilon(i, j, graph, data)
+                weight = effective_epsilon(i, j, graph, data; profile = profile)
             elseif weight_type == :unit
                 weight = 1.0
             else
@@ -229,30 +171,26 @@ Get a distance function closure based on the specified metric.
 function get_distance_function(
     metric::Symbol,
     graph::KNNGraph,
-    data::AbstractMatrix{T}
+    data::AbstractMatrix{T};
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
     if metric == :euclidean
-        # Direct Euclidean distance (current approach)
         return (i::Int, j::Int) -> norm(data[:, i] - data[:, j])
 
     elseif metric == :geodesic_euclidean
-        # Shortest paths using Euclidean edge weights
-        sp = compute_shortest_paths(graph, data, :euclidean)
+        sp = compute_shortest_paths(graph, data, :euclidean; profile = profile)
         return (i::Int, j::Int) -> sp[i, j]
 
     elseif metric == :geodesic_normalized
-        # Shortest paths using effective_epsilon weights (orcml approach)
-        sp = compute_shortest_paths(graph, data, :normalized)
+        sp = compute_shortest_paths(graph, data, :normalized; profile = profile)
         return (i::Int, j::Int) -> sp[i, j]
 
     elseif metric == :geodesic_unit
-        # Shortest paths using unit weights (topological distance)
-        sp = compute_shortest_paths(graph, data, :unit)
+        sp = compute_shortest_paths(graph, data, :unit; profile = profile)
         return (i::Int, j::Int) -> sp[i, j]
 
     elseif metric == :normalized
-        # effective_epsilon only (for denominator)
-        return (i::Int, j::Int) -> effective_epsilon(i, j, graph, data)
+        return (i::Int, j::Int) -> effective_epsilon(i, j, graph, data; profile = profile)
 
     else
         error("Unknown metric: $metric. Valid options: :euclidean, :geodesic_euclidean, :geodesic_normalized, :geodesic_unit, :normalized")
@@ -324,15 +262,14 @@ function _setup_distance_functions(
     denominator_metric::Symbol,
     graph::KNNGraph,
     data::AbstractMatrix,
-    distance_fn::Union{Nothing,Function}
+    distance_fn::Union{Nothing,Function};
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 )
     if distance_fn !== nothing
-        # Deprecated path: use provided distance function for both
         return distance_fn, distance_fn
     else
-        # New path: get distance functions based on metrics
-        cost_fn = get_distance_function(cost_metric, graph, data)
-        denom_fn = get_distance_function(denominator_metric, graph, data)
+        cost_fn = get_distance_function(cost_metric, graph, data; profile = profile)
+        denom_fn = get_distance_function(denominator_metric, graph, data; profile = profile)
         return cost_fn, denom_fn
     end
 end
@@ -391,13 +328,20 @@ function _process_edge!(
     denom_fn::Function,
     exclude_edge_endpoints::Bool,
     solver::AbstractOTSolver,
-    fallback_solver::AbstractOTSolver
+    fallback_solver::AbstractOTSolver;
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
     x, y = edge
 
-    # Build neighborhoods with optional endpoint exclusion
+    # Build neighborhoods with optional endpoint exclusion.
+    # When the profile sets `asymmetric_target_exclusion=true` (orcml),
+    # the target node's neighbourhood does NOT exclude the source endpoint
+    # (a positional-argument quirk in the upstream Python
+    # `_get_single_node_neighbors_distributions`). The source side still
+    # excludes the target as usual.
     neighborhood_x = build_neighborhood(x, graph[x], y, exclude_edge_endpoints, Float64)
-    neighborhood_y = build_neighborhood(y, graph[y], x, exclude_edge_endpoints, Float64)
+    exclude_y_side = exclude_edge_endpoints && !profile.asymmetric_target_exclusion
+    neighborhood_y = build_neighborhood(y, graph[y], x, exclude_y_side, Float64)
 
     # Compute edge distance using denominator metric
     edge_dist = denom_fn(x, y)
@@ -554,7 +498,8 @@ compute_all_curvatures(graph, data)
 compute_all_curvatures(graph, data;
     exclude_edge_endpoints=true,
     cost_metric=:geodesic_normalized,
-    denominator_metric=:normalized
+    denominator_metric=:normalized,
+    profile=OrcmlExact(),
 )
 ```
 
@@ -585,7 +530,8 @@ function compute_all_curvatures(
     fallback_solver::AbstractOTSolver=SinkhornSolver(),
     use_threading::Bool=true,
     verbose::Bool=false,
-    distance_fn::Union{Nothing,Function}=nothing  # Deprecated, kept for backward compatibility
+    distance_fn::Union{Nothing,Function}=nothing,  # Deprecated, kept for backward compatibility
+    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
     n_nodes = length(graph)
 
@@ -596,7 +542,8 @@ function compute_all_curvatures(
     # Setup distance functions (handles both new API and deprecated distance_fn)
     verbose && println("Setting up distance functions...")
     cost_fn, denom_fn = _setup_distance_functions(
-        cost_metric, denominator_metric, graph, data, distance_fn
+        cost_metric, denominator_metric, graph, data, distance_fn;
+        profile = profile,
     )
 
     # Collect edges to process (handles self-loops, bidirectional, and unidirectional edges)
@@ -613,7 +560,8 @@ function compute_all_curvatures(
             _process_edge!(
                 results, results_lock, edges_to_process[edge_idx],
                 graph, data, cost_fn, denom_fn,
-                exclude_edge_endpoints, solver, fallback_solver
+                exclude_edge_endpoints, solver, fallback_solver;
+                profile = profile,
             )
         end
     else
@@ -621,7 +569,8 @@ function compute_all_curvatures(
             _process_edge!(
                 results, results_lock, edges_to_process[edge_idx],
                 graph, data, cost_fn, denom_fn,
-                exclude_edge_endpoints, solver, fallback_solver
+                exclude_edge_endpoints, solver, fallback_solver;
+                profile = profile,
             )
             verbose && (edge_idx % 100 == 0) &&
                 println("  Processed $edge_idx / $(length(edges_to_process)) edges")
