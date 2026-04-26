@@ -40,7 +40,7 @@ end
 
 # Compute curvatures with orcml configuration
 # Use NetworkSimplexSolver as fallback instead of Sinkhorn to avoid convergence issues
-println("\n2. Computing ORC (orcml config)...")
+println("\n2. Computing ORC (orcml config, OrcmlExact profile)...")
 curvatures = ManifoldANN.compute_all_curvatures(
     graph, data;
     exclude_edge_endpoints=true,
@@ -48,6 +48,7 @@ curvatures = ManifoldANN.compute_all_curvatures(
     denominator_metric=:normalized,
     solver=ManifoldANN.HungarianSolver(),
     fallback_solver=ManifoldANN.NetworkSimplexSolver(),
+    profile=ManifoldANN.OrcmlExact(),
     use_threading=false,
     verbose=false
 )
