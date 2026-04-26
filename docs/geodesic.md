@@ -188,12 +188,10 @@ index = build_index(BruteForceIndex, data)
 method = PCAMethod(intrinsic_dim=2)
 model = build_geodesic_model(method, index, data; k=15)
 
-# With advanced options
-sharing = ShareSimilarTangents(SubspaceAngleCriterion(π/12))
+# With a non-default edge-weight rule
 model = build_geodesic_model(method, index, data;
     k=15,
-    edge_weight_mode=SymmetricMean(),
-    tangent_sharing=sharing
+    edge_weight=TangentProjectedSymmetricMean(),
 )
 ```
 
