@@ -226,6 +226,10 @@ export AbstractANNIndex,
        AbstractOrcMLCompatibilityProfile,
        ManifoldANNDefault,
        OrcmlExact,
+       # ORC variant trait (StandardORC vs ORC-ManL)
+       AbstractORCConfig,
+       StandardORC,
+       ORCManL,
        # Graph analysis utilities
        compute_jaccard_scores,
        compute_gabriel_mask

@@ -243,14 +243,12 @@ for n in N_GRID, k in K_GRID, noise_std in NOISE_GRID, variant in ORC_VARIANTS
     ratios = precompute_ratios(graph, data, params)
 
     # ── Compute ORC (once) ────────────────────────────────────────────────────
-    orc_kwargs = variant == "standard" ?
-        (exclude_edge_endpoints=false, cost_metric=:euclidean,            denominator_metric=:euclidean) :
-        (exclude_edge_endpoints=true,  cost_metric=:geodesic_normalized,  denominator_metric=:normalized)
+    orc_variant = variant == "standard" ? StandardORC() : ORCManL()
 
     t_orc = @elapsed begin
         curvatures = compute_all_curvatures(
             graph, data;
-            orc_kwargs...,
+            variant=orc_variant,
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=true,

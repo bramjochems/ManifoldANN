@@ -26,14 +26,11 @@ println("\nGraph: nodes=", length(graph),
 println("\nComputing ORC with OrcmlExact compatibility profile ...")
 curvatures = ManifoldANN.compute_all_curvatures(
     graph, data;
-    exclude_edge_endpoints=true,
-    cost_metric=:geodesic_normalized,
-    denominator_metric=:normalized,
+    variant=ORCManL(profile=OrcmlExact()),
     solver=ManifoldANN.HungarianSolver(),
     fallback_solver=ManifoldANN.NetworkSimplexSolver(),
     use_threading=false,
     verbose=false,
-    profile=OrcmlExact(),
 )
 
 python_results = readdlm("benchmark_results/curvatures_orcml_python.csv", ',', skipstart=1)

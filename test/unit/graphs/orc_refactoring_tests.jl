@@ -26,70 +26,50 @@ using Random
 
     # Distance metric functions are tested indirectly through different metric configurations
 
-    @testset "Endpoint Exclusion" begin
-        # Test with endpoint exclusion
-        results_excluded = compute_all_curvatures(
-            graph, data;
-            exclude_edge_endpoints=true
-        )
-        @test !isempty(results_excluded)
-
-        # Results should be different from default (no exclusion)
-        results_included = compute_all_curvatures(graph, data)
-
-        # Some curvatures should differ
-        n_different = 0
-        for key in keys(results_excluded)
-            if haskey(results_included, key)
-                if abs(results_excluded[key].curvature - results_included[key].curvature) > 1e-10
-                    n_different += 1
-                end
-            end
-        end
-        @test n_different > 0  # At least some curvatures should be different
-    end
-
-    @testset "orcml Configuration" begin
-        # Test orcml approach: exclude endpoints + geodesic normalized
-        # orcml requires undirected graphs for geodesic distances
-        # Use NetworkSimplexSolver fallback for reliability (Sinkhorn can fail with geodesic distances)
+    @testset "Variant: ORCManL differs from StandardORC" begin
+        # Switching to the ORC-ManL variant changes endpoint handling and
+        # the cost / denominator metrics; results should generally differ
+        # from StandardORC (the default).
+        # ORC-ManL requires undirected graphs for the geodesic metric.
         results_orcml = compute_all_curvatures(
             graph_undirected, data;
-            exclude_edge_endpoints=true,
-            cost_metric=:geodesic_normalized,
-            denominator_metric=:normalized,
+            variant=ORCManL(),
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver()
         )
-        @test !isempty(results_orcml)
-        @test all(haskey(results_orcml, (i, j)) for i in 1:n_points for j in graph_undirected[i])
+        results_std = compute_all_curvatures(graph_undirected, data;
+            variant=StandardORC(),
+            solver=HungarianSolver(),
+            fallback_solver=NetworkSimplexSolver()
+        )
 
-        # Curvatures should be finite
+        @test !isempty(results_orcml)
+        @test all(haskey(results_orcml, (i, j))
+                  for i in 1:n_points for j in graph_undirected[i])
         @test all(isfinite(result.curvature) for result in values(results_orcml))
+
+        # At least some curvatures should differ between the two variants.
+        n_different = 0
+        for key in keys(results_orcml)
+            if haskey(results_std, key) &&
+               abs(results_orcml[key].curvature - results_std[key].curvature) > 1e-10
+                n_different += 1
+            end
+        end
+        @test n_different > 0
     end
 
-    @testset "Geodesic Metrics" begin
-        @testset "Geodesic Euclidean" begin
-            # Geodesic metrics require undirected graphs
-            results = compute_all_curvatures(
-                graph_undirected, data;
-                cost_metric=:geodesic_euclidean,
-                denominator_metric=:euclidean
-            )
-            @test !isempty(results)
-            @test all(isfinite(result.curvature) for result in values(results))
-        end
-
-        @testset "Geodesic Unit" begin
-            # Geodesic metrics require undirected graphs
-            results = compute_all_curvatures(
-                graph_undirected, data;
-                cost_metric=:geodesic_unit,
-                denominator_metric=:euclidean
-            )
-            @test !isempty(results)
-            @test all(isfinite(result.curvature) for result in values(results))
-        end
+    @testset "Variant: ORCManL with OrcmlExact profile" begin
+        # The orcml-compatibility profile composes cleanly with the
+        # ORC-ManL variant via ORCManL(profile=...).
+        results = compute_all_curvatures(
+            graph_undirected, data;
+            variant=ORCManL(profile=OrcmlExact()),
+            solver=HungarianSolver(),
+            fallback_solver=NetworkSimplexSolver()
+        )
+        @test !isempty(results)
+        @test all(isfinite(result.curvature) for result in values(results))
     end
 
     @testset "Threading Control" begin
@@ -115,6 +95,50 @@ using Random
     end
 
     # build_neighborhood and metric validation are tested indirectly through the public API
+
+    @testset "Variant unpacking pins old-kwarg semantics" begin
+        # StandardORC must unpack to (false, :euclidean, :euclidean, *).
+        # ORCManL (default profile) must unpack to
+        # (true, :geodesic_normalized, :normalized, ManifoldANNDefault()).
+        # ORCManL(profile=OrcmlExact()) must unpack to
+        # (true, :geodesic_normalized, :normalized, OrcmlExact()).
+        # This locks in the precise mapping from the trait to the
+        # internal flags so the refactor cannot silently change the
+        # algorithmic meaning of either preset.
+        let (excl, cm, dm, prof) =
+                ManifoldANN._unpack_variant(StandardORC())
+            @test excl  == false
+            @test cm    == :euclidean
+            @test dm    == :euclidean
+            @test prof isa AbstractOrcMLCompatibilityProfile
+        end
+
+        let (excl, cm, dm, prof) =
+                ManifoldANN._unpack_variant(ORCManL())
+            @test excl == true
+            @test cm   == :geodesic_normalized
+            @test dm   == :normalized
+            @test prof === ManifoldANNDefault()
+        end
+
+        let (excl, cm, dm, prof) =
+                ManifoldANN._unpack_variant(ORCManL(profile=OrcmlExact()))
+            @test excl == true
+            @test cm   == :geodesic_normalized
+            @test dm   == :normalized
+            @test prof === OrcmlExact()
+        end
+
+        # End-to-end: the default `compute_all_curvatures(graph, data)`
+        # call must equal `variant=StandardORC()` exactly (same flags).
+        c_default = compute_all_curvatures(graph, data)
+        c_std = compute_all_curvatures(graph, data; variant=StandardORC())
+        @test length(c_default) == length(c_std)
+        for k in keys(c_default)
+            @test haskey(c_std, k)
+            @test c_default[k].curvature ≈ c_std[k].curvature atol=1e-12
+        end
+    end
 
     @testset "Deprecated distance_fn Parameter" begin
         # The deprecated parameter should still work
