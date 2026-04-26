@@ -43,12 +43,9 @@ end
 println("\n2. Computing ORC (orcml config, OrcmlExact profile)...")
 curvatures = ManifoldANN.compute_all_curvatures(
     graph, data;
-    exclude_edge_endpoints=true,
-    cost_metric=:geodesic_normalized,
-    denominator_metric=:normalized,
+    variant=ManifoldANN.ORCManL(profile=ManifoldANN.OrcmlExact()),
     solver=ManifoldANN.HungarianSolver(),
     fallback_solver=ManifoldANN.NetworkSimplexSolver(),
-    profile=ManifoldANN.OrcmlExact(),
     use_threading=false,
     verbose=false
 )

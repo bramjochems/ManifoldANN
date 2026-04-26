@@ -44,7 +44,7 @@ known semantic differences between the two implementations:
   distributions for an edge (x, y), should the source x be excluded
   from y's neighbourhood?
   - `false` → ManifoldANN: symmetric exclusion (drop y from x's side
-    AND x from y's side, when `exclude_edge_endpoints=true`).
+    AND x from y's side, under the ORC-ManL variant).
   - `true`  → orcml: only the source side excludes the other endpoint.
     This replicates a positional-argument quirk in the upstream Python
     `_get_single_node_neighbors_distributions`.

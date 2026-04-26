@@ -120,7 +120,7 @@ different interpretations:
 The orcml approach uses undirected graphs with geodesic metrics:
 ```julia
 graph = build_knn_graph(index, data; k=15, directed=false)
-curvatures = compute_all_curvatures(graph, data; cost_metric=:geodesic_normalized)
+curvatures = compute_all_curvatures(graph, data; variant=ORCManL())
 ```
 """
 function validate_geodesic_config(graph::KNNGraph, metric::Symbol)
@@ -453,9 +453,88 @@ function filter_graph(
     KNNGraph(filtered_neighbors, new_k, graph.include_self, graph.metadata)
 end
 
+# ==============================================================================
+# ORC Variant Trait (StandardORC vs ORC-ManL)
+# ==============================================================================
+
 """
-    compute_all_curvatures(graph, data; exclude_edge_endpoints=false,
-                          cost_metric=:euclidean, denominator_metric=:euclidean,
+    AbstractORCConfig
+
+Trait that bundles the algorithmic choices distinguishing **standard
+Ollivier-Ricci curvature** from the **ORC-ManL** variant used by
+`orcml` (https://github.com/TristanSaidi/orcml).
+
+A single value of `AbstractORCConfig` fixes three internal flags that
+must move together to be coherent:
+
+- `exclude_edge_endpoints`
+- `cost_metric`
+- `denominator_metric`
+
+Two presets are provided:
+
+- [`StandardORC`](@ref) — the package's historical defaults: Euclidean
+  cost and denominator, neighbourhoods include the edge endpoints. Not
+  affected by [`AbstractOrcMLCompatibilityProfile`](@ref) (which is an
+  ORC-ManL-only concept).
+- [`ORCManL`](@ref) — the ORC-ManL variant: geodesic-normalised cost,
+  effective-epsilon denominator, neighbourhoods exclude the edge
+  endpoints. Carries an `AbstractOrcMLCompatibilityProfile` field so
+  that the two-variant choice composes cleanly with the orcml-
+  compatibility choice.
+
+The previous public API exposed `exclude_edge_endpoints`, `cost_metric`,
+`denominator_metric`, and `profile` as four independent kwargs of
+[`compute_all_curvatures`](@ref); that API allowed incoherent hybrids
+and has been removed in favour of this trait.
+"""
+abstract type AbstractORCConfig end
+
+"""
+    StandardORC()
+
+Public preset for **standard Ollivier-Ricci curvature**:
+`exclude_edge_endpoints=false`, `cost_metric=:euclidean`,
+`denominator_metric=:euclidean`.
+
+This is the default `variant` of [`compute_all_curvatures`](@ref) and
+preserves the package's historical behaviour. The
+[`AbstractOrcMLCompatibilityProfile`](@ref) is an ORC-ManL-specific
+concept and has no effect under `StandardORC`.
+"""
+struct StandardORC <: AbstractORCConfig end
+
+"""
+    ORCManL(; profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault())
+
+Public preset for the **ORC-ManL** variant:
+`exclude_edge_endpoints=true`, `cost_metric=:geodesic_normalized`,
+`denominator_metric=:normalized`.
+
+The `profile` field selects between the orcml-compatibility presets
+([`ManifoldANNDefault`](@ref) — the package's historical ORC-ManL
+behaviour, the default; or [`OrcmlExact`](@ref) — bit-for-bit match
+with the reference Python `orcml`).
+"""
+struct ORCManL{P<:AbstractOrcMLCompatibilityProfile} <: AbstractORCConfig
+    profile::P
+end
+ORCManL(; profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault()) =
+    ORCManL(profile)
+
+# Internal: unpack a variant into the (exclude_edge_endpoints,
+# cost_metric, denominator_metric, profile) 4-tuple consumed by the
+# rest of the pipeline. `profile` is irrelevant for `StandardORC`; we
+# return `ManifoldANNDefault()` purely to keep types concrete.
+function _unpack_variant(::StandardORC)
+    return (false, :euclidean, :euclidean, ManifoldANNDefault())
+end
+function _unpack_variant(v::ORCManL)
+    return (true, :geodesic_normalized, :normalized, v.profile)
+end
+
+"""
+    compute_all_curvatures(graph, data; variant=StandardORC(),
                           solver=HungarianSolver(), fallback_solver=SinkhornSolver(),
                           use_threading=true, verbose=false, distance_fn=nothing)
 
@@ -466,15 +545,13 @@ Compute Ollivier-Ricci curvatures for all edges in a k-NN graph.
 - `data::AbstractMatrix{T}`: Data matrix (d × n)
 
 # Keyword Arguments
-- `exclude_edge_endpoints::Bool=false`: Exclude edge endpoints from neighborhoods (orcml approach)
-- `cost_metric::Symbol=:euclidean`: Distance metric for OT cost matrix
-  - `:euclidean`: Direct Euclidean distance (default, current approach)
-  - `:geodesic_euclidean`: Shortest paths with Euclidean edge weights
-  - `:geodesic_normalized`: Shortest paths with effective_epsilon weights (orcml)
-  - `:geodesic_unit`: Shortest paths with unit edge weights
-  - `:normalized`: effective_epsilon only
-- `denominator_metric::Symbol=:euclidean`: Distance metric for curvature denominator
-  - Same options as `cost_metric`
+- `variant::AbstractORCConfig=StandardORC()`: ORC variant preset.
+  - [`StandardORC()`](@ref) — Euclidean cost & denominator, endpoints
+    included in neighbourhoods (the package default).
+  - [`ORCManL()`](@ref) — geodesic-normalised cost, effective-epsilon
+    denominator, endpoints excluded. Optionally takes a `profile`
+    (defaulting to `ManifoldANNDefault()`; pass `OrcmlExact()` for a
+    bit-for-bit match with the reference Python `orcml`).
 - `solver::AbstractOTSolver=HungarianSolver()`: Primary OT solver
 - `fallback_solver::AbstractOTSolver=SinkhornSolver()`: Fallback solver
 - `use_threading::Bool=true`: Enable multithreaded processing
@@ -486,35 +563,27 @@ Compute Ollivier-Ricci curvatures for all edges in a k-NN graph.
 
 # Configuration Examples
 
-## Current ManifoldANN (default):
+## Standard ORC (default):
 ```julia
 compute_all_curvatures(graph, data)
-# Same as:
-# exclude_edge_endpoints=false, cost_metric=:euclidean, denominator_metric=:euclidean
+# Equivalent to:
+compute_all_curvatures(graph, data; variant=StandardORC())
 ```
 
-## orcml replication:
+## ORC-ManL (ManifoldANN's historical ORC-ManL behaviour):
 ```julia
-compute_all_curvatures(graph, data;
-    exclude_edge_endpoints=true,
-    cost_metric=:geodesic_normalized,
-    denominator_metric=:normalized,
-    profile=OrcmlExact(),
-)
+compute_all_curvatures(graph, data; variant=ORCManL())
 ```
 
-## Hybrid geodesic:
+## ORC-ManL matching reference Python `orcml`:
 ```julia
-compute_all_curvatures(graph, data;
-    cost_metric=:geodesic_euclidean,
-    denominator_metric=:euclidean
-)
+compute_all_curvatures(graph, data; variant=ORCManL(profile=OrcmlExact()))
 ```
 
 # Performance Notes
 - Multithreaded edge processing (scales with Threads.nthreads())
 - Pre-computed distance matrices for each edge's neighborhood
-- Geodesic metrics require O(n³) shortest path pre-computation
+- ORC-ManL requires O(n³) shortest-path pre-computation
 
 # References
 - orcml: https://github.com/TristanSaidi/orcml
@@ -523,16 +592,15 @@ compute_all_curvatures(graph, data;
 function compute_all_curvatures(
     graph::KNNGraph,
     data::AbstractMatrix{T};
-    exclude_edge_endpoints::Bool=false,
-    cost_metric::Symbol=:euclidean,
-    denominator_metric::Symbol=:euclidean,
+    variant::AbstractORCConfig = StandardORC(),
     solver::AbstractOTSolver=HungarianSolver(),
     fallback_solver::AbstractOTSolver=SinkhornSolver(),
     use_threading::Bool=true,
     verbose::Bool=false,
     distance_fn::Union{Nothing,Function}=nothing,  # Deprecated, kept for backward compatibility
-    profile::AbstractOrcMLCompatibilityProfile = ManifoldANNDefault(),
 ) where {T}
+    exclude_edge_endpoints, cost_metric, denominator_metric, profile =
+        _unpack_variant(variant)
     n_nodes = length(graph)
 
     # Validate geodesic metric configuration (warn if directed graph)

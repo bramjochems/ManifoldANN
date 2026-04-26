@@ -288,16 +288,12 @@ for sparsity in SPARSITY_GRID, k in K_GRID, variant in ORC_VARIANTS
     n_edges  = sum(length(graph[i]) for i in 1:n_actual)
 
     # ── ORC ───────────────────────────────────────────────────────────────────
-    orc_kwargs = variant == "standard" ?
-        (exclude_edge_endpoints=false, cost_metric=:euclidean,
-         denominator_metric=:euclidean) :
-        (exclude_edge_endpoints=true,  cost_metric=:geodesic_normalized,
-         denominator_metric=:normalized)
+    orc_variant = variant == "standard" ? StandardORC() : ORCManL()
 
     t_orc = @elapsed begin
         curvatures = compute_all_curvatures(
             graph, data;
-            orc_kwargs...,
+            variant=orc_variant,
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=true,

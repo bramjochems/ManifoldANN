@@ -45,26 +45,22 @@ using Statistics
         index = build_index(BruteForceIndex, data)
         graph = build_knn_graph(index, data; k=10, directed=false)
 
-        # 1. Calling without specifying `profile` must equal calling with
-        #    `profile=ManifoldANNDefault()` (regression-preserving default).
+        # 1. Calling `ORCManL()` (which defaults to the
+        #    `ManifoldANNDefault()` profile) must equal explicitly
+        #    passing `ORCManL(profile=ManifoldANNDefault())`.
         c_implicit = compute_all_curvatures(
             graph, data;
-            exclude_edge_endpoints=true,
-            cost_metric=:geodesic_normalized,
-            denominator_metric=:normalized,
+            variant=ORCManL(),
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=false,
         )
         c_default = compute_all_curvatures(
             graph, data;
-            exclude_edge_endpoints=true,
-            cost_metric=:geodesic_normalized,
-            denominator_metric=:normalized,
+            variant=ORCManL(profile=ManifoldANNDefault()),
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=false,
-            profile=ManifoldANNDefault(),
         )
         @test length(c_implicit) == length(c_default)
         for k in keys(c_default)
@@ -78,13 +74,10 @@ using Statistics
         #    presets so future refactors can't silently break either.
         c_orcml = compute_all_curvatures(
             graph, data;
-            exclude_edge_endpoints=true,
-            cost_metric=:geodesic_normalized,
-            denominator_metric=:normalized,
+            variant=ORCManL(profile=OrcmlExact()),
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=false,
-            profile=OrcmlExact(),
         )
 
         common = collect(intersect(keys(c_default), keys(c_orcml)))

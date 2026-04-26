@@ -274,16 +274,12 @@ for torus_v in TORUS_VARIANTS, n in N_GRID, k in K_GRID,
     @printf "  Geodesic ratios computed in %.2fs\n" t_ratio
 
     # ── Compute ORC (once per (n,k,noise,variant)) ────────────────────────────
-    orc_kwargs = variant == "standard" ?
-        (exclude_edge_endpoints=false, cost_metric=:euclidean,
-         denominator_metric=:euclidean) :
-        (exclude_edge_endpoints=true,  cost_metric=:geodesic_normalized,
-         denominator_metric=:normalized)
+    orc_variant = variant == "standard" ? StandardORC() : ORCManL()
 
     t_orc = @elapsed begin
         curvatures = compute_all_curvatures(
             graph, data;
-            orc_kwargs...,
+            variant=orc_variant,
             solver=HungarianSolver(),
             fallback_solver=NetworkSimplexSolver(),
             use_threading=true,

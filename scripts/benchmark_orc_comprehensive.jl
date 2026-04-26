@@ -33,27 +33,13 @@ const SOLVERS = [
 # ORC configurations to test
 struct ORCConfig
     name::String
-    exclude_edge_endpoints::Bool
-    cost_metric::Symbol
-    denominator_metric::Symbol
+    variant::ManifoldANN.AbstractORCConfig
     directed::Bool
 end
 
 const CONFIGS = [
-    ORCConfig(
-        "original",
-        false,  # Include edge endpoints
-        :euclidean,
-        :euclidean,
-        true  # Directed graph
-    ),
-    ORCConfig(
-        "orcml",
-        true,  # Exclude edge endpoints
-        :geodesic_normalized,
-        :normalized,
-        false  # Undirected graph
-    ),
+    ORCConfig("original", ManifoldANN.StandardORC(), true),   # Directed graph
+    ORCConfig("orcml",    ManifoldANN.ORCManL(),    false),   # Undirected graph
 ]
 
 println("="^80)
@@ -85,8 +71,7 @@ for n in SIZES
     for config in CONFIGS
         println("\n" * "-"^80)
         println("Configuration: $(config.name)")
-        println("  directed=$(config.directed), exclude_endpoints=$(config.exclude_edge_endpoints)")
-        println("  cost=$(config.cost_metric), denom=$(config.denominator_metric)")
+        println("  directed=$(config.directed), variant=$(config.variant)")
         println("-"^80)
 
         # Build graph with appropriate direction
@@ -122,9 +107,7 @@ for n in SIZES
             try
                 curvatures = ManifoldANN.compute_all_curvatures(
                     graph, data;
-                    exclude_edge_endpoints=config.exclude_edge_endpoints,
-                    cost_metric=config.cost_metric,
-                    denominator_metric=config.denominator_metric,
+                    variant=config.variant,
                     solver=primary_solver,
                     fallback_solver=fallback_solver,
                     use_threading=true,
