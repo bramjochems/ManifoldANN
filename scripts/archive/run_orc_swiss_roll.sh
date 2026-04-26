@@ -7,7 +7,8 @@
 #   N_OVERRIDE=500 K_OVERRIDE=10 ./scripts/run_orc_swiss_roll.sh
 #
 # Results land in:
-#   docs/thesis/results/orc_results/orc_swiss_roll_<timestamp>.csv
+#   docs/thesis/results/orc_results/swiss_roll_<timestamp>/
+#   Set RESUME_DIR=path to resume a previous run.
 
 set -euo pipefail
 
@@ -19,6 +20,9 @@ JULIA_SCRIPT="$SCRIPT_DIR/experiment_orc_swiss_roll.jl"
 export SMOKE="${SMOKE:-}"
 export N_OVERRIDE="${N_OVERRIDE:-}"
 export K_OVERRIDE="${K_OVERRIDE:-}"
+export SKIP_EDGES="${SKIP_EDGES:-}"
+export SKIP_GEODERROR="${SKIP_GEODERROR:-}"
+export RESUME_DIR="${RESUME_DIR:-}"
 
 echo "========================================================"
 echo "ORC Swiss Roll Experiment"
