@@ -25,6 +25,15 @@ callers must still pass `data` when querying. Keywords:
   two builds with the same `rng` may produce different neighbor lists because
   thread interleaving determines insertion order. Pass `threaded=false` for
   reproducible builds (matches PyNNDescent's `n_jobs=1` semantics).
+- `init`: Initial-graph strategy. `:random` (default) is the original
+  bidirectional random init. `:rptree` builds an RP-tree forest and seeds
+  each node's heap with the closest k from the union of co-leaf members
+  across the forest, also bidirectionally. The RP-tree path was benchmarked
+  as slower for build time on this codebase (see commit history) but
+  improves recall at moderate n (n=5000 d=32 k=15: 0.92 → 0.96). Opt in
+  via `init=:rptree` if recall matters more than build speed.
+- `n_trees`, `leaf_cap`: RP-tree forest parameters; only used when
+  `init=:rptree`. Defaults derived from n and k (PyNNDescent's heuristics).
 """
 function build_index(
     ::Type{NNDescentIndex},
@@ -40,6 +49,9 @@ function build_index(
     pruning_degree_multiplier::Real = NNDESCENT_DEFAULT_PRUNING_DEGREE_MULTIPLIER,
     max_candidate_neighbors::Union{Int,Nothing} = nothing,
     threaded::Bool = true,
+    init::Symbol = :random,
+    n_trees::Union{Int,Nothing} = nothing,
+    leaf_cap::Union{Int,Nothing} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -81,7 +93,20 @@ function build_index(
             NNDescentNeighborNode{dist_type},
         }
 
-    _initialize_random_neighbors!(working_graph, data, k, distance, rng)
+    if init === :random
+        _initialize_random_neighbors!(working_graph, data, k, distance, rng)
+    elseif init === :rptree
+        resolved_n_trees = n_trees === nothing ? default_rptree_n_trees(n) : n_trees
+        resolved_leaf_cap = leaf_cap === nothing ? default_rptree_leaf_cap(k) : leaf_cap
+        resolved_n_trees > 0 || throw(ArgumentError("n_trees must be positive"))
+        resolved_leaf_cap > 0 || throw(ArgumentError("leaf_cap must be positive"))
+        _initialize_rptree_neighbors!(
+            working_graph, data, k, distance, rng,
+            resolved_n_trees, resolved_leaf_cap,
+        )
+    else
+        throw(ArgumentError("Unknown init mode :$init. Use :random or :rptree"))
+    end
     _run_nndescent!(
         working_graph,
         data,
