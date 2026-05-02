@@ -57,6 +57,14 @@ Fit local geometry at a graph node using its neighborhood.
 
 # Returns
 An `AbstractLocalGeometry` representing the fitted local structure.
+
+# Thread-safety contract
+`build_weighted_graph(...; tangent_sharing=NoSharing())` calls `fit_geometry`
+concurrently across nodes. Custom `AbstractLocalGeometryMethod` subclasses
+must therefore implement `fit_geometry` as a pure function: read-only access
+to `data`, no mutation of method-internal state, no side effects on shared
+globals. The built-in `PCAMethod` and `EstimatedGeometry` satisfy this
+trivially.
 """
 function fit_geometry(method::AbstractLocalGeometryMethod, data::AbstractMatrix,
                       center_idx::Int, neighbor_indices::AbstractVector{Int})

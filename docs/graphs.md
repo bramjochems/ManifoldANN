@@ -58,3 +58,18 @@ time 2082 ms with default BLAS=8 → 1464 ms with BLAS=1 (1.4× speedup).
 node's decision to share or fit fresh depends on what was decided for
 earlier nodes, so threading would either lose the sharing structure or
 produce schedule-dependent output.
+
+### Thread-safety contract for custom geometry methods
+
+Threading the fit loop is a public-API contract: any user-defined
+`AbstractLocalGeometryMethod` subclass with its own `fit_geometry` method
+must be safe to call concurrently across nodes. Concretely, custom
+implementations must be pure — read-only access to `data`, no mutation
+of method-internal state (`mutable struct` fields used as caches, etc.),
+no side effects on shared globals. The built-in `PCAMethod` and
+`EstimatedGeometry` satisfy this trivially. Methods that violate the
+contract will produce wrong or non-deterministic results under threading.
+
+This contract follows the standard Julia ecosystem convention (see
+DataFrames.jl, Distances.jl): threading is a performance default, the
+contract is documented, and there is no opt-out kwarg.
