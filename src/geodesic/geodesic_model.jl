@@ -232,6 +232,15 @@ Returns (distances, predecessors) where:
 - predecessors[i] = previous node on shortest path (-1 if unreachable or source)
 """
 function _dijkstra(wg::WeightedKNNGraph, source::Int; target::Union{Int,Nothing}=nothing)
+    return _dijkstra_multisource(wg, (source,), (zero(eltype(wg.edge_weights[1])),); target=target)
+end
+
+# Multi-source Dijkstra: seeds the heap with (init_dist[i], sources[i]) for each
+# entry. Used by point→node and point→point geodesic queries to fold k entry
+# points into a single shortest-path pass instead of running one Dijkstra per
+# entry. Single-source Dijkstra is the special case sources = (source,),
+# init_dists = (0,).
+function _dijkstra_multisource(wg::WeightedKNNGraph, sources, init_dists; target::Union{Int,Nothing}=nothing)
     n = length(wg)
     T = eltype(wg.edge_weights[1])
 
@@ -240,9 +249,14 @@ function _dijkstra(wg::WeightedKNNGraph, source::Int; target::Union{Int,Nothing}
     prev = fill(-1, n)
     visited = falses(n)
 
-    dist[source] = zero(T)
     heap = MinHeap{T}()
-    heap_push!(heap, zero(T), source)
+    for (s, d0) in zip(sources, init_dists)
+        d0T = T(d0)
+        if d0T < dist[s]
+            dist[s] = d0T
+            heap_push!(heap, d0T, s)
+        end
+    end
 
     while !isempty(heap)
         d, u = heap_pop!(heap)
@@ -397,27 +411,17 @@ function geodesic_distance(model::GeodesicDistanceModel, data::AbstractMatrix,
     neighbor_indices = [n.id for n in entry_neighbors]
     query_geom = fit_geometry(model.method, data, point, neighbor_indices)
 
-    # Find best path through entry nodes
-    # Use Inf for unreachable paths (not typemax which gives ~1.8e308)
-    best_dist = T(Inf)
-
+    # Single multi-source Dijkstra seeded with (entry_idx, local_dist(point, entry))
+    # for every entry, then read dist[j]. Replaces k separate single-source runs.
+    sources = Int[]
+    init_dists = T[]
     for entry in entry_neighbors
-        entry_idx = entry.id
-
-        # Local distance from query to entry node
-        entry_point = @view data[:, entry_idx]
-        local_dist = T(local_distance(query_geom, point, entry_point))
-
-        # Graph distance from entry to target
-        graph_dist = geodesic_distance(model, data, entry_idx, j)
-
-        total = local_dist + graph_dist
-        if total < best_dist
-            best_dist = total
-        end
+        entry_point = @view data[:, entry.id]
+        push!(sources, entry.id)
+        push!(init_dists, T(local_distance(query_geom, point, entry_point)))
     end
-
-    return best_dist
+    dist, _ = _dijkstra_multisource(model.weighted_graph, sources, init_dists; target=j)
+    return dist[j]
 end
 
 # ============================================================================
@@ -471,31 +475,27 @@ function geodesic_distance(model::GeodesicDistanceModel, data::AbstractMatrix,
     geom_a = fit_geometry(model.method, data, point_a, indices_a)
     geom_b = fit_geometry(model.method, data, point_b, indices_b)
 
-    # Find best path: point_a → entry_a → ... → entry_b → point_b
-    # Use Inf for unreachable paths (not typemax which gives ~1.8e308)
-    best_dist = T(Inf)
-
+    # Single multi-source Dijkstra from entries_a (each seeded with its local
+    # distance from point_a), then take min over entries_b of
+    # dist[entry_b] + local_dist(entry_b, point_b). Replaces k_a × k_b separate
+    # single-source runs.
+    sources = Int[]
+    init_dists = T[]
     for entry_a in entries_a
-        entry_a_idx = entry_a.id
-        entry_a_point = @view data[:, entry_a_idx]
+        entry_a_point = @view data[:, entry_a.id]
+        push!(sources, entry_a.id)
+        push!(init_dists, T(local_distance(geom_a, point_a, entry_a_point)))
+    end
+    dist, _ = _dijkstra_multisource(model.weighted_graph, sources, init_dists)
 
-        # Local distance from point_a to entry_a
-        dist_a = T(local_distance(geom_a, point_a, entry_a_point))
-
-        for entry_b in entries_b
-            entry_b_idx = entry_b.id
-            entry_b_point = @view data[:, entry_b_idx]
-
-            # Graph distance between entry nodes
-            dist_graph = geodesic_distance(model, data, entry_a_idx, entry_b_idx)
-
-            # Local distance from entry_b to point_b
-            dist_b = T(local_distance(geom_b, entry_b_point, point_b))
-
-            total = dist_a + dist_graph + dist_b
-            if total < best_dist
-                best_dist = total
-            end
+    best_dist = T(Inf)
+    for entry_b in entries_b
+        entry_b_idx = entry_b.id
+        entry_b_point = @view data[:, entry_b_idx]
+        dist_b = T(local_distance(geom_b, entry_b_point, point_b))
+        total = dist[entry_b_idx] + dist_b
+        if total < best_dist
+            best_dist = total
         end
     end
 
