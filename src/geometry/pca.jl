@@ -150,22 +150,68 @@ function _fit_pca_geometry(method::PCAMethod, center::Vector{T},
     # Center the neighborhood data
     centered = neighbor_data .- center
 
-    # Compute SVD: centered' is (n_neighbors × ambient_dim)
-    # We want the right singular vectors (columns of V) which are the PCs
-    F = svd(centered')
+    # Eigendecompose the smaller of (d × d) covariance or (k × k) Gram matrix.
+    # Both routes give squared singular values of `centered` as eigenvalues; the
+    # ambient-space PCs are recovered directly in the d ≤ k case, or via the
+    # dual relation Q = centered * W / σ in the d > k case. This is faster than
+    # svd(centered') because the symmetric LAPACK path has roughly half the
+    # constant factor and we never compute the discarded U factor.
+    eigenvalues_full, basis_full = _pca_eigen(centered, ambient_dim, n_neighbors)
 
-    # Eigenvalues are S^2 / (n-1) for sample covariance
-    # For our purposes, S^2 is proportional and sufficient
-    eigenvalues = F.S .^ 2
+    d = _determine_dimension(method, eigenvalues_full, ambient_dim)
+    basis = basis_full[:, 1:d]
 
-    # Determine dimension to keep
-    d = _determine_dimension(method, eigenvalues, ambient_dim)
+    PCAGeometry{T}(center, Matrix{T}(basis), Vector{T}(eigenvalues_full[1:d]))
+end
 
-    # Extract basis: columns of V corresponding to top d singular values
-    # V is ambient_dim × min(n_neighbors, ambient_dim)
-    basis = F.V[:, 1:d]
-
-    PCAGeometry{T}(center, Matrix{T}(basis), Vector{T}(eigenvalues[1:d]))
+# Returns (eigenvalues_descending, basis_columns_aligned).
+# eigenvalues are squared singular values of `centered` (i.e. variances * (n-1)),
+# matching the previous `svd(centered').S .^ 2` convention.
+function _pca_eigen(centered::AbstractMatrix, ambient_dim::Int, n_neighbors::Int)
+    if ambient_dim <= n_neighbors
+        # Direct path: small d × d symmetric eigenproblem.
+        C = Symmetric(centered * centered')
+        F = eigen(C)
+        # eigen(Symmetric) returns ascending; reverse for descending.
+        eigenvalues = reverse(F.values)
+        basis = F.vectors[:, end:-1:1]
+        # Numerical floor: covariance eigenvalues are nonneg in exact arithmetic.
+        @inbounds for i in eachindex(eigenvalues)
+            eigenvalues[i] = max(eigenvalues[i], zero(eltype(eigenvalues)))
+        end
+        return eigenvalues, basis
+    else
+        # Dual path: small k × k Gram eigenproblem, then back-project.
+        M = Symmetric(centered' * centered)
+        F = eigen(M)
+        eigenvalues = reverse(F.values)
+        W = F.vectors[:, end:-1:1]
+        @inbounds for i in eachindex(eigenvalues)
+            eigenvalues[i] = max(eigenvalues[i], zero(eltype(eigenvalues)))
+        end
+        # Back-project: Q[:, j] = centered * W[:, j] / sqrt(λ_j). For near-zero
+        # λ_j the corresponding singular vector is in the null space; fall back
+        # to an orthonormalised arbitrary direction so the basis stays well-formed.
+        T = eltype(centered)
+        basis = Matrix{T}(undef, ambient_dim, n_neighbors)
+        tol = eps(T) * max(eigenvalues[1], one(T)) * max(ambient_dim, n_neighbors)
+        for j in 1:n_neighbors
+            λ = eigenvalues[j]
+            if λ > tol
+                @views basis[:, j] = (centered * W[:, j]) ./ sqrt(λ)
+            else
+                # Null-space column: arbitrary orthonormal vector. Use e_j (or
+                # gram-schmidt against earlier columns if needed). For our
+                # downstream use these columns are weighted by zero eigenvalues
+                # and dropped by `_determine_dimension` in the typical setting.
+                fill!(@view(basis[:, j]), zero(T))
+                if j <= ambient_dim
+                    basis[j, j] = one(T)
+                end
+            end
+        end
+        return eigenvalues, basis
+    end
 end
 
 """
