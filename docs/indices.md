@@ -41,6 +41,21 @@ Below is a quick reference of the currently implemented indices and their most r
 - **Mutation**: `insert!(index, data, point; rng=...)` expects the caller to append the new column to `data` first; the index updates only its graph metadata.
 - **Examples**: `docs/examples/indices/ex04-hnsw-index.jl` (index usage) and `docs/examples/graphs/04-hnsw-knn-graph.jl` (graph export).
 
+## NNDescentIndex
+- **Scope**: approximate kNN graph construction via the NN-Descent algorithm (Dong, Charikar, Li 2011) with reverse-neighbor sampling. Builds a directed kNN graph and supports queries over it.
+- **Builder keywords**:
+  - `k`: target neighbors per point (default 32).
+  - `max_iterations`, `convergence_threshold`: descent iteration controls (defaults 10 and 1e-3, matching PyNNDescent's `delta`).
+  - `pruning_degree_multiplier`: per-iteration candidate set per node is capped at `ceil(pruning_degree_multiplier × k)` (default 1.5, matches PyNNDescent). Larger values increase recall at quadratic build cost; `max_candidate_neighbors` overrides this absolute cap if needed.
+  - `sampling_policy`, `symmetry_policy`, `apply_symmetry_continuously`: pluggable strategies for candidate sampling and graph symmetrization.
+  - `threaded`: parallel local-join via `Threads.@threads` (default `true`). Per-node `ReentrantLock`s protect heap mutations. **Threading gives up bitwise determinism** — same-seed builds may produce different graphs because thread interleaving affects insertion order. Pass `threaded=false` for reproducible builds (matches PyNNDescent's `n_jobs=1`).
+  - `init`: initial-graph strategy. `:random` (default) is bidirectional random init — fast, gives ~2k starting neighbors per node. `:rptree` builds an RP-tree forest and seeds each node with the closest k from its co-leaf union (also bidirectional). RP-tree is slower at build time but improves recall at moderate n; opt in if recall matters more than build speed.
+  - `n_trees`, `leaf_cap`: RP-tree forest parameters; only consulted when `init=:rptree`. Defaults derived from n and k via PyNNDescent's heuristics (`max(3, min(12, round(2·log10(n))))` and `min(64, 5k)`).
+- **Query keywords**: `ef_search` (optional override), `rng` (per-query random state).
+- **Mutation**: immutable—rebuild when the dataset changes.
+- **Performance notes**: with `-t 4` and `threaded=true` (default), NN-Descent build is ~1.6× faster than single-threaded on representative configs. The `threaded=false` path matches PyNNDescent's single-threaded performance within ~1.7-1.9×. Bench gate methodology and full numbers in commit history (commits `25fbbee`, `2d912f0`, `83e0d17`).
+- **Examples**: `docs/examples/indices/05-nndescent-index.jl`.
+
 ## MultiLevelIndex
 - **Scope**: FAISS-like hierarchical indices with configurable transforms, routing, and merge strategies; enables IVF, multi-level clustering, and future PQ/OPQ pipelines.
 - **Builder keywords**:
