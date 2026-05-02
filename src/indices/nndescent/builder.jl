@@ -19,6 +19,12 @@ callers must still pass `data` when querying. Keywords:
   Larger values increase recall at quadratic build cost.
 - `max_candidate_neighbors`: Explicit override for the per-iteration candidate
   cap. If `nothing` (default), derived from `pruning_degree_multiplier × k`.
+- `threaded`: Run the local-join in parallel using `Threads.@threads` (default
+  `true`). The threaded path acquires per-node `ReentrantLock`s on heap
+  mutations; this preserves graph quality but **gives up bitwise determinism**:
+  two builds with the same `rng` may produce different neighbor lists because
+  thread interleaving determines insertion order. Pass `threaded=false` for
+  reproducible builds (matches PyNNDescent's `n_jobs=1` semantics).
 """
 function build_index(
     ::Type{NNDescentIndex},
@@ -33,6 +39,7 @@ function build_index(
     distance::D = default_squared_distance,
     pruning_degree_multiplier::Real = NNDESCENT_DEFAULT_PRUNING_DEGREE_MULTIPLIER,
     max_candidate_neighbors::Union{Int,Nothing} = nothing,
+    threaded::Bool = true,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -87,6 +94,7 @@ function build_index(
         convergence_threshold,
         rng,
         resolved_cap,
+        threaded,
     )
 
     adjacency = _finalize_neighbors(working_graph, k)
@@ -179,6 +187,95 @@ function _initialize_random_neighbors!(
     return nothing
 end
 
+# Serial local-join for one NN-Descent iteration. Returns the number of
+# successful neighbor updates this iteration.
+function _local_join_serial!(
+    graph::Vector{NNDescentNeighborNode{T}}, data, distance,
+    sampling_policy, max_candidate_neighbors,
+    r_new, r_old, new_scratch::Vector{Int}, old_scratch::Vector{Int},
+    rng::AbstractRNG,
+) where {T}
+    updates = 0
+    @inbounds for node_idx in 1:length(graph)
+        node = graph[node_idx]
+        (isempty(node.new_neighbors) && isempty(r_new[node_idx])) && continue
+        _sample_neighbor_ids_with_reverse!(
+            new_scratch, node.new_neighbors, r_new[node_idx],
+            max_candidate_neighbors, rng)
+        isempty(new_scratch) && continue
+        new_candidates = new_scratch
+        _sample_neighbor_ids_with_reverse!(
+            old_scratch, node.old_neighbors, r_old[node_idx],
+            max_candidate_neighbors, rng)
+        old_candidates = old_scratch
+
+        for new_idx in 1:length(new_candidates)
+            src = new_candidates[new_idx]
+            for inner_idx in (new_idx + 1):length(new_candidates)
+                dst = new_candidates[inner_idx]
+                should_consider_pair(sampling_policy, rng) || continue
+                updates += _connect_pair!(graph, data, distance, src, dst)
+            end
+            for dst in old_candidates
+                src == dst && continue
+                should_consider_pair(sampling_policy, rng) || continue
+                updates += _connect_pair!(graph, data, distance, src, dst)
+            end
+        end
+    end
+    return updates
+end
+
+# Threaded local-join for one NN-Descent iteration. Per-thread RNGs and scratch
+# buffers; per-node ReentrantLocks protect heap mutations. `:static` schedule
+# pins iterations to threads so threadid()-indexed buffers are safe.
+function _local_join_threaded!(
+    graph::Vector{NNDescentNeighborNode{T}}, data, distance,
+    sampling_policy, max_candidate_neighbors,
+    r_new, r_old, new_scratches, old_scratches, thread_rngs, locks,
+) where {T}
+    updates_atomic = Threads.Atomic{Int}(0)
+    Threads.@threads :static for node_idx in 1:length(graph)
+        tid = Threads.threadid()
+        new_scratch = new_scratches[tid]
+        old_scratch = old_scratches[tid]
+        trng = thread_rngs[tid]
+
+        @inbounds begin
+            node = graph[node_idx]
+            (isempty(node.new_neighbors) && isempty(r_new[node_idx])) && continue
+            _sample_neighbor_ids_with_reverse!(
+                new_scratch, node.new_neighbors, r_new[node_idx],
+                max_candidate_neighbors, trng)
+            isempty(new_scratch) && continue
+            new_candidates = new_scratch
+            _sample_neighbor_ids_with_reverse!(
+                old_scratch, node.old_neighbors, r_old[node_idx],
+                max_candidate_neighbors, trng)
+            old_candidates = old_scratch
+
+            local_updates = 0
+            for new_idx in 1:length(new_candidates)
+                src = new_candidates[new_idx]
+                for inner_idx in (new_idx + 1):length(new_candidates)
+                    dst = new_candidates[inner_idx]
+                    should_consider_pair(sampling_policy, trng) || continue
+                    local_updates += _connect_pair_locked!(
+                        graph, data, distance, src, dst, locks)
+                end
+                for dst in old_candidates
+                    src == dst && continue
+                    should_consider_pair(sampling_policy, trng) || continue
+                    local_updates += _connect_pair_locked!(
+                        graph, data, distance, src, dst, locks)
+                end
+            end
+            Threads.atomic_add!(updates_atomic, local_updates)
+        end
+    end
+    return updates_atomic[]
+end
+
 function _run_nndescent!(
     graph::Vector{NNDescentNeighborNode{T}},
     data::AbstractMatrix,
@@ -191,67 +288,52 @@ function _run_nndescent!(
     convergence_threshold::Float64,
     rng::AbstractRNG,
     max_candidate_neighbors::Int,
+    threaded::Bool,
 ) where {T}
     n = length(graph)
     total_edges = n * k  # Total edges in graph (used to compute improvement ratio)
     # Reverse-neighbor buffers reused across iterations; refilled in place from
-    # the current forward graph at the top of each iteration. Sample scratch
-    # buffers similarly avoid per-call allocation in the local-join hot path.
-    # Hint reverse-buffer capacity at 2k. Expected steady-state reverse degree
-    # equals forward degree k; doubling absorbs skew (popular nodes accumulate
-    # more reverse edges) without paying for the absolute worst case. Hot-path
-    # `_growend!` events were a meaningful share of the profile pre-fix.
+    # the current forward graph at the top of each iteration. Hint capacity at
+    # 2k: expected steady-state reverse degree equals forward degree k, doubled
+    # to absorb skew (popular nodes accumulate more reverse edges).
     r_new, r_old = _allocate_reverse_buffers(n, 2k)
-    new_scratch = Int[]
-    sizehint!(new_scratch, max_candidate_neighbors)
-    old_scratch = Int[]
-    sizehint!(old_scratch, max_candidate_neighbors)
+
+    if threaded
+        # Per-thread state for the parallel local-join. `maxthreadid()` (not
+        # `nthreads()`) is the upper bound on any threadid we might see —
+        # accounts for Julia's interactive thread pool, which counts against
+        # threadid but not against nthreads() of the :default pool.
+        nthreads_actual = Threads.maxthreadid()
+        new_scratches = [Int[] for _ in 1:nthreads_actual]
+        old_scratches = [Int[] for _ in 1:nthreads_actual]
+        for s in new_scratches; sizehint!(s, max_candidate_neighbors); end
+        for s in old_scratches; sizehint!(s, max_candidate_neighbors); end
+        thread_rngs = [copy(rng) for _ in 1:nthreads_actual]
+        # Reseed each thread RNG so streams diverge; otherwise all threads share
+        # the parent's state and produce identical samples.
+        for trng in thread_rngs; Random.seed!(trng, rand(rng, UInt64)); end
+        locks = [ReentrantLock() for _ in 1:n]
+    else
+        # Serial path needs only one set of scratch buffers and the parent RNG.
+        new_scratch = Int[]; sizehint!(new_scratch, max_candidate_neighbors)
+        old_scratch = Int[]; sizehint!(old_scratch, max_candidate_neighbors)
+    end
 
     for iteration in 1:max_iterations
-        updates = 0  # Count of successful neighbor updates this iteration
-
         # Refill transient reverse-neighbor lists for this iteration. The
         # canonical local-join uses B[v] ∪ sample(R[v]) for both new and old
         # forward sets; without R, descent is forward-only and converges to
         # lower graph quality (Dong, Charikar, Li 2011).
         _refill_reverse_neighbors!(r_new, r_old, graph)
 
-        @inbounds for node_idx in 1:n
-            node = graph[node_idx]
-            isempty(node.new_neighbors) && isempty(r_new[node_idx]) && continue
-
-            # Sample candidates for pairing (bounded to prevent memory
-            # explosion). new_scratch and old_scratch are reused across the
-            # inner loop; both are valid for the duration of this node's
-            # pairing block since neither is mutated by _connect_pair!.
-            _sample_neighbor_ids_with_reverse!(
-                new_scratch, node.new_neighbors, r_new[node_idx],
-                max_candidate_neighbors, rng)
-            isempty(new_scratch) && continue
-            new_candidates = new_scratch
-            _sample_neighbor_ids_with_reverse!(
-                old_scratch, node.old_neighbors, r_old[node_idx],
-                max_candidate_neighbors, rng)
-            old_candidates = old_scratch
-
-            # NN-Descent core: evaluate all pairs of (new, new) and (new, old) candidates
-            # This local join operation discovers transitive neighbors efficiently
-
-            # Pair each new neighbor with other new neighbors (avoid self-pairs)
-            for new_idx in 1:length(new_candidates)
-                src = new_candidates[new_idx]
-                for inner_idx in (new_idx + 1):length(new_candidates)
-                    dst = new_candidates[inner_idx]
-                    should_consider_pair(sampling_policy, rng) || continue
-                    updates += _connect_pair!(graph, data, distance, src, dst)
-                end
-                # Pair new neighbors with old neighbors
-                for dst in old_candidates
-                    src == dst && continue
-                    should_consider_pair(sampling_policy, rng) || continue
-                    updates += _connect_pair!(graph, data, distance, src, dst)
-                end
-            end
+        updates = if threaded
+            _local_join_threaded!(
+                graph, data, distance, sampling_policy, max_candidate_neighbors,
+                r_new, r_old, new_scratches, old_scratches, thread_rngs, locks)
+        else
+            _local_join_serial!(
+                graph, data, distance, sampling_policy, max_candidate_neighbors,
+                r_new, r_old, new_scratch, old_scratch, rng)
         end
 
         # Apply symmetry policy after each iteration if requested
@@ -470,6 +552,35 @@ function _connect_pair!(
     inserted = 0
     inserted += _insert_neighbor!(graph[a], b, dist)
     inserted += _insert_neighbor!(graph[b], a, dist)
+    return inserted
+end
+
+# Parallel variant: per-node ReentrantLocks protect mutations of
+# graph[a].new_neighbors and graph[b].new_neighbors. Acquired one at a time
+# (not nested), so no deadlock-avoidance ordering needed.
+function _connect_pair_locked!(
+    graph::Vector{NNDescentNeighborNode{T}},
+    data::AbstractMatrix,
+    distance,
+    a::Int,
+    b::Int,
+    locks::Vector{ReentrantLock},
+) where {T}
+    a == b && return 0
+    dist = distance(view(data, :, a), view(data, :, b))
+    inserted = 0
+    lock(locks[a])
+    try
+        inserted += _insert_neighbor!(graph[a], b, dist)
+    finally
+        unlock(locks[a])
+    end
+    lock(locks[b])
+    try
+        inserted += _insert_neighbor!(graph[b], a, dist)
+    finally
+        unlock(locks[b])
+    end
     return inserted
 end
 

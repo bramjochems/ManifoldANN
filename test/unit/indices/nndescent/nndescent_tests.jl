@@ -74,6 +74,9 @@ end
 # build so any drop in graph quality from those refactors will surface.
 
 @testset "NN-Descent build is reproducible under fixed seed" begin
+    # Threaded builds intentionally give up bitwise determinism (thread
+    # interleaving affects insertion order); reproducibility requires
+    # threaded=false. Same contract as PyNNDescent's n_jobs=1.
     data = randn(Random.MersenneTwister(42), Float32, 8, 200)
     function build()
         return build_index(
@@ -85,6 +88,7 @@ end
             sampling_policy = :uniform,
             rng = Random.MersenneTwister(0xC0FFEE),
             distance = default_squared_distance,
+            threaded = false,
         )
     end
     a = build()
