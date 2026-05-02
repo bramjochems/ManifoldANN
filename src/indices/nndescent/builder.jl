@@ -14,7 +14,11 @@ callers must still pass `data` when querying. Keywords:
 - `apply_symmetry_continuously`: If true, apply symmetry after each iteration; if false, apply only at end (default false)
 - `rng`: RNG used for initialization and sampling
 - `distance`: Distance function (defaults to `default_squared_distance`)
-- `max_candidate_neighbors`: Maximum number of neighbor IDs per node considered each iteration (default 64)
+- `pruning_degree_multiplier`: Per-iteration candidate set per node is capped at
+  `ceil(pruning_degree_multiplier × k)` (default 1.5, matches PyNNDescent).
+  Larger values increase recall at quadratic build cost.
+- `max_candidate_neighbors`: Explicit override for the per-iteration candidate
+  cap. If `nothing` (default), derived from `pruning_degree_multiplier × k`.
 """
 function build_index(
     ::Type{NNDescentIndex},
@@ -27,7 +31,8 @@ function build_index(
     apply_symmetry_continuously::Bool = false,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_squared_distance,
-    max_candidate_neighbors::Int = NNDESCENT_DEFAULT_MAX_CANDIDATE_NEIGHBORS,
+    pruning_degree_multiplier::Real = NNDESCENT_DEFAULT_PRUNING_DEGREE_MULTIPLIER,
+    max_candidate_neighbors::Union{Int,Nothing} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -39,8 +44,17 @@ function build_index(
         throw(ArgumentError("max_iterations must be at least 1"))
     convergence_threshold >= 0 ||
         throw(ArgumentError("convergence_threshold must be non-negative"))
-    max_candidate_neighbors > 0 ||
-        throw(ArgumentError("max_candidate_neighbors must be positive"))
+    pruning_degree_multiplier > 0 ||
+        throw(ArgumentError("pruning_degree_multiplier must be positive"))
+
+    # Resolve the candidate cap: explicit override wins, otherwise derive from
+    # pruning_degree_multiplier × k. Always at least k so a node can sample its
+    # full forward neighborhood.
+    resolved_cap = max_candidate_neighbors === nothing ?
+        max(k, ceil(Int, pruning_degree_multiplier * k)) :
+        max_candidate_neighbors
+    resolved_cap > 0 ||
+        throw(ArgumentError("resolved candidate cap must be positive"))
 
     resolved_sampling_policy = _resolve_sampling_policy(sampling_policy)
     resolved_symmetry_policy = _resolve_symmetry_policy(symmetry_policy)
@@ -72,7 +86,7 @@ function build_index(
         max_iterations,
         convergence_threshold,
         rng,
-        max_candidate_neighbors,
+        resolved_cap,
     )
 
     adjacency = _finalize_neighbors(working_graph, k)
@@ -180,18 +194,39 @@ function _run_nndescent!(
 ) where {T}
     n = length(graph)
     total_edges = n * k  # Total edges in graph (used to compute improvement ratio)
+    # Reverse-neighbor buffers reused across iterations; refilled in place from
+    # the current forward graph at the top of each iteration. Sample scratch
+    # buffers similarly avoid per-call allocation in the local-join hot path.
+    r_new, r_old = _allocate_reverse_buffers(n)
+    new_scratch = Int[]
+    old_scratch = Int[]
+
     for iteration in 1:max_iterations
         updates = 0  # Count of successful neighbor updates this iteration
+
+        # Refill transient reverse-neighbor lists for this iteration. The
+        # canonical local-join uses B[v] ∪ sample(R[v]) for both new and old
+        # forward sets; without R, descent is forward-only and converges to
+        # lower graph quality (Dong, Charikar, Li 2011).
+        _refill_reverse_neighbors!(r_new, r_old, graph)
+
         @inbounds for node_idx in 1:n
             node = graph[node_idx]
-            isempty(node.new_neighbors) && continue
+            isempty(node.new_neighbors) && isempty(r_new[node_idx]) && continue
 
-            # Sample candidates for pairing (bounded to prevent memory explosion)
-            new_candidates =
-                _sample_neighbor_ids(node.new_neighbors, max_candidate_neighbors, rng)
-            isempty(new_candidates) && continue
-            old_candidates =
-                _sample_neighbor_ids(node.old_neighbors, max_candidate_neighbors, rng)
+            # Sample candidates for pairing (bounded to prevent memory
+            # explosion). new_scratch and old_scratch are reused across the
+            # inner loop; both are valid for the duration of this node's
+            # pairing block since neither is mutated by _connect_pair!.
+            _sample_neighbor_ids_with_reverse!(
+                new_scratch, node.new_neighbors, r_new[node_idx],
+                max_candidate_neighbors, rng)
+            isempty(new_scratch) && continue
+            new_candidates = new_scratch
+            _sample_neighbor_ids_with_reverse!(
+                old_scratch, node.old_neighbors, r_old[node_idx],
+                max_candidate_neighbors, rng)
+            old_candidates = old_scratch
 
             # NN-Descent core: evaluate all pairs of (new, new) and (new, old) candidates
             # This local join operation discovers transitive neighbors efficiently
@@ -513,4 +548,66 @@ function _sample_neighbor_ids(
     shuffle!(rng, collected)
     resize!(collected, limit)
     return collected
+end
+
+# Merged sample of forward neighbors (heap) and reverse neighbors (id vector).
+# Implements `B[v] ∪ sample(R[v])` from Dong, Charikar, Li 2011: the canonical
+# local-join sample includes both forward and reverse edges. Without reverse
+# edges, descent is forward-only and converges to lower-quality graphs.
+# Dedup via sort+unique on the merged vector (cheap at typical merged size of
+# 15-50 ids; avoids allocating a Set{Int} per call in the hot path). The
+# `scratch` buffer is reused across calls within an iteration.
+function _sample_neighbor_ids_with_reverse!(
+    scratch::Vector{Int},
+    heap::BoundedMaxHeap{T},
+    reverse_ids::Vector{Int},
+    limit::Int,
+    rng::AbstractRNG,
+) where {T}
+    empty!(scratch)
+    limit <= 0 && return scratch
+    @inbounds for nb in heap
+        push!(scratch, nb.id)
+    end
+    append!(scratch, reverse_ids)
+    isempty(scratch) && return scratch
+    sort!(scratch)
+    unique!(scratch)
+    len = length(scratch)
+    len <= limit && return scratch
+    shuffle!(rng, scratch)
+    resize!(scratch, limit)
+    return scratch
+end
+
+# Allocate reverse-neighbor buffers once for the full descent. Each iteration
+# clears and refills these vectors, avoiding O(n) Vector{Int} allocations per
+# iteration.
+function _allocate_reverse_buffers(n::Int)
+    r_new = [Int[] for _ in 1:n]
+    r_old = [Int[] for _ in 1:n]
+    return r_new, r_old
+end
+
+# Refill reverse-neighbor lists from the current forward graph. R_new[v] =
+# nodes u such that v ∈ new_neighbors(u); R_old similarly. Linear pass over
+# the graph; called once per iteration after the forward graph changes.
+function _refill_reverse_neighbors!(
+    r_new::Vector{Vector{Int}},
+    r_old::Vector{Vector{Int}},
+    graph::Vector{NNDescentNeighborNode{T}},
+) where {T}
+    @inbounds for v in eachindex(r_new)
+        empty!(r_new[v])
+        empty!(r_old[v])
+    end
+    @inbounds for u in eachindex(graph)
+        for nb in graph[u].new_neighbors
+            push!(r_new[nb.id], u)
+        end
+        for nb in graph[u].old_neighbors
+            push!(r_old[nb.id], u)
+        end
+    end
+    return nothing
 end

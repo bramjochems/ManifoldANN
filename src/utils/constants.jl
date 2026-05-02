@@ -75,15 +75,18 @@ convergence quality with computational cost.
 const NNDESCENT_DEFAULT_CONVERGENCE_THRESHOLD = 1e-3
 
 """
-Default maximum candidate neighbors per NN-Descent iteration.
+Default pruning-degree multiplier for NN-Descent's local-join sampling.
 
-Limits the number of neighbors considered each iteration to balance recall
-and memory/speed. Value of 64 works well for typical datasets.
+Per-iteration candidate set per node is sampled from `B[v] ∪ R[v]` (forward
+∪ reverse neighbors) and capped at `ceil(pruning_degree_multiplier × k)`.
+PyNNDescent uses 1.5 as its default; this gives a good balance between
+recall (the larger sample lets reverse-neighbor sampling discover better
+edges) and build cost (the local-join inner loop is O(|sample|²) per node).
 
-Higher values (128+) may improve recall on high-dimensional data but increase
-memory usage and slow down convergence.
+Higher values (2.0-3.0) improve recall further at the cost of substantially
+slower build (the cost is roughly quadratic in the multiplier).
 """
-const NNDESCENT_DEFAULT_MAX_CANDIDATE_NEIGHBORS = 64
+const NNDESCENT_DEFAULT_PRUNING_DEGREE_MULTIPLIER = 1.5
 
 # LSH Index Defaults
 # ==================
