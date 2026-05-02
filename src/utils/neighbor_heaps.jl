@@ -61,7 +61,12 @@ struct BoundedMaxHeap{T<:AbstractFloat}
 
     function BoundedMaxHeap{T}(capacity::Int) where {T<:AbstractFloat}
         capacity > 0 || throw(ArgumentError("capacity must be positive"))
-        return new{T}(Neighbor{T}[], capacity)
+        data = Neighbor{T}[]
+        # Pre-size the underlying buffer to capacity so steady-state push! never
+        # triggers _growend!/array_new_memory. Hot path in NN-Descent
+        # _insert_neighbor!: profile showed Vector growth dominating self time.
+        sizehint!(data, capacity)
+        return new{T}(data, capacity)
     end
 end
 

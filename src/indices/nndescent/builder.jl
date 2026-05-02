@@ -197,9 +197,15 @@ function _run_nndescent!(
     # Reverse-neighbor buffers reused across iterations; refilled in place from
     # the current forward graph at the top of each iteration. Sample scratch
     # buffers similarly avoid per-call allocation in the local-join hot path.
-    r_new, r_old = _allocate_reverse_buffers(n)
+    # Hint reverse-buffer capacity at 2k. Expected steady-state reverse degree
+    # equals forward degree k; doubling absorbs skew (popular nodes accumulate
+    # more reverse edges) without paying for the absolute worst case. Hot-path
+    # `_growend!` events were a meaningful share of the profile pre-fix.
+    r_new, r_old = _allocate_reverse_buffers(n, 2k)
     new_scratch = Int[]
+    sizehint!(new_scratch, max_candidate_neighbors)
     old_scratch = Int[]
+    sizehint!(old_scratch, max_candidate_neighbors)
 
     for iteration in 1:max_iterations
         updates = 0  # Count of successful neighbor updates this iteration
@@ -583,9 +589,15 @@ end
 # Allocate reverse-neighbor buffers once for the full descent. Each iteration
 # clears and refills these vectors, avoiding O(n) Vector{Int} allocations per
 # iteration.
-function _allocate_reverse_buffers(n::Int)
+function _allocate_reverse_buffers(n::Int, hint::Int = 0)
     r_new = [Int[] for _ in 1:n]
     r_old = [Int[] for _ in 1:n]
+    if hint > 0
+        for v in 1:n
+            sizehint!(r_new[v], hint)
+            sizehint!(r_old[v], hint)
+        end
+    end
     return r_new, r_old
 end
 
