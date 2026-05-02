@@ -32,3 +32,29 @@ Examples:
 - `docs/examples/graphs/01-build-knn-graph.jl`: brute-force baseline.
 - `docs/examples/graphs/02-lsh-knn-graph.jl`: approximate graph via LSH.
 - `docs/examples/graphs/03-kdtree-knn-graph.jl`: exact graph using a KD-tree.
+
+## Performance: threading and BLAS
+
+`build_weighted_graph` parallelises per-node geometry fitting across Julia
+threads when `tangent_sharing=NoSharing()` (the default). To benefit, start
+Julia with `-t auto` or `JULIA_NUM_THREADS=N`.
+
+If you see no speedup at higher ambient dimensions (d ≥ 128), suspect
+**BLAS thread oversubscription**: by default OpenBLAS uses up to 8 threads
+per call, which contend with Julia's outer threads on the small symmetric
+eigenproblems used by local PCA. Setting BLAS to a single thread typically
+helps:
+
+```julia
+using LinearAlgebra
+BLAS.set_num_threads(1)
+```
+
+This is a session-level setting; the package does not change it for you.
+Measured impact on a 16-logical-core box at d=128, n=5000, k=15: build
+time 2082 ms with default BLAS=8 → 1464 ms with BLAS=1 (1.4× speedup).
+
+`tangent_sharing=ShareSimilarTangents(...)` runs serially by design — each
+node's decision to share or fit fresh depends on what was decided for
+earlier nodes, so threading would either lose the sharing structure or
+produce schedule-dependent output.

@@ -255,7 +255,9 @@ function _fit_geometries(::NoSharing, method::AbstractLocalGeometryMethod,
     geometries = Vector{typeof(g1)}(undef, n)
     geometries[1] = g1
 
-    for i in 2:n
+    # Each iteration writes a different slot and reads only immutable inputs
+    # (data, graph, method); safe to parallelise over nodes.
+    Threads.@threads for i in 2:n
         neighbor_indices = graph[i]
         # Pass graph for ExpandingNeighborhood strategies that need to walk neighbor shells
         geometries[i] = fit_geometry(method, data, i, neighbor_indices; graph=graph)
@@ -510,7 +512,9 @@ function _fit_geometries_with_candidates(::NoSharing, method::AbstractLocalGeome
     geometries = Vector{typeof(g1)}(undef, n)
     geometries[1] = g1
 
-    for i in 2:n
+    # Each iteration writes a different slot; index queries inside _candidates
+    # are read-only, geometry fits are independent. Safe to parallelise.
+    Threads.@threads for i in 2:n
         # Pass graph for expanding strategies
         geometries[i] = fit_geometry(method, data, i, _candidates(i); graph=graph)
     end
