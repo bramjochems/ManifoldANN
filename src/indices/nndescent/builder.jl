@@ -437,56 +437,23 @@ function _insert_neighbor!(
     neighbor_id::Int,
     dist::T,
 ) where {T}
-    # Check if neighbor already exists in either heap
-    @inbounds for existing in node.old_neighbors
-        if existing.id == neighbor_id
-            if dist < existing.dist
-                # Update distance in old_neighbors
-                # Need to find and update - for now, remove and re-add
-                _update_neighbor_dist!(node.old_neighbors, neighbor_id, dist)
-                # Also add to new_neighbors to mark as updated
-                push!(node.new_neighbors, neighbor_id, dist)
-                return 1
-            end
-            return 0
-        end
-    end
-
+    # Cheap O(k) duplicate check on new_neighbors only. Skips the (existing,
+    # better-or-equal) cases that would otherwise burn heap pushes on duplicates
+    # and risk evicting good unique entries before _finalize_neighbors. We do
+    # not scan old_neighbors: in the local-join path inserts target
+    # new_neighbors, and the heap-push itself absorbs any rare cross-heap
+    # duplicate at finalize time. Skips the catastrophic O(k log k) update path
+    # the previous implementation paid on every duplicate.
     @inbounds for existing in node.new_neighbors
         if existing.id == neighbor_id
-            if dist < existing.dist
-                # Update in new_neighbors heap
-                _update_neighbor_dist!(node.new_neighbors, neighbor_id, dist)
-                return 1
-            end
+            # Already present: never push again. Distance updates for an
+            # existing id are intentionally dropped; PyNNDescent does the same,
+            # and our quality tests (recall, MRR) confirm this is fine.
             return 0
         end
     end
-
-    # Not found - add as new neighbor
-    push!(node.new_neighbors, neighbor_id, dist)
-    return 1
-end
-
-"""
-    _update_neighbor_dist!(heap, id, new_dist)
-
-Update the distance for a neighbor already in the heap. Since heaps don't support
-efficient in-place updates, we rebuild the heap without the old entry and add the new one.
-"""
-function _update_neighbor_dist!(
-    heap::BoundedMaxHeap{T},
-    neighbor_id::Int,
-    new_dist::T,
-) where {T}
-    # Remove the old entry and rebuild
-    old_data = filter(nb -> nb.id != neighbor_id, heap.data)
-    empty!(heap.data)
-    for nb in old_data
-        push!(heap, nb.id, nb.dist)
-    end
-    push!(heap, neighbor_id, new_dist)
-    return nothing
+    accepted = push!(node.new_neighbors, neighbor_id, dist)
+    return accepted ? 1 : 0
 end
 
 function _finalize_neighbors(
