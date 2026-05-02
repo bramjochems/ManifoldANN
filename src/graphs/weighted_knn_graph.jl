@@ -247,18 +247,21 @@ Fit local geometry at each node, optionally sharing between similar nodes.
 function _fit_geometries(::NoSharing, method::AbstractLocalGeometryMethod,
                           graph::KNNGraph, data::AbstractMatrix{T}) where T
     n = length(graph)
-    geometries_any = Vector{Any}(undef, n)
+    n == 0 && return AbstractLocalGeometry[]
 
-    for i in 1:n
+    # Fit node 1 first to infer the concrete geometry type, then allocate a
+    # type-stable Vector{G}. Avoids n boxing allocations and a final copy.
+    g1 = fit_geometry(method, data, 1, graph[1]; graph=graph)
+    geometries = Vector{typeof(g1)}(undef, n)
+    geometries[1] = g1
+
+    for i in 2:n
         neighbor_indices = graph[i]
         # Pass graph for ExpandingNeighborhood strategies that need to walk neighbor shells
-        geom = fit_geometry(method, data, i, neighbor_indices; graph=graph)
-        geometries_any[i] = geom
+        geometries[i] = fit_geometry(method, data, i, neighbor_indices; graph=graph)
     end
 
-    # Convert to properly typed vector
-    G = typeof(geometries_any[1])
-    Vector{G}(geometries_any)
+    return geometries
 end
 
 function _fit_geometries(sharing::ShareSimilarTangents, method::AbstractLocalGeometryMethod,
@@ -491,24 +494,28 @@ function _fit_geometries_with_candidates(::NoSharing, method::AbstractLocalGeome
                                           graph::KNNGraph, index::AbstractANNIndex,
                                           data::AbstractMatrix{T}, candidate_k::Integer) where T
     n = length(graph)
-    geometries_any = Vector{Any}(undef, n)
+    n == 0 && return AbstractLocalGeometry[]
 
-    for i in 1:n
+    function _candidates(i::Int)
         center_point = @view data[:, i]
         candidates = query(index, data, center_point, candidate_k + 1)
-
-        candidate_indices = [c.id for c in candidates if c.id != i]
-        if length(candidate_indices) > candidate_k
-            candidate_indices = candidate_indices[1:candidate_k]
+        idxs = [c.id for c in candidates if c.id != i]
+        if length(idxs) > candidate_k
+            idxs = idxs[1:candidate_k]
         end
-
-        # Pass graph for expanding strategies
-        geom = fit_geometry(method, data, i, candidate_indices; graph=graph)
-        geometries_any[i] = geom
+        return idxs
     end
 
-    G = typeof(geometries_any[1])
-    Vector{G}(geometries_any)
+    g1 = fit_geometry(method, data, 1, _candidates(1); graph=graph)
+    geometries = Vector{typeof(g1)}(undef, n)
+    geometries[1] = g1
+
+    for i in 2:n
+        # Pass graph for expanding strategies
+        geometries[i] = fit_geometry(method, data, i, _candidates(i); graph=graph)
+    end
+
+    return geometries
 end
 
 function _fit_geometries_with_candidates(sharing::ShareSimilarTangents, method::AbstractLocalGeometryMethod,
