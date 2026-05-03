@@ -53,6 +53,18 @@ function build_index(
     return LSHIndex{T, typeof(tables[1].hash_function)}(tables, d, n)
 end
 
+"""
+    query(index::LSHIndex, data, q, k; candidate_cap=nothing, rng=Random.default_rng())
+
+Query the LSH index for the `k` nearest neighbours of `q`. When `candidate_cap`
+is set and the candidate set exceeds it, a uniform sample is drawn using `rng`.
+
+Thread-safety: `rng` must be thread-local. The default `Random.default_rng()`
+is task-local on Julia ≥ 1.7 and safe under the threaded matrix-input batch
+`query`. A caller-supplied shared RNG (e.g. one `MersenneTwister` reused across
+queries) will race when used through the batch path; pass `nothing` or a
+freshly-constructed RNG per task in that case.
+"""
 function query(
     index::LSHIndex{T},
     data::AbstractMatrix{T},
@@ -69,8 +81,6 @@ function query(
     isempty(candidates) && return Neighbor{S}[]
 
     if candidate_cap !== nothing && length(candidates) > candidate_cap
-        # Uniform sample without replacement: shuffle then truncate. Avoids the
-        # low-ID bias of a sort+resize.
         shuffle!(rng, candidates)
         resize!(candidates, candidate_cap)
     end
