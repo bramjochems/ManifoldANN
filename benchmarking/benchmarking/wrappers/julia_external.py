@@ -155,6 +155,20 @@ class NearestNeighbors_KDTree(JuliaExternalWrapper):
         # Convert from Julia 1-indexed to Python 0-indexed
         return [int(idx) - 1 for idx in indices]
 
+    def query_batch(self, queries, n: int) -> List[List[int]]:
+        """Batch query via `NearestNeighbors.knn(tree, matrix, k)`.
+
+        `queries` is the Julia matrix returned by `prepare_queries`. NN.jl
+        runs the batch internally; one Julia↔Python boundary crossing.
+        """
+        if self._metric == "angular":
+            # prepare_queries didn't normalise; do it here. Overhead is in
+            # the timed region but symmetric with what `query()` does.
+            queries = jl.normalize_cols(queries)
+        idxs_jl, _dists_jl = jl.knn(self._index, queries, n)
+        # idxs_jl is a Julia Vector{Vector{Int64}}; iterate to Python.
+        return [[int(i) - 1 for i in row] for row in idxs_jl]
+
     def __str__(self) -> str:
         return f"NearestNeighbors-KDTree(leafsize={self.leafsize})"
 
@@ -237,6 +251,27 @@ class HNSW_jl(JuliaExternalWrapper):
 
         # Convert from Julia 1-indexed to Python 0-indexed
         return [int(idx) - 1 for idx in indices]
+
+    def prepare_queries(self, Q):
+        """HNSW.jl's batch knn_search wants a `Vector{<:AbstractVector}`."""
+        Q_fortran = np.asfortranarray(Q.T, dtype=np.float32)
+        matrix_jl = self._to_matrix(Q_fortran)
+        return jl.matrix_to_vector_of_vectors(matrix_jl)
+
+    def query_batch(self, queries, n: int) -> List[List[int]]:
+        """Batch query via `HNSW.knn_search(hnsw, vec_of_vecs, K)`.
+
+        `queries` is the Julia vector-of-vectors from `prepare_queries`.
+        HNSW.jl threads the batch internally; one Julia↔Python crossing for
+        the search call. Result is `Vector{Vector{UInt32}}` (one entry per
+        query). We pre-cast through Int32 to widen for Python and let
+        juliacall iterate the outer vector, converting each row in one go.
+        """
+        idxs_jl, _dists_jl = jl.knn_search(self._index, queries, n)
+        # idxs_jl is Vector{Vector{UInt32}}. Iterate the outer vector once
+        # in Python; each inner vector is converted to a numpy uint32 array
+        # zero-copy by juliacall, then we cast to int and decrement.
+        return [[int(i) - 1 for i in row] for row in idxs_jl]
 
     def __str__(self) -> str:
         return f"HNSW.jl(M={self.M}, ef_construction={self.ef_construction}, ef={self.ef})"
@@ -322,6 +357,19 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
         result_indices = indices[:, 0]
 
         return [int(idx) - 1 for idx in result_indices]
+
+    def query_batch(self, queries, n: int) -> List[List[int]]:
+        """Batch query via `NND.search(graph, matrix, k; max_candidates)`.
+
+        `queries` is the Julia matrix from `prepare_queries`. NND.jl runs
+        the batch internally; one Julia↔Python crossing. Result is a
+        `Matrix{Int}` of shape (K, n_queries).
+        """
+        idxs_jl, _dists_jl = jl.search(
+            self._graph, queries, n, max_candidates=self.max_candidates,
+        )
+        idxs_np = np.asarray(idxs_jl, dtype=np.int64)
+        return (idxs_np - 1).T.tolist()
 
     def __str__(self) -> str:
         return (f"NearestNeighborDescent.jl(k={self.k}, max_iterations={self.max_iterations}, "

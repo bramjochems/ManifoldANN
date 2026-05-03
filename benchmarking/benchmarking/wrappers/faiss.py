@@ -105,6 +105,23 @@ class FAISS_IVF(BaseANNWrapper):
         distances, indices = self.index.search(v, n)
         return indices[0].tolist()
 
+    def query_batch(self, queries: np.ndarray, n: int) -> List[List[int]]:
+        """Batch query — FAISS `index.search(matrix, k)` parallelises across
+        OMP threads (set via `omp_set_num_threads`). One C++↔Python crossing
+        for the whole batch.
+        """
+        # `prepare_queries` already returned float32 contiguous + (for
+        # angular) L2-normalised in `prepare_data`; do the same here for
+        # safety if the caller bypasses prepare.
+        if queries.dtype != np.float32 or not queries.flags.c_contiguous:
+            queries = np.ascontiguousarray(queries, dtype=np.float32)
+        if self._metric == "angular":
+            import faiss as _f
+            queries = queries.copy()
+            _f.normalize_L2(queries)
+        _distances, indices = self.index.search(queries, n)
+        return indices.tolist()
+
     def __str__(self) -> str:
         return f"FAISS-IVF(nlist={self.nlist}, nprobe={self.nprobe})"
 

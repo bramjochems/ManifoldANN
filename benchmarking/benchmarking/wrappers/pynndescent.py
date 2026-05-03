@@ -64,6 +64,12 @@ class PyNNDescent(BaseANNWrapper):
         indices, distances = self.index.query(v.reshape(1, -1), k=n)
         return indices[0].tolist()
 
+    def query_batch(self, queries: np.ndarray, n: int) -> List[List[int]]:
+        """Batch query — PyNNDescent's `query` accepts a `(n_queries, d)`
+        matrix natively and parallelises across `n_jobs` (numba)."""
+        indices, _distances = self.index.query(queries, k=n)
+        return indices.tolist()
+
     def __str__(self) -> str:
         return (
             f"PyNNDescent(n_neighbors={self.n_neighbors}, "

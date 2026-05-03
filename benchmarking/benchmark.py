@@ -416,6 +416,27 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             build_time = time.perf_counter() - build_start
             print(f"✓ Build time: {build_time:.2f}s")
 
+            # Warm the query path: every library's batch query (or per-query
+            # API) may JIT-compile or cache state at the actual batch size
+            # (numba JITs on first call; juliacall caches conversion paths
+            # at the size used). Without this the first timed call pays
+            # asymmetric setup cost. Run a small warmup batch on the same
+            # shape, going through `prepare_queries` so the warmup uses
+            # whatever object form the algo expects.
+            warm_n = min(8, test.shape[0])
+            try:
+                warm_prepared = algo.prepare_queries(test[:warm_n])
+                if hasattr(algo, "query_batch"):
+                    try:
+                        algo.query_batch(warm_prepared, k)
+                    except TypeError:
+                        algo.query_batch(test[:warm_n], k)
+                else:
+                    for i in range(warm_n):
+                        algo.query(test[i], k)
+            except Exception as exc:
+                print(f"⚠️  query warmup failed: {exc}")
+
             # Query
             print(f"Querying {n_test} test points...")
             query_start = time.perf_counter()

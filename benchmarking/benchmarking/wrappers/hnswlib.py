@@ -78,6 +78,17 @@ class HNSWlib(BaseANNWrapper):
         labels, distances = self.index.knn_query(v.reshape(1, -1), k=n)
         return labels[0].tolist()
 
+    def query_batch(self, queries: np.ndarray, n: int) -> List[List[int]]:
+        """Batch query — hnswlib parallelises internally across `set_num_threads`.
+
+        Crosses the C++↔Python boundary once for the whole batch instead of
+        n_queries individual `knn_query(reshape(1,-1))` round-trips. Matches
+        what ManifoldANN's batch path does (one Julia↔Python crossing with
+        internal parallelism) so the comparison is fair.
+        """
+        labels, _distances = self.index.knn_query(queries, k=n)
+        return labels.tolist()
+
     def __str__(self) -> str:
         return (
             f"HNSWlib(M={self.M}, ef_construction={self.ef_construction}, "
