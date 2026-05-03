@@ -211,8 +211,7 @@ function query(
     ef_search::Union{Nothing,Integer} = nothing,
     rng::AbstractRNG = Random.default_rng(),
 ) where {T<:LinearAlgebra.BlasFloat}
-    size(queries, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
+    validate_index_query_matrix(index, queries)
     S = float(T)
     n_queries = size(queries, 2)
     n_queries == 0 && return Vector{Vector{Neighbor{S}}}()
