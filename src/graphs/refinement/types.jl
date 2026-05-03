@@ -7,7 +7,6 @@ struct NodeNeighborhood{T<:AbstractFloat}
     node_id::Int
     neighbors::Vector{Int}
     probabilities::Vector{T}
-    geometry::Union{Nothing,Any}
     projected_coords::Union{Nothing,Matrix{T}}
     barycenter::Union{Nothing,Vector{T}}
 
@@ -15,13 +14,12 @@ struct NodeNeighborhood{T<:AbstractFloat}
         node_id::Int,
         neighbors::Vector{Int},
         probabilities::Vector{T};
-        geometry=nothing,
         projected_coords=nothing,
         barycenter=nothing
     ) where {T<:AbstractFloat}
         length(neighbors) == length(probabilities) || throw(ArgumentError("neighbors and probabilities must have same length"))
         !isempty(probabilities) && !(sum(probabilities) ≈ 1.0) && throw(ArgumentError("probabilities must sum to 1.0"))
-        new{T}(node_id, neighbors, probabilities, geometry, projected_coords, barycenter)
+        new{T}(node_id, neighbors, probabilities, projected_coords, barycenter)
     end
 end
 

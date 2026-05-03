@@ -13,7 +13,6 @@ using Random
         @test node_nb.node_id == 1
         @test node_nb.neighbors == neighbors
         @test node_nb.probabilities == probs
-        @test isnothing(node_nb.geometry)
 
         # Uniform neighborhood helper
         node_nb = uniform_neighborhood(1, neighbors, Float64)
