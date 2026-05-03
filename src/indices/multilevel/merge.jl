@@ -81,30 +81,44 @@ function merge_results(
     result_lists::Vector{Vector{Neighbor{T}}},
     k::Int
 ) where {T}
-    # Collect all neighbors from all result lists
-    all_neighbors = Neighbor{T}[]
-    for result_list in result_lists
-        append!(all_neighbors, result_list)
+    total = 0
+    @inbounds for r in result_lists
+        total += length(r)
     end
+    total == 0 && return Neighbor{T}[]
 
-    # Sort by distance
+    all_neighbors = Vector{Neighbor{T}}(undef, total)
+    pos = 1
+    @inbounds for r in result_lists
+        for n in r
+            all_neighbors[pos] = n
+            pos += 1
+        end
+    end
     sort!(all_neighbors, by = n -> n.dist)
 
-    # Remove duplicates (keep first occurrence, which has smallest distance)
-    seen_ids = Set{Int}()
-    unique_neighbors = Neighbor{T}[]
-
-    for neighbor in all_neighbors
-        if !(neighbor.id in seen_ids)
-            push!(unique_neighbors, neighbor)
-            push!(seen_ids, neighbor.id)
-
-            # Stop once we have k unique neighbors
-            if length(unique_neighbors) >= k
+    # Dedup by linear scan over the kept prefix. Replaces a Set{Int} for the
+    # typical case (k ≤ 32, total ≤ a few hundred) where hashset overhead
+    # exceeds the O(k²) scan. For IVF with disjoint partitions the dedup is
+    # a no-op; the check is kept so this function works for future
+    # overlapping-partition strategies.
+    cap = min(k, total)
+    unique_neighbors = Vector{Neighbor{T}}(undef, cap)
+    n_kept = 0
+    @inbounds for i in 1:total
+        cand = all_neighbors[i]
+        already = false
+        for j in 1:n_kept
+            if unique_neighbors[j].id == cand.id
+                already = true
                 break
             end
         end
+        already && continue
+        n_kept += 1
+        unique_neighbors[n_kept] = cand
+        n_kept >= cap && break
     end
-
+    resize!(unique_neighbors, n_kept)
     return unique_neighbors
 end

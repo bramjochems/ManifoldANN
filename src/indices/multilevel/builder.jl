@@ -136,25 +136,25 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
                 ),
             )
 
-        # Build the first child eagerly to determine the concrete container type
-        first_child =
-            _build_from_config(child_inputs[1], deepcopy(config.child_config))
-        ChildType = typeof(first_child)
-        children = Vector{ChildType}(undef, n_children)
-        children[1] = first_child
-
+        # Build all children in parallel into a Vector{Any} buffer, then
+        # narrow to Vector{ChildType} once we know the concrete return type.
+        # `_per_child_config` returns a fresh copy when needed (nested
+        # TransformedConfig — its `transform` field is fitted in-place) and
+        # the original otherwise (TerminalConfig — purely immutable).
+        children_buf = Vector{Any}(undef, n_children)
         stored_child_data = preserves ? nothing : Vector{typeof(child_inputs[1])}(undef, n_children)
-        if !preserves
-            stored_child_data[1] = child_inputs[1]
-        end
 
-        # Build remaining children in parallel
-        Threads.@threads for idx in 2:n_children
-            config_copy = deepcopy(config.child_config)
-            children[idx] = _build_from_config(child_inputs[idx], config_copy)
+        Threads.@threads for idx in 1:n_children
+            children_buf[idx] = _build_from_config(child_inputs[idx], _per_child_config(config.child_config))
             if !preserves
                 stored_child_data[idx] = child_inputs[idx]
             end
+        end
+
+        ChildType = typeof(children_buf[1])
+        children = Vector{ChildType}(undef, n_children)
+        @inbounds for idx in 1:n_children
+            children[idx] = children_buf[idx]
         end
 
         # Populate lookup after construction to avoid races
@@ -229,6 +229,12 @@ function _build_from_config(X::AbstractMatrix, config::TransformedConfig)
     # Recursive case: build another TransformedIndex
     return _build_transformed(X, config)
 end
+
+# TerminalConfig is fully immutable (params is a NamedTuple of immutables);
+# share across worker tasks. TransformedConfig holds an AbstractTransform
+# that is fitted in-place during build, so each task gets its own copy.
+@inline _per_child_config(c::TerminalConfig) = c
+@inline _per_child_config(c::TransformedConfig) = deepcopy(c)
 
 @inline function _materialize_partition(X::AbstractMatrix, ids::Vector{Int})
     # Materialize a contiguous Matrix rather than a non-strided SubArray.
