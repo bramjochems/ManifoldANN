@@ -239,17 +239,6 @@ explicitly handling the strided/non-strided fork inside
 
 ### New indices to consider
 
-- **`RPTreeForestIndex`.** Single-tree `RPTreeIndex` landed (caca889 +
-  6e9aa3a); the forest is the natural extension that actually competes
-  on recall. `build_rptree_forest` already exists in
-  `src/indices/nndescent/rptree_init.jl` (used by NN-Descent's init);
-  promoting it to a top-level index is ~50 LOC of wrapping struct +
-  `build_index` / `query` (union leaf-buckets across trees, brute-force
-  scan, top-k via heap). Threaded forest build is trivial — independent
-  trees, same pattern as the LSH build threading (cd1af49). Move the
-  forest builder to `src/utils/rptree.jl` alongside the per-tree
-  primitives when it lands.
-
 - **Alternative `AbstractRPSplitter` implementations.** The splitter
   trait landed in 6e9aa3a with `TwoPointSplitter` as the default. Worth
   exploring as experimentation surface (not thesis-load-bearing):
