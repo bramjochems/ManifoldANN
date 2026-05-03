@@ -1615,7 +1615,29 @@ all = [
     { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pot" },
+    { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+ann-complete = [
+    { name = "annoy" },
+    { name = "faiss-cpu", version = "1.8.0.post1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "faiss-cpu", version = "1.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "faiss-cpu", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "hnswlib" },
     { name = "pynndescent" },
+    { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+ann-modern = [
+    { name = "annoy" },
+    { name = "faiss-cpu", version = "1.8.0.post1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "faiss-cpu", version = "1.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "faiss-cpu", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "hnswlib" },
     { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
@@ -1651,6 +1673,16 @@ orc = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pot" },
 ]
+orc-only = [
+    { name = "graphriccicurvature" },
+    { name = "networkx", version = "3.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "networkx", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "pot" },
+]
 pynndescent = [
     { name = "pynndescent" },
 ]
@@ -1664,33 +1696,45 @@ scipy = [
 [package.metadata]
 requires-dist = [
     { name = "annoy", marker = "extra == 'all'", specifier = ">=1.17.0" },
+    { name = "annoy", marker = "extra == 'ann-complete'", specifier = ">=1.17.0" },
+    { name = "annoy", marker = "extra == 'ann-modern'", specifier = ">=1.17.0" },
     { name = "annoy", marker = "extra == 'annoy'", specifier = ">=1.17.0" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=22.0.0" },
     { name = "faiss-cpu", marker = "extra == 'all'", specifier = ">=1.7.0" },
+    { name = "faiss-cpu", marker = "extra == 'ann-complete'", specifier = ">=1.7.0" },
+    { name = "faiss-cpu", marker = "extra == 'ann-modern'", specifier = ">=1.7.0" },
     { name = "faiss-cpu", marker = "extra == 'faiss'", specifier = ">=1.7.0" },
     { name = "graphriccicurvature", marker = "extra == 'all'", specifier = ">=0.5.0" },
     { name = "graphriccicurvature", marker = "extra == 'orc'", specifier = ">=0.5.0" },
+    { name = "graphriccicurvature", marker = "extra == 'orc-only'", specifier = ">=0.5.0" },
     { name = "h5py", specifier = ">=3.0.0" },
     { name = "hnswlib", marker = "extra == 'all'", specifier = ">=0.7.0" },
+    { name = "hnswlib", marker = "extra == 'ann-complete'", specifier = ">=0.7.0" },
+    { name = "hnswlib", marker = "extra == 'ann-modern'", specifier = ">=0.7.0" },
     { name = "hnswlib", marker = "extra == 'hnswlib'", specifier = ">=0.7.0" },
     { name = "juliacall", specifier = ">=0.9.0" },
     { name = "matplotlib", specifier = ">=3.5.0" },
     { name = "networkx", marker = "extra == 'all'", specifier = ">=2.5.0" },
     { name = "networkx", marker = "extra == 'orc'", specifier = ">=2.5.0" },
+    { name = "networkx", marker = "extra == 'orc-only'", specifier = ">=2.5.0" },
     { name = "numpy", specifier = ">=1.20.0" },
     { name = "pandas", marker = "extra == 'all'", specifier = ">=1.5.0" },
     { name = "pandas", marker = "extra == 'orc'", specifier = ">=1.5.0" },
+    { name = "pandas", marker = "extra == 'orc-only'", specifier = ">=1.5.0" },
     { name = "pot", marker = "extra == 'all'", specifier = ">=0.9.0" },
     { name = "pot", marker = "extra == 'orc'", specifier = ">=0.9.0" },
-    { name = "pynndescent", marker = "extra == 'all'", specifier = ">=0.5.0" },
+    { name = "pot", marker = "extra == 'orc-only'", specifier = ">=0.9.0" },
+    { name = "pynndescent", marker = "extra == 'ann-complete'", specifier = ">=0.5.0" },
     { name = "pynndescent", marker = "extra == 'pynndescent'", specifier = ">=0.5.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scipy", marker = "extra == 'all'", specifier = ">=1.7.0" },
+    { name = "scipy", marker = "extra == 'ann-complete'", specifier = ">=1.7.0" },
+    { name = "scipy", marker = "extra == 'ann-modern'", specifier = ">=1.7.0" },
     { name = "scipy", marker = "extra == 'scipy'", specifier = ">=1.7.0" },
 ]
-provides-extras = ["annoy", "hnswlib", "faiss", "scipy", "pynndescent", "orc", "all", "dev"]
+provides-extras = ["annoy", "hnswlib", "faiss", "scipy", "pynndescent", "orc", "ann-modern", "ann-complete", "orc-only", "all", "dev"]
 
 [[package]]
 name = "matplotlib"
