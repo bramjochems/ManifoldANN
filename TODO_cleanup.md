@@ -64,29 +64,18 @@ something.
 
 ### HNSW
 
-- **Lock-free adjacency + visited-buffer pool (review ROI before
-  committing).** Two pieces that together would close most of the
-  remaining threading gap to hnswlib (estimated multi-thread build
-  3.96s → ~2.0s, multi-thread query 16k → ~30-40k QPS at SIFT-128
-  n=50k — these are old projections, re-measure baseline before
-  committing). Slab adjacency: replace `Vector{Vector{Int}}` with
-  `Matrix{Int}` + atomic degree counters, eliminate per-node
-  `ReentrantLock`. Visited pool: lift `BatchQueryScratch`-style buffers
-  from per-batch to index-lifetime ownership, atomic-stack pool.
-
-  **Goal/rationale:** the only remaining big lever for HNSW. Won't
-  reach hnswlib parity (C++ vs Julia constant factors cap us at ~1.4×
-  behind, not 1.0×) but closes most of the gap. Cost ~2-3 days.
-  Re-evaluate after thesis whether library publishability needs the
-  extra speed-up or whether "competitive but Julia-native" is
-  sufficient.
-
-- **Pool the `BestCandidatesHeap` backing buffer for build.** Per-call
-  heap allocation in `_search_layer` is the dominant remaining
-  single-threaded build alloc (~36 KB/call at ef_c=200). Same coupling
-  tradeoff as `visit_stamps` (build-only, single-threaded). Estimated
-  10-20% single-thread build speedup. Smaller win than the threaded
-  build work above.
+- **Pool the heap backing buffers in `_search_layer` (deferred).** The
+  pending `NeighborMinHeap` accumulates ~ef·M candidates per call (~50 KB
+  peak at ef_c=200) and reallocates as it grows; this is the dominant
+  remaining build alloc once the slab + visited-pool work landed. Profile
+  on n=20k d=128 attributes ~9% of total build time to `_growend!` on the
+  heap vector (samples in `array.jl:1131`/`1148`/`1289`), so an upper
+  bound on the win is ~10%. Skipped for now: closing it requires changing
+  `_search_layer`'s ownership model (it currently returns `state.best.data`
+  to the caller — pooling means an explicit copy or a documented
+  "valid-until-next-acquire" contract on the hot path). Worth revisiting
+  if we want to close the remaining ~1.3× gap to hnswlib at build time;
+  10% on a 1.3× gap is meaningful.
 
 ### NN-Descent
 
