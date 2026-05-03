@@ -39,12 +39,17 @@ function build_index(
     tables = Vector{LSHTable}(undef, n_tables)
     table_rngs = spawn_child_rngs(rng, n_tables)
 
+    # Default the hash element type to match the data eltype so hash_batch
+    # dispatches without a Float32/Float64 mismatch. Caller can override via
+    # hash_kwargs (e.g. `T=Float64` to force higher-precision projections).
+    factory_kwargs = haskey(hash_kwargs, :T) ? hash_kwargs : (; hash_kwargs..., T = T)
+
     # Threaded: each table is independent (own RNG, hash fn, Dict) and writes
     # only to its pre-allocated `tables[idx]` slot. Per-table seeds are derived
     # serially above so determinism is independent of thread scheduling.
     Threads.@threads for idx in 1:n_tables
         trng = table_rngs[idx]
-        hash_fn = hash_factory(d, hash_length; rng = trng, hash_kwargs...)
+        hash_fn = hash_factory(d, hash_length; rng = trng, factory_kwargs...)
         hashes = hash_batch(hash_fn, data)
         buckets = Dict{UInt64, Vector{Int}}()
         @inbounds for col in 1:n
