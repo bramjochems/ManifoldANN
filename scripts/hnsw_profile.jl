@@ -59,7 +59,7 @@ println("\n=== Micro: mid-graph state (n_built = $(N÷2)) ===")
 mid = MA.build_index(MA.HNSWIndex, @view(data[:, 1:N÷2]); M=M, ef_construction=EFC)
 println("  layers        = ", length(mid.layers))
 println("  max_layer     = ", mid.max_layer)
-deg0 = [length(mid.layers[1][i]) for i in 1:mid.n_points]
+deg0 = [mid.layers[1].degree[i] for i in 1:mid.n_points]
 @printf "  layer-0 deg   mean=%.1f  max=%d  p99=%d\n" (sum(deg0)/length(deg0)) maximum(deg0) sort(deg0)[max(1, end - end÷100)]
 
 # H1: per-call distance overhead. Time a single _greedy_descent + _search_layer
@@ -88,26 +88,40 @@ let
     @printf "  _search_layer ef=%d     : %.2f µs/call   alloc %.1f KB/call (200×)\n" EFC (t*1e6/200) ((a1-a0)/200/1024)
 end
 
-# H2: _prune_list! cost on a saturated neighbor list.
-println("\n=== H2: _prune_list! on a saturated layer-0 list ===")
+# H2: _prune_slot! cost on a saturated neighbor list.
+println("\n=== H2: _prune_slot! on a saturated layer-0 list ===")
 let
-    # find a node whose layer-0 list is at-capacity, copy it, append a synthetic
-    # extra id so the prune actually does work
-    saturated = findfirst(i -> length(mid.layers[1][i]) >= M, 1:mid.n_points)
+    # find a node whose layer-0 slab column is at-capacity, copy it into a
+    # synthetic 1-column HNSWLayer with one extra appended id so the prune
+    # actually does work each iteration.
+    layer0 = mid.layers[1]
+    saturated = findfirst(i -> layer0.degree[i] >= M, 1:mid.n_points)
     @assert saturated !== nothing
-    base_list = copy(mid.layers[1][saturated])
+    base_deg = layer0.degree[saturated]
+    base_ids = collect(MA.layer_neighbors(layer0, saturated))
+    # build a single-column synthetic layer reusing `mid`'s neighbor_policy
+    cap = base_deg + 1
+    function make_synth()
+        synth = MA.HNSWLayer(zeros(Int, cap, 1), zeros(Int, 1), cap)
+        for i in 1:base_deg
+            synth.neighbors[i, 1] = base_ids[i]
+        end
+        synth.neighbors[cap, 1] = N÷2 + 1
+        synth.degree[1] = cap
+        return synth
+    end
     # warm
-    let l = copy(base_list); push!(l, N÷2 + 1)
-        MA._prune_list!(mid, l, saturated, data, M)
+    let synth = make_synth()
+        MA._prune_slot!(mid, synth, 1, data, M)
     end
     GC.gc(); a0 = Base.gc_bytes()
     iters = 5_000
     t = @elapsed for _ in 1:iters
-        l = copy(base_list); push!(l, N÷2 + 1)
-        MA._prune_list!(mid, l, saturated, data, M)
+        synth = make_synth()
+        MA._prune_slot!(mid, synth, 1, data, M)
     end
     a1 = Base.gc_bytes()
-    @printf "  _prune_list! (M=%d, list=%d→%d) : %.2f µs/call   alloc %.2f KB/call\n" M (length(base_list)+1) M (t*1e6/iters) ((a1-a0)/iters/1024)
+    @printf "  _prune_slot! (M=%d, list=%d→%d) : %.2f µs/call   alloc %.2f KB/call\n" M cap M (t*1e6/iters) ((a1-a0)/iters/1024)
 end
 
 # H3: _search_layer alloc breakdown — how much is the final `sort(...)` copy?

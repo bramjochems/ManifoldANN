@@ -15,10 +15,11 @@ const _MA_HNSW = ManifoldANN
     @test length(a.layers) == length(b.layers)
     @test a.entry_point == b.entry_point
     @test a.max_layer == b.max_layer
+    @test a.n_points == b.n_points
     for li in eachindex(a.layers)
-        @test length(a.layers[li]) == length(b.layers[li])
-        for ni in eachindex(a.layers[li])
-            @test sort(a.layers[li][ni]) == sort(b.layers[li][ni])
+        for ni in 1:a.n_points
+            @test sort(collect(ManifoldANN.layer_neighbors(a.layers[li], ni))) ==
+                  sort(collect(ManifoldANN.layer_neighbors(b.layers[li], ni)))
         end
     end
 end
@@ -70,8 +71,9 @@ end
                         rng=MersenneTwister(1))
         # Find at least one node whose layer-0 neighbor set differs.
         any_diff = false
-        for ni in 1:length(a.layers[1])
-            if sort(a.layers[1][ni]) != sort(b.layers[1][ni])
+        for ni in 1:a.n_points
+            if sort(collect(ManifoldANN.layer_neighbors(a.layers[1], ni))) !=
+               sort(collect(ManifoldANN.layer_neighbors(b.layers[1], ni)))
                 any_diff = true; break
             end
         end
@@ -100,14 +102,14 @@ function _hnsw_check_invariants(idx, n::Int)
     @test 0 <= idx.max_layer < length(idx.layers)
     for li in eachindex(idx.layers)
         layer = idx.layers[li]
-        @test length(layer) == n
+        @test ManifoldANN.node_count(layer) >= n
         for ni in 1:n
-            adj = layer[ni]
+            adj = ManifoldANN.layer_neighbors(layer, ni)
             # All ids in range
             @test all(1 <= id <= n for id in adj)
             # No self-loops
             @test ni ∉ adj
-            # No duplicates (NeighborList uniqueness invariant)
+            # No duplicates (slab uniqueness invariant)
             @test allunique(adj)
         end
     end

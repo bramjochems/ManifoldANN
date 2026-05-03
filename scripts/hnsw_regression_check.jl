@@ -42,10 +42,12 @@ function graph_signature(idx)
     ctx = SHA2_256_CTX()
     update!(ctx, reinterpret(UInt8, [Int64(length(idx.layers))]))
     update!(ctx, reinterpret(UInt8, [Int64(idx.entry_point), Int64(idx.max_layer)]))
+    n = idx.n_points
     for (li, layer) in enumerate(idx.layers)
-        update!(ctx, reinterpret(UInt8, [Int64(li), Int64(length(layer))]))
-        for (ni, nbrs) in enumerate(layer)
-            sorted = sort(nbrs)
+        update!(ctx, reinterpret(UInt8, [Int64(li), Int64(n)]))
+        for ni in 1:n
+            nbrs = MA.layer_neighbors(layer, ni)
+            sorted = sort(collect(nbrs))
             update!(ctx, reinterpret(UInt8, [Int64(ni), Int64(length(sorted))]))
             isempty(sorted) || update!(ctx, reinterpret(UInt8, Int64.(sorted)))
         end

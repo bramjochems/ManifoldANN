@@ -46,8 +46,9 @@ function build_index(
         distance,
         UInt32[],
         UInt32(0),
-        ReentrantLock[],
+        Threads.SpinLock[],
         ReentrantLock(),
+        BatchScratchPool{T}(2 * Threads.nthreads()),
     )
 
     if threaded === nothing

@@ -49,40 +49,6 @@ function _acquire_build_visited!(index::HNSWIndex)
     return StampVisited(index.visit_stamps, gen)
 end
 
-"""
-    BatchQueryScratch{T}
-
-Per-worker scratch state for the BATCH query path. Reused across all queries
-that one worker processes, so its allocation cost amortises over many calls.
-
-Holds:
-- a generation-stamped visited buffer (sized to `n_points`)
-- backing `Vector{NeighborCandidate{T}}` for the `best` (max-)heap
-- backing `Vector{NeighborCandidate{T}}` for the `pending` (min-)heap
-
-Lifetime is owned by one task. Concurrent use from multiple threads on the
-same `BatchQueryScratch` is undefined behaviour.
-
-NOT used by the single-query API — that path allocates a `BitSetVisited`
-(small) plus fresh empty heap buffers, matching the pre-pooling allocation
-profile. The stamp buffer here is `n_points × 4 bytes`, which is wasteful
-for a one-shot query but cheap when amortised across hundreds of queries.
-"""
-mutable struct BatchQueryScratch{T<:AbstractFloat}
-    visit_stamps::Vector{UInt32}
-    visit_generation::UInt32
-    best_data::Vector{NeighborCandidate{T}}
-    pending_data::Vector{NeighborCandidate{T}}
-end
-
-function BatchQueryScratch{T}(n_points::Int, ef_capacity::Int) where {T<:AbstractFloat}
-    best  = Vector{NeighborCandidate{T}}()
-    pend  = Vector{NeighborCandidate{T}}()
-    sizehint!(best, ef_capacity)
-    sizehint!(pend, ef_capacity)
-    return BatchQueryScratch{T}(zeros(UInt32, n_points), UInt32(0), best, pend)
-end
-
 # Bump the visit generation; on UInt32 wrap, zero the stamp buffer.
 @inline function _bump_visit_generation!(scratch::BatchQueryScratch)
     g = scratch.visit_generation + UInt32(1)
@@ -244,22 +210,25 @@ function query(
     end
 
     workers = Vector{Task}(undef, nworkers)
+    pool = index.query_scratch_pool
     for w in 1:nworkers
         workers[w] = Threads.@spawn begin
-            # Per-task scratch — captured by closure, never indexed by
-            # Threads.threadid() (which can change across yield points in
-            # Julia 1.10+). Each task owns its scratch for life. The
-            # StampVisited generation buffer + the heap-data Vectors are
-            # reused across every query this worker processes; that's the
-            # whole point of the pool.
-            scratch = BatchQueryScratch{S}(index.n_points, ef)
-            for i in work
-                q = @view queries[:, i]
-                visited = _acquire_batch_visited!(scratch, index.n_points)
-                results[i] = _query_search(
-                    index, data, q, k, ef, visited,
-                    scratch.best_data, scratch.pending_data,
-                )
+            # Acquire a scratch from the index-lifetime pool. After the
+            # first call to query(::Matrix) the pool is full; subsequent
+            # calls hit the recycled buffers instead of allocating fresh
+            # stamp + heap arrays per worker per call.
+            scratch = acquire_scratch!(pool, index.n_points, ef)
+            try
+                for i in work
+                    q = @view queries[:, i]
+                    visited = _acquire_batch_visited!(scratch, index.n_points)
+                    results[i] = _query_search(
+                        index, data, q, k, ef, visited,
+                        scratch.best_data, scratch.pending_data,
+                    )
+                end
+            finally
+                release_scratch!(pool, scratch)
             end
         end
     end
@@ -358,10 +327,11 @@ end
 function _greedy_descent(index::HNSWIndex, layer::Int, entry_id::Int, q, data)
     current = entry_id
     current_dist = index.distance(@view(data[:, current]), q)
+    adj = index.layers[layer + 1]
     improved = true
     while improved
         improved = false
-        @inbounds for neighbor in index.layers[layer + 1][current]
+        @inbounds for neighbor in layer_neighbors(adj, current)
             dist = index.distance(@view(data[:, neighbor]), q)
             if dist < current_dist
                 current = neighbor
@@ -397,7 +367,7 @@ function _search_layer_pooled(
     push!(pending, entry)
     state = TraversalState{T}(pending, best_heap)
     _mark_visited!(visited, entry.id)
-    adjacency = index.layers[layer + 1]
+    adj = index.layers[layer + 1]
 
     while should_continue(policy, state)
         current = pop_pending!(policy, state)
@@ -405,7 +375,7 @@ function _search_layer_pooled(
         if current.dist > worst
             break
         end
-        @inbounds for neighbor in adjacency[current.id]
+        @inbounds for neighbor in layer_neighbors(adj, current.id)
             if _was_visited(visited, neighbor)
                 continue
             end
@@ -436,7 +406,7 @@ function _search_layer(
     policy = with_ef(index.traversal_policy, ef)
     state = initialize_state(policy, entry)
     _mark_visited!(visited, entry.id)
-    adjacency = index.layers[layer + 1]
+    adj = index.layers[layer + 1]
 
     while should_continue(policy, state)
         current = pop_pending!(policy, state)
@@ -444,7 +414,7 @@ function _search_layer(
         if current.dist > worst
             break
         end
-        @inbounds for neighbor in adjacency[current.id]
+        @inbounds for neighbor in layer_neighbors(adj, current.id)
             if _was_visited(visited, neighbor)
                 continue
             end
@@ -471,48 +441,74 @@ function _connect_new_node!(
     neighbors::Vector{NeighborCandidate{T}},
     data,
 ) where {T}
-    adjacency = index.layers[layer + 1]
+    adj = index.layers[layer + 1]
 
-    # Write neighbor ids into the pre-sized adjacency slot in place. It already
-    # has capacity max_degree+1 from _ensure_node_slots! / _ensure_layers!.
-    own_list = adjacency[node_id]
-    resize!(own_list, length(neighbors))
-    @inbounds for (i, n) in enumerate(neighbors)
-        own_list[i] = n.id
+    # Write the new node's adjacency into its pre-sized slab column.
+    @inbounds begin
+        for (i, n) in enumerate(neighbors)
+            adj.neighbors[i, node_id] = n.id
+        end
+        adj.degree[node_id] = length(neighbors)
     end
 
     # Update reverse edges.
+    limit = max_degree(index.neighbor_policy)
     for neighbor in neighbors
-        list_b = adjacency[neighbor.id]
-        push!(list_b, node_id)
-        _prune_list!(index, list_b, neighbor.id, data, max_degree(index.neighbor_policy))
+        _append_and_maybe_prune!(index, adj, neighbor.id, node_id, data, limit)
     end
 end
 
-function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
-    length(list) <= limit && return
+# Append `new_id` to node `center`'s adjacency in `layer`, then prune if the
+# resulting degree exceeds `limit`. Slab-aware: the slab column has capacity
+# `limit + 1`, so we always have room for the +1 before pruning.
+@inline function _append_and_maybe_prune!(
+    index::HNSWIndex,
+    adj::HNSWLayer,
+    center::Int,
+    new_id::Int,
+    data,
+    limit::Int,
+)
+    @inbounds begin
+        d = adj.degree[center] + 1
+        adj.neighbors[d, center] = new_id
+        adj.degree[center] = d
+    end
+    if @inbounds(adj.degree[center]) > limit
+        _prune_slot!(index, adj, center, data, limit)
+    end
+    return
+end
+
+# Prune the slab column at node `center` from current degree down to `limit`,
+# in place. Reads the live prefix into a temporary candidate vector, runs the
+# neighbor policy's selection, and writes the kept ids back into the slab
+# (overwriting from index 1) plus updates the degree counter.
+function _prune_slot!(index::HNSWIndex, adj::HNSWLayer, center::Int, data, limit::Int)
+    deg = @inbounds adj.degree[center]
+    deg <= limit && return
 
     center_vec = @view(data[:, center])
-
-    first_id = list[1]
+    first_id = @inbounds adj.neighbors[1, center]
     first_dist = index.distance(center_vec, @view(data[:, first_id]))
     TDist = typeof(first_dist)
-    candidates = Vector{NeighborCandidate{TDist}}(undef, length(list))
+    candidates = Vector{NeighborCandidate{TDist}}(undef, deg)
     candidates[1] = NeighborCandidate(first_id, first_dist)
-    @inbounds for i in 2:length(list)
-        id = list[i]
+    @inbounds for i in 2:deg
+        id = adj.neighbors[i, center]
         dist = index.distance(center_vec, @view(data[:, id]))
         candidates[i] = NeighborCandidate(id, dist)
     end
+    out_ids = @inbounds view(adj.neighbors, :, center)
     n_kept = _select_into!(
         index.neighbor_policy,
-        list,
+        out_ids,
         candidates,
         data,
         index.distance,
         limit,
     )
-    resize!(list, n_kept)
+    @inbounds adj.degree[center] = n_kept
     return
 end
 
@@ -527,7 +523,7 @@ end
 # NOT general-purpose interchangeable.
 function _select_into!(
     policy::HeuristicNeighborPolicy,
-    out_ids::Vector{Int},
+    out_ids::AbstractVector{Int},
     candidates::Vector{NeighborCandidate{T}},
     ::AbstractMatrix,
     ::Function,
@@ -546,7 +542,7 @@ end
 
 function _select_into!(
     policy::DiversifiedNeighborPolicy,
-    out_ids::Vector{Int},
+    out_ids::AbstractVector{Int},
     candidates::Vector{NeighborCandidate{T}},
     data::AbstractMatrix,
     distance_fn,
@@ -603,23 +599,33 @@ function _ensure_layers!(index::HNSWIndex, level::Int)
     required = level + 1
     cap = max_degree(index.neighbor_policy) + 1
     while length(index.layers) < required
-        new_layer = Vector{NeighborList}(undef, index.n_points)
-        @inbounds for i in 1:index.n_points
-            v = Int[]
-            sizehint!(v, cap)
-            new_layer[i] = v
-        end
-        push!(index.layers, new_layer)
+        push!(index.layers, HNSWLayer(index.n_points, cap))
     end
 end
 
 function _ensure_node_slots!(index::HNSWIndex, node_id::Int)
-    cap = max_degree(index.neighbor_policy) + 1
+    # Geometric growth on the slab capacity. Live count is tracked by
+    # `index.n_points`, NOT by `node_count(layer)` — the slab may have
+    # extra zero-degree columns past n_points. Iteration must respect
+    # n_points, not capacity. Tests and the regression-check do this
+    # explicitly. `layer_neighbors(layer, id)` is unaffected (it reads
+    # `degree[id]`, which is 0 for unused columns).
     for layer in index.layers
-        while length(layer) < node_id
-            v = Int[]
-            sizehint!(v, cap)
-            push!(layer, v)
+        n = node_count(layer)
+        if n < node_id
+            new_cols = max(node_id, 2 * n, 16)
+            new_neighbors = zeros(Int, layer.capacity, new_cols)
+            @inbounds for j in 1:n
+                for i in 1:layer.capacity
+                    new_neighbors[i, j] = layer.neighbors[i, j]
+                end
+            end
+            layer.neighbors = new_neighbors
+            new_degree = zeros(Int, new_cols)
+            @inbounds for j in 1:n
+                new_degree[j] = layer.degree[j]
+            end
+            layer.degree = new_degree
         end
     end
 end
@@ -646,103 +652,15 @@ end
 # slightly different graph than under serial insertion. Recall is preserved
 # in expectation (same contract as PyNNDescent's n_jobs>1 and hnswlib).
 
-# Lock-aware neighbor read: copy adjacency[id] into thread-local scratch under
-# the node's lock, return scratch. For threaded path only.
-@inline function _read_neighbors_threaded!(
-    scratch::Vector{Int},
-    adjacency::HNSWLayer,
-    id::Int,
-    lock::ReentrantLock,
-)
-    Base.lock(lock)
-    try
-        src = adjacency[id]
-        len = length(src)
-        resize!(scratch, len)
-        @inbounds for i in 1:len
-            scratch[i] = src[i]
-        end
-    finally
-        Base.unlock(lock)
-    end
-    return scratch
-end
-
-# Threaded variant of _greedy_descent: reads `adjacency[current]` under lock
-# into a thread-local scratch, then iterates the snapshot.
-function _greedy_descent_threaded(
-    index::HNSWIndex,
-    layer::Int,
-    entry_id::Int,
-    q,
-    data,
-    nbr_scratch::Vector{Int},
-)
-    current = entry_id
-    current_dist = index.distance(@view(data[:, current]), q)
-    adjacency = index.layers[layer + 1]
-    locks = index.node_locks
-    improved = true
-    while improved
-        improved = false
-        nbrs = _read_neighbors_threaded!(nbr_scratch, adjacency, current, locks[current])
-        @inbounds for neighbor in nbrs
-            dist = index.distance(@view(data[:, neighbor]), q)
-            if dist < current_dist
-                current = neighbor
-                current_dist = dist
-                improved = true
-            end
-        end
-    end
-    return NeighborCandidate(current, current_dist)
-end
-
-# Threaded variant of _search_layer: reads each node's neighbor list into
-# thread-local scratch under that node's lock before iterating.
-function _search_layer_threaded(
-    index::HNSWIndex,
-    layer::Int,
-    entry::NeighborCandidate{T},
-    q,
-    data,
-    ef::Int,
-    visited::StampVisited,
-    nbr_scratch::Vector{Int},
-) where {T}
-    policy = with_ef(index.traversal_policy, ef)
-    state = initialize_state(policy, entry)
-    _mark_visited!(visited, entry.id)
-    adjacency = index.layers[layer + 1]
-    locks = index.node_locks
-
-    while should_continue(policy, state)
-        current = pop_pending!(policy, state)
-        worst = worst_distance(policy, state)
-        if current.dist > worst
-            break
-        end
-        nbrs = _read_neighbors_threaded!(nbr_scratch, adjacency, current.id, locks[current.id])
-        @inbounds for neighbor in nbrs
-            if _was_visited(visited, neighbor)
-                continue
-            end
-            _mark_visited!(visited, neighbor)
-            dist = index.distance(@view(data[:, neighbor]), q)
-            if length(state.best) < policy.ef_search || dist < worst_distance(state.best)
-                maybe_push_candidate!(policy, state, NeighborCandidate(neighbor, dist))
-            end
-        end
-    end
-    sort!(state.best.data, alg = Base.Sort.MergeSort, by = c -> c.dist)
-    return state.best.data
-end
-
 # Threaded variant of _connect_new_node!:
-#   * Lock node_id's slot, write its own list, unlock.
-#   * For each neighbor: lock, push reverse edge, prune, unlock.
+#   * Lock node_id's slab column, write its own list, unlock.
+#   * For each neighbor: lock, append reverse edge, prune, unlock.
 # Locks are acquired one at a time (no two simultaneously) so deadlock is
-# impossible.
+# impossible. Reads in the build search path are LOCK-FREE — they just load
+# `adj.degree[id]` (acquire) and iterate the slab column. A racing prune
+# may shrink degree, but slab slots only ever hold valid neighbor ids
+# (writers never zero them), so a stale read processes a still-valid id and
+# `_was_visited` guards re-entry. See HNSWLayer docstring.
 function _connect_new_node_threaded!(
     index::HNSWIndex,
     layer::Int,
@@ -750,17 +668,18 @@ function _connect_new_node_threaded!(
     neighbors::Vector{NeighborCandidate{T}},
     data,
 ) where {T}
-    adjacency = index.layers[layer + 1]
+    adj = index.layers[layer + 1]
     locks = index.node_locks
 
     # Write the new node's adjacency under its own lock.
     own_lock = locks[node_id]
     Base.lock(own_lock)
     try
-        own_list = adjacency[node_id]
-        resize!(own_list, length(neighbors))
-        @inbounds for (i, n) in enumerate(neighbors)
-            own_list[i] = n.id
+        @inbounds begin
+            for (i, n) in enumerate(neighbors)
+                adj.neighbors[i, node_id] = n.id
+            end
+            adj.degree[node_id] = length(neighbors)
         end
     finally
         Base.unlock(own_lock)
@@ -768,13 +687,12 @@ function _connect_new_node_threaded!(
 
     # Update reverse edges. Each neighbor's lock acquired and released
     # independently — no two locks held simultaneously.
+    limit = max_degree(index.neighbor_policy)
     for neighbor in neighbors
         nlock = locks[neighbor.id]
         Base.lock(nlock)
         try
-            list_b = adjacency[neighbor.id]
-            push!(list_b, node_id)
-            _prune_list!(index, list_b, neighbor.id, data, max_degree(index.neighbor_policy))
+            _append_and_maybe_prune!(index, adj, neighbor.id, node_id, data, limit)
         finally
             Base.unlock(nlock)
         end
@@ -797,23 +715,17 @@ function _build_index_threaded!(
     max_level = maximum(levels)
 
     # Allocate all layers up-front, with all n slots populated. After this
-    # block no thread mutates `index.layers` or grows per-layer Vectors.
+    # block no thread mutates `index.layers` or grows the per-layer slab.
     cap = max_degree(index.neighbor_policy) + 1
     resize!(index.layers, max_level + 1)
     for li in 1:(max_level + 1)
-        layer = Vector{NeighborList}(undef, n)
-        @inbounds for i in 1:n
-            v = Int[]
-            sizehint!(v, cap)
-            layer[i] = v
-        end
-        index.layers[li] = layer
+        index.layers[li] = HNSWLayer(n, cap)
     end
 
-    # Per-node locks.
+    # Per-node spin locks (writers only — reads are lock-free).
     resize!(index.node_locks, n)
     @inbounds for i in 1:n
-        index.node_locks[i] = ReentrantLock()
+        index.node_locks[i] = Threads.SpinLock()
     end
 
     # Insert node 1 serially (entry-point bootstrap).
@@ -840,8 +752,6 @@ function _build_index_threaded!(
             # Per-task state — captured by closure, NOT indexed by threadid.
             visit_buf = zeros(UInt32, n)
             visit_gen = UInt32(0)
-            nbr_scratch = Int[]
-            sizehint!(nbr_scratch, cap)
 
             for node_id in work
                 level = levels[node_id]
@@ -864,9 +774,9 @@ function _build_index_threaded!(
                     # insertion. Serializes only level-extending inserts
                     # (rare, ~1/M of nodes); other threads inserting at
                     # levels <= max_layer continue in parallel via per-node
-                    # locks. This closes the stale-cur_max race where two
-                    # extenders concurrently snapshot the same cur_max and
-                    # leave each other unreachable at the top layers.
+                    # spin locks. This closes the stale-cur_max race where
+                    # two extenders concurrently snapshot the same cur_max
+                    # and leave each other unreachable at the top layers.
                     Base.lock(index.global_lock)
                     cur_entry = index.entry_point
                     cur_max = index.max_layer
@@ -876,7 +786,7 @@ function _build_index_threaded!(
                     current = cur_entry
                     current_dist = index.distance(@view(data[:, current]), point)
                     for layer = cur_max:-1:max(level + 1, 1)
-                        cand = _greedy_descent_threaded(index, layer, current, point, data, nbr_scratch)
+                        cand = _greedy_descent(index, layer, current, point, data)
                         current = cand.id
                         current_dist = cand.dist
                     end
@@ -889,10 +799,10 @@ function _build_index_threaded!(
                         end
                         visited = StampVisited(visit_buf, visit_gen)
 
-                        results = _search_layer_threaded(
+                        results = _search_layer(
                             index, layer,
                             NeighborCandidate(current, current_dist),
-                            point, data, index.ef_construction, visited, nbr_scratch,
+                            point, data, index.ef_construction; visited = visited,
                         )
                         neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
                         _connect_new_node_threaded!(index, layer, node_id, neighbors, data)
