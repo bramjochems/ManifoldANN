@@ -106,9 +106,10 @@ flat `nodes::Vector{BPTNode{P}}`, the flat `leaf_members::Vector{Int}`,
 and the root node id. Mutates `indices` is not assumed — the splitter is
 responsible for not retaining references.
 
-`payload_type` defaults to inferring `P` from a probe call; for
-correctness pass it explicitly when the splitter may emit a leaf at the
-root (no probe to infer from).
+`payload_type` is required: the recursion may emit a leaf at the
+root (so there is no internal-node probe to infer `P` from), and the
+helper needs the concrete `BPTNode{P}` element type up front for type
+stability of the `nodes` vector.
 """
 function bpt_build!(
     splitter,

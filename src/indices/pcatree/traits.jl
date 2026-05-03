@@ -194,11 +194,15 @@ struct RandomLinearCombo <: AbstractSplitDirectionPolicy
 end
 
 function pick_direction(policy::RandomLinearCombo, spectrum, rng::AbstractRNG)
+    T = eltype(spectrum.U)
     rk = size(spectrum.U, 2)
     k_eff = min(policy.k, rk)
-    coeffs = randn(rng, k_eff)
+    # Match the spectrum eltype so downstream payload (Vector{T}) stays
+    # type-stable under Float32 inputs — `randn(rng, k_eff)` defaults to
+    # Float64 and silently promoted U*coeffs to Float64.
+    coeffs = randn(rng, T, k_eff)
     nrm = norm(coeffs)
-    nrm > 0 || (coeffs[1] = one(eltype(coeffs)); nrm = one(eltype(coeffs)))
+    nrm > 0 || (coeffs[1] = one(T); nrm = one(T))
     coeffs ./= nrm
     v = spectrum.U[:, 1:k_eff] * coeffs
     return collect(v)

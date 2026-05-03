@@ -193,3 +193,23 @@ end
         @test neighbor_ids(threaded[i]) == neighbor_ids(serial[i])
     end
 end
+
+@testset "PCATreeIndex RandomLinearCombo preserves Float32 eltype" begin
+    # Regression: prior `randn(rng, k)` defaulted to Float64 and silently
+    # promoted the direction vector to Float64 even for Float32 inputs.
+    # The PCANodePayload constructor would coerce the result; this test
+    # locks in type-stability of the direction itself.
+    rng = MersenneTwister(0xF1)
+    data = randn(rng, Float32, 10, 200)
+    splitter = PCASplitter(
+        ExactSVD(), RandomLinearCombo(3),
+        MaxLeafSize(32), MedianSplit(),
+    )
+    idx = build_index(PCATreeIndex, data; splitter = splitter,
+                      rng = MersenneTwister(2))
+    for node in idx.nodes
+        if !node.is_leaf
+            @test eltype(node.payload.direction) === Float32
+        end
+    end
+end
