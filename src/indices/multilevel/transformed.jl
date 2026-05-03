@@ -6,7 +6,7 @@ child indices based on the transform's assignment, and collects results.
 """
 
 """
-    TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
+    TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, M} <: AbstractANNIndex
 
 An index that applies a transform before routing to child indices.
 
@@ -25,6 +25,7 @@ contain other TransformedIndex nodes or terminal indices, forming an arbitrary t
 - `T`: Type of transform
 - `I`: Type of child indices (may be Union type for mixed children)
 - `C`: Type of stored child datasets (either `Nothing` or `Vector{<:AbstractMatrix}`)
+- `M`: Type of id mappings (either `Nothing` or `Vector{Vector{Int}}`)
 
 # Examples
 ```julia
@@ -36,24 +37,24 @@ hnsw_indices = [build_index(HNSWIndex, partition; M=16) for partition in partiti
 ivf = TransformedIndex(kmeans, TopKRouting(5), hnsw_indices, id_mappings)
 ```
 """
-struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
+struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, M} <: AbstractANNIndex
     transform::T
     routing_strategy::AbstractRoutingStrategy
     indices::Vector{I}
-    id_mappings::Union{Nothing, Vector{Vector{Int}}}
-    child_data::C  # Either `nothing` or per-child data matrices
+    id_mappings::M  # Either `Nothing` or `Vector{Vector{Int}}`
+    child_data::C   # Either `Nothing` or per-child data matrices
     bucket_lookup::Union{Nothing, Vector{Int}}
 
     function TransformedIndex(
         transform::T,
         routing_strategy::AbstractRoutingStrategy,
         indices::Vector{I},
-        id_mappings::Union{Nothing, Vector{Vector{Int}}}=nothing,
+        id_mappings::M=nothing,
         child_data::C=nothing,
         bucket_lookup::Union{Nothing, Vector{Int}}=nothing,
-    ) where {T<:AbstractTransform, I<:AbstractANNIndex, C}
+    ) where {T<:AbstractTransform, I<:AbstractANNIndex, C, M<:Union{Nothing, Vector{Vector{Int}}}}
         isempty(indices) && throw(ArgumentError("Must have at least one child index"))
-        new{T, I, C}(
+        new{T, I, C, M}(
             transform,
             routing_strategy,
             indices,

@@ -176,30 +176,51 @@ function _query_node(
     return [neighbors]
 end
 
+# Type-stable child-data resolution. Both `child_data` (C) and `id_mappings`
+# (M) are encoded as type parameters of TransformedIndex, so each method
+# below has a single concrete return type and the per-cluster `_query_node`
+# call at the use site can be devirtualised.
+
+# Stored per-child data: return the materialised contiguous matrix.
 @inline function _resolve_child_data(
-    node::TransformedIndex,
+    node::TransformedIndex{<:Any,<:Any,<:AbstractVector{<:AbstractMatrix},<:Any},
     child_idx::Int,
     parent_data::AbstractMatrix,
 )
-    if node.child_data === nothing
-        if isnothing(node.id_mappings)
-            return parent_data
-        else
-            ids = node.id_mappings[child_idx]
-            @views return view(parent_data, :, ids)
-        end
-    else
-        return node.child_data[child_idx]
-    end
+    return node.child_data[child_idx]
 end
 
-@inline function _child_distance_type(node::TransformedIndex, parent_data::AbstractMatrix)
-    if node.child_data === nothing
-        return float(eltype(parent_data))
-    else
-        first_child = node.child_data[1]
-        return float(eltype(first_child))
-    end
+# No stored data, but bucketed: gather a view over parent ids.
+@inline function _resolve_child_data(
+    node::TransformedIndex{<:Any,<:Any,Nothing,Vector{Vector{Int}}},
+    child_idx::Int,
+    parent_data::AbstractMatrix,
+)
+    ids = node.id_mappings[child_idx]
+    return view(parent_data, :, ids)
+end
+
+# No stored data, no bucketing: pass parent data through.
+@inline function _resolve_child_data(
+    node::TransformedIndex{<:Any,<:Any,Nothing,Nothing},
+    child_idx::Int,
+    parent_data::AbstractMatrix,
+)
+    return parent_data
+end
+
+@inline function _child_distance_type(
+    node::TransformedIndex{<:Any,<:Any,<:AbstractVector{<:AbstractMatrix},<:Any},
+    parent_data::AbstractMatrix,
+)
+    return float(eltype(node.child_data[1]))
+end
+
+@inline function _child_distance_type(
+    node::TransformedIndex{<:Any,<:Any,Nothing,<:Any},
+    parent_data::AbstractMatrix,
+)
+    return float(eltype(parent_data))
 end
 
 function _append_child_results!(
