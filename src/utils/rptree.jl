@@ -35,44 +35,39 @@ end
 @inline _is_leaf(node::RPTreeNode) = node.left == 0
 
 """
-    build_rptree(data, leaf_cap; rng) -> RPTree
+    AbstractRPSplitter
 
-Build a random-projection tree using two-point hyperplane splits. At each
-node, two distinct points are sampled, the split direction is
-`data[:, p1] - data[:, p2]`, and the threshold is the projection of the
-midpoint. Recursion stops at `<= leaf_cap` points or a degenerate split.
+Strategy for picking a hyperplane split at each internal node of an
+`RPTree`. A concrete splitter implements
+`split_node(splitter, data, indices, rng) -> (hyperplane, offset, left_idx, right_idx)`
+and returns `nothing` to signal a degenerate split (caller falls back to
+emitting a leaf).
+
+Same flexibility-point pattern as HNSW's `AbstractNeighborPolicy` /
+LSH's `AbstractLSHHash` / multilevel's `AbstractRoutingStrategy`. The
+default `TwoPointSplitter` reproduces the original two-point hyperplane
+heuristic; alternative splitters (e.g. random-direction, PCA-aligned,
+or Mondrian-style) can plug in without touching the build/query loops.
 """
-function build_rptree(
-    data::AbstractMatrix{T},
-    leaf_cap::Int;
-    rng::AbstractRNG = Random.default_rng(),
-) where {T<:AbstractFloat}
-    leaf_cap > 0 || throw(ArgumentError("leaf_cap must be positive"))
-    d, n = size(data)
-    n > 0 || throw(ArgumentError("data must contain at least one point"))
+abstract type AbstractRPSplitter end
 
-    nodes = Vector{RPTreeNode{T}}()
-    leaf_members = Vector{Int}()
-    sizehint!(leaf_members, n)
+"""
+    TwoPointSplitter <: AbstractRPSplitter
 
-    indices = collect(1:n)
-    root = _build_rptree_recursive!(nodes, leaf_members, data, indices, leaf_cap, rng)
-    return RPTree{T}(nodes, leaf_members, root)
-end
+Two-point hyperplane split (Dasgupta-Freund, the default for RP-tree forests
+in PyNNDescent and ANNOY). At each internal node: sample two distinct points
+`p1, p2`, set `hyperplane = data[:, p1] - data[:, p2]`, threshold at the
+projection of the midpoint.
+"""
+struct TwoPointSplitter <: AbstractRPSplitter end
 
-function _build_rptree_recursive!(
-    nodes::Vector{RPTreeNode{T}},
-    leaf_members::Vector{Int},
+function split_node(
+    ::TwoPointSplitter,
     data::AbstractMatrix{T},
     indices::Vector{Int},
-    leaf_cap::Int,
     rng::AbstractRNG,
 ) where {T<:AbstractFloat}
     m = length(indices)
-    if m <= leaf_cap
-        return _emit_leaf!(nodes, leaf_members, indices)
-    end
-
     d = size(data, 1)
     i1 = rand(rng, 1:m)
     i2 = rand(rng, 1:(m - 1))
@@ -106,17 +101,63 @@ function _build_rptree_recursive!(
         end
     end
 
-    if isempty(left_idx) || isempty(right_idx)
+    (isempty(left_idx) || isempty(right_idx)) && return nothing
+    return hyperplane, offset, left_idx, right_idx
+end
+
+"""
+    build_rptree(data, leaf_cap; splitter=TwoPointSplitter(), rng) -> RPTree
+
+Build a random-projection tree. The split strategy at each internal node is
+controlled by `splitter::AbstractRPSplitter` (default: two-point hyperplane).
+Recursion stops at `<= leaf_cap` points or when the splitter signals a
+degenerate split.
+"""
+function build_rptree(
+    data::AbstractMatrix{T},
+    leaf_cap::Int;
+    splitter::AbstractRPSplitter = TwoPointSplitter(),
+    rng::AbstractRNG = Random.default_rng(),
+) where {T<:AbstractFloat}
+    leaf_cap > 0 || throw(ArgumentError("leaf_cap must be positive"))
+    d, n = size(data)
+    n > 0 || throw(ArgumentError("data must contain at least one point"))
+
+    nodes = Vector{RPTreeNode{T}}()
+    leaf_members = Vector{Int}()
+    sizehint!(leaf_members, n)
+
+    indices = collect(1:n)
+    root = _build_rptree_recursive!(
+        nodes, leaf_members, data, indices, leaf_cap, splitter, rng)
+    return RPTree{T}(nodes, leaf_members, root)
+end
+
+function _build_rptree_recursive!(
+    nodes::Vector{RPTreeNode{T}},
+    leaf_members::Vector{Int},
+    data::AbstractMatrix{T},
+    indices::Vector{Int},
+    leaf_cap::Int,
+    splitter::AbstractRPSplitter,
+    rng::AbstractRNG,
+) where {T<:AbstractFloat}
+    m = length(indices)
+    if m <= leaf_cap
         return _emit_leaf!(nodes, leaf_members, indices)
     end
+
+    result = split_node(splitter, data, indices, rng)
+    result === nothing && return _emit_leaf!(nodes, leaf_members, indices)
+    hyperplane, offset, left_idx, right_idx = result
 
     push!(nodes, RPTreeNode{T}(hyperplane, offset, Int32(0), Int32(0),
                                 Int32(1):Int32(0)))
     self_idx = length(nodes)
     left_child = _build_rptree_recursive!(
-        nodes, leaf_members, data, left_idx, leaf_cap, rng)
+        nodes, leaf_members, data, left_idx, leaf_cap, splitter, rng)
     right_child = _build_rptree_recursive!(
-        nodes, leaf_members, data, right_idx, leaf_cap, rng)
+        nodes, leaf_members, data, right_idx, leaf_cap, splitter, rng)
     nodes[self_idx] = RPTreeNode{T}(
         hyperplane, offset, Int32(left_child), Int32(right_child),
         Int32(1):Int32(0))
