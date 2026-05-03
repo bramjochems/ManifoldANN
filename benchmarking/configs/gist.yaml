@@ -16,8 +16,8 @@ algorithms:
     neighbor_policy: diversified
 
   MANN-IVF-HNSW:
-    nlist: 256
-    routing_k: 16
+    nlist: 64
+    routing_k: 8
     M: 16
     ef_construction: 200
     ef_search: 64
