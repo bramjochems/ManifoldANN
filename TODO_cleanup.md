@@ -190,20 +190,44 @@ explicitly handling the strided/non-strided fork inside
 
 ### New indices to consider
 
-- **`RPTreeIndex` as a standalone index.** RP-tree primitives already
-  exist in the codebase (`src/indices/nndescent/rptree_init.jl`:
-  `build_rptree`, `build_rptree_forest`, `leaf_members`) and are used as
-  an opt-in init for NN-Descent. Promoting them to a top-level
-  `RPTreeIndex` would be cheap (~50 LOC of wrapping struct +
-  `build_index` / `query` methods) and covers the high-d regime where
-  KD-tree degrades (>~50 dims) — RP-trees pick random hyperplanes and
-  avoid the axis-aligned curse-of-dimensionality. Modest novel
-  contribution in the Julia ecosystem: `NearestNeighbors.jl` ships
-  KDTree/BallTree/BruteTree but not RP-tree forest; the only Julia
-  RP-tree implementation today is buried inside
-  `NearestNeighborDescent.jl`'s init. When this lands, move the
-  primitives from `src/indices/nndescent/` to `src/utils/rptree.jl` so
-  NN-Descent and `RPTreeIndex` share them.
+- **`RPTreeForestIndex`.** Single-tree `RPTreeIndex` landed (caca889 +
+  6e9aa3a); the forest is the natural extension that actually competes
+  on recall. `build_rptree_forest` already exists in
+  `src/indices/nndescent/rptree_init.jl` (used by NN-Descent's init);
+  promoting it to a top-level index is ~50 LOC of wrapping struct +
+  `build_index` / `query` (union leaf-buckets across trees, brute-force
+  scan, top-k via heap). Threaded forest build is trivial — independent
+  trees, same pattern as the LSH build threading (cd1af49). Move the
+  forest builder to `src/utils/rptree.jl` alongside the per-tree
+  primitives when it lands.
+
+- **Alternative `AbstractRPSplitter` implementations.** The splitter
+  trait landed in 6e9aa3a with `TwoPointSplitter` as the default. Worth
+  exploring as experimentation surface (not thesis-load-bearing):
+  - **PCA-aligned splits**: hyperplane = top principal component of the
+    points in the current node. Tighter splits in low intrinsic
+    dimension; pays a per-node SVD cost. Good fit for the manifold-aware
+    framing of the thesis.
+  - **Mondrian splits**: exponential-clock-driven random axis-aligned
+    splits with a lifetime parameter (Lakshminarayanan et al.). The
+    splitter trait alone fits, but full Mondrian needs split-time +
+    bounding-box state per node and an online `insert!` API — a separate
+    `MondrianTreeIndex`, not a splitter swap. The splitter abstraction
+    is offline-only; if Mondrian ever lands, treat it as a sibling
+    index, not an RPTree variant.
+
+- **Shared "binary partition tree with leaf buckets" abstraction
+  (deferred).** KDTree and RPTree share a meta-pattern: recursive binary
+  partitioning of a point set with router-internal-nodes and
+  leaf-buckets. The split content differs (axis-aligned vs hyperplane),
+  the storage layout differs, the query path differs (KDTree prunes,
+  RPTree doesn't), so the shared skeleton is shallow (~20-30 LOC of
+  recursion) and the per-tree specialisation is essential. Don't factor
+  with only two instances; the Julia idiom (`NearestNeighbors.jl`:
+  KDTree/BallTree/BruteTree as separate concrete types under a thin
+  `NNTree` protocol) supports this. **Trigger to revisit**: a third
+  tree-style index (BallTree, M-tree, vp-tree) lands. At that point the
+  pattern is real and the factoring pays back.
 
 ### Benchmark harness fairness (`benchmarking/`)
 
