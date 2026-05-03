@@ -19,12 +19,14 @@ callers must still pass `data` when querying. Keywords:
   Larger values increase recall at quadratic build cost.
 - `max_candidate_neighbors`: Explicit override for the per-iteration candidate
   cap. If `nothing` (default), derived from `pruning_degree_multiplier × k`.
-- `threaded`: Run the local-join in parallel using `Threads.@threads` (default
+- `threaded`: Run the local-join in parallel using a worker-pool of
+  `Threads.nthreads()` long-lived tasks pulling work from a `Channel` (default
   `true`). The threaded path acquires per-node `ReentrantLock`s on heap
-  mutations; this preserves graph quality but **gives up bitwise determinism**:
-  two builds with the same `rng` may produce different neighbor lists because
-  thread interleaving determines insertion order. Pass `threaded=false` for
-  reproducible builds (matches PyNNDescent's `n_jobs=1` semantics).
+  reads and mutations; this preserves graph quality but **gives up bitwise
+  determinism**: two builds with the same `rng` may produce different
+  neighbor lists because thread interleaving determines insertion order.
+  Pass `threaded=false` for reproducible builds (matches PyNNDescent's
+  `n_jobs=1` semantics).
 - `init`: Initial-graph strategy. `:random` (default) is the original
   bidirectional random init. `:rptree` builds an RP-tree forest and seeds
   each node's heap with the closest k from the union of co-leaf members
@@ -251,53 +253,107 @@ function _local_join_serial!(
     return updates
 end
 
-# Threaded local-join for one NN-Descent iteration. Per-thread RNGs and scratch
-# buffers; per-node ReentrantLocks protect heap mutations. `:static` schedule
-# pins iterations to threads so threadid()-indexed buffers are safe.
+# Threaded local-join for one NN-Descent iteration.
+#
+# Concurrency model:
+#   * Each task owns its sampling scratch buffers and RNG via closure capture
+#     (NOT Threads.threadid() indexing). `lock(::ReentrantLock)` is a yield
+#     point in Julia 1.10+, the scheduler may resume a task on a different OS
+#     thread, but threadid is captured stale — so threadid-indexed buffers are
+#     unsafe under contention. Worker-pool with closure-captured per-task state
+#     is the canonical safe pattern.
+#   * Reads of `graph[node_idx].{new,old}_neighbors` are done under
+#     `locks[node_idx]` by snapshotting the heap's ids into a per-task scratch
+#     under the lock, then sampling/iterating the snapshot lock-free. This
+#     removes the read-during-mutate race against `_connect_pair_locked!` /
+#     `_insert_neighbor!` running on another task — the writer can be
+#     `push!`-ing and `_heap_sift_up!`-ing the same heap concurrently, which
+#     reallocates the underlying Vector and produces torn reads / iterator
+#     invalidation. (Mirrors `_read_neighbors_threaded!` in HNSW.)
 function _local_join_threaded!(
     graph::Vector{NNDescentNeighborNode{T}}, data, distance,
     sampling_policy, max_candidate_neighbors,
-    r_new, r_old, new_scratches, old_scratches, thread_rngs, locks,
+    r_new, r_old, locks, parent_rng::AbstractRNG,
 ) where {T}
+    n = length(graph)
     updates_atomic = Threads.Atomic{Int}(0)
-    Threads.@threads :static for node_idx in 1:length(graph)
-        tid = Threads.threadid()
-        new_scratch = new_scratches[tid]
-        old_scratch = old_scratches[tid]
-        trng = thread_rngs[tid]
+    nthreads = Threads.nthreads()
 
-        @inbounds begin
-            node = graph[node_idx]
-            (isempty(node.new_neighbors) && isempty(r_new[node_idx])) && continue
-            _sample_neighbor_ids_with_reverse!(
-                new_scratch, node.new_neighbors, r_new[node_idx],
-                max_candidate_neighbors, trng)
-            isempty(new_scratch) && continue
-            new_candidates = new_scratch
-            _sample_neighbor_ids_with_reverse!(
-                old_scratch, node.old_neighbors, r_old[node_idx],
-                max_candidate_neighbors, trng)
-            old_candidates = old_scratch
+    # Distribute node ids into a Channel; each worker pulls work as it goes.
+    work = Channel{Int}(max(n, 1))
+    for nid in 1:n
+        put!(work, nid)
+    end
+    close(work)
 
+    # Pre-derive per-task RNG seeds from the parent RNG so streams diverge but
+    # remain reproducible up to thread interleaving (the threaded path is not
+    # bitwise-deterministic by design — see build_index docstring).
+    task_seeds = [rand(parent_rng, UInt64) for _ in 1:nthreads]
+
+    workers = Vector{Task}(undef, nthreads)
+    for t in 1:nthreads
+        seed = task_seeds[t]
+        workers[t] = Threads.@spawn begin
+            # Per-task state — captured by closure, NOT indexed by threadid.
+            new_scratch = Int[]; sizehint!(new_scratch, max_candidate_neighbors)
+            old_scratch = Int[]; sizehint!(old_scratch, max_candidate_neighbors)
+            new_snap = Int[]; sizehint!(new_snap, max_candidate_neighbors)
+            old_snap = Int[]; sizehint!(old_snap, max_candidate_neighbors)
+            trng = Random.Xoshiro(seed)
             local_updates = 0
-            for new_idx in 1:length(new_candidates)
-                src = new_candidates[new_idx]
-                for inner_idx in (new_idx + 1):length(new_candidates)
-                    dst = new_candidates[inner_idx]
-                    should_consider_pair(sampling_policy, trng) || continue
-                    local_updates += _connect_pair_locked!(
-                        graph, data, distance, src, dst, locks)
-                end
-                for dst in old_candidates
-                    src == dst && continue
-                    should_consider_pair(sampling_policy, trng) || continue
-                    local_updates += _connect_pair_locked!(
-                        graph, data, distance, src, dst, locks)
+
+            for node_idx in work
+                @inbounds begin
+                    node = graph[node_idx]
+                    # Snapshot heap ids under the node's lock; release before
+                    # sampling/iterating. Brief crit-section, race-free.
+                    Base.lock(locks[node_idx])
+                    try
+                        empty!(new_snap)
+                        for nb in node.new_neighbors
+                            push!(new_snap, nb.id)
+                        end
+                        empty!(old_snap)
+                        for nb in node.old_neighbors
+                            push!(old_snap, nb.id)
+                        end
+                    finally
+                        Base.unlock(locks[node_idx])
+                    end
+
+                    (isempty(new_snap) && isempty(r_new[node_idx])) && continue
+                    _sample_ids_from_vector_with_reverse!(
+                        new_scratch, new_snap, r_new[node_idx],
+                        max_candidate_neighbors, trng)
+                    isempty(new_scratch) && continue
+                    new_candidates = new_scratch
+                    _sample_ids_from_vector_with_reverse!(
+                        old_scratch, old_snap, r_old[node_idx],
+                        max_candidate_neighbors, trng)
+                    old_candidates = old_scratch
+
+                    for new_idx in 1:length(new_candidates)
+                        src = new_candidates[new_idx]
+                        for inner_idx in (new_idx + 1):length(new_candidates)
+                            dst = new_candidates[inner_idx]
+                            should_consider_pair(sampling_policy, trng) || continue
+                            local_updates += _connect_pair_locked!(
+                                graph, data, distance, src, dst, locks)
+                        end
+                        for dst in old_candidates
+                            src == dst && continue
+                            should_consider_pair(sampling_policy, trng) || continue
+                            local_updates += _connect_pair_locked!(
+                                graph, data, distance, src, dst, locks)
+                        end
+                    end
                 end
             end
             Threads.atomic_add!(updates_atomic, local_updates)
         end
     end
+    foreach(wait, workers)
     return updates_atomic[]
 end
 
@@ -324,19 +380,10 @@ function _run_nndescent!(
     r_new, r_old = _allocate_reverse_buffers(n, 2k)
 
     if threaded
-        # Per-thread state for the parallel local-join. `maxthreadid()` (not
-        # `nthreads()`) is the upper bound on any threadid we might see —
-        # accounts for Julia's interactive thread pool, which counts against
-        # threadid but not against nthreads() of the :default pool.
-        nthreads_actual = Threads.maxthreadid()
-        new_scratches = [Int[] for _ in 1:nthreads_actual]
-        old_scratches = [Int[] for _ in 1:nthreads_actual]
-        for s in new_scratches; sizehint!(s, max_candidate_neighbors); end
-        for s in old_scratches; sizehint!(s, max_candidate_neighbors); end
-        thread_rngs = [copy(rng) for _ in 1:nthreads_actual]
-        # Reseed each thread RNG so streams diverge; otherwise all threads share
-        # the parent's state and produce identical samples.
-        for trng in thread_rngs; Random.seed!(trng, rand(rng, UInt64)); end
+        # Per-task state lives inside `_local_join_threaded!` (closure-captured
+        # per worker task, not threadid-indexed — Julia 1.10+ task migration
+        # makes threadid unstable across yield points). We only need the
+        # per-node lock vector at this scope.
         locks = [ReentrantLock() for _ in 1:n]
     else
         # Serial path needs only one set of scratch buffers and the parent RNG.
@@ -354,7 +401,7 @@ function _run_nndescent!(
         updates = if threaded
             _local_join_threaded!(
                 graph, data, distance, sampling_policy, max_candidate_neighbors,
-                r_new, r_old, new_scratches, old_scratches, thread_rngs, locks)
+                r_new, r_old, locks, rng)
         else
             _local_join_serial!(
                 graph, data, distance, sampling_policy, max_candidate_neighbors,
@@ -641,28 +688,32 @@ function _finalize_neighbors(
     @inbounds for i in eachindex(graph)
         node = graph[i]
 
-        # Collect all neighbors from both heaps
+        # Collect all neighbors from both heaps without dedup yet — we sort
+        # by distance first so the dedup pass keeps the smaller-distance
+        # entry per id. (Iterating one heap then the other and dropping later
+        # duplicates would arbitrarily prefer whichever heap we visited first
+        # regardless of distance, which can drop the shorter-distance edge.)
         all_neighbors = Vector{Neighbor{T}}()
-        seen_ids = Set{Int}()  # Track seen IDs to prevent duplicates
-
-        # Add neighbors from old_neighbors heap, checking for duplicates
         for nb in node.old_neighbors
-            if !(nb.id in seen_ids)
-                push!(all_neighbors, nb)
-                push!(seen_ids, nb.id)
-            end
+            push!(all_neighbors, nb)
         end
-
-        # Add neighbors from new_neighbors heap, checking for duplicates
         for nb in node.new_neighbors
-            if !(nb.id in seen_ids)
-                push!(all_neighbors, nb)
-                push!(seen_ids, nb.id)
-            end
+            push!(all_neighbors, nb)
         end
 
-        # Sort by distance to ensure we keep the closest neighbors
+        # Sort by distance, then dedup keeping the first (smallest-distance)
+        # occurrence per id.
         sort!(all_neighbors, by = nb -> nb.dist)
+        seen_ids = Set{Int}()
+        write = 0
+        for nb in all_neighbors
+            if !(nb.id in seen_ids)
+                push!(seen_ids, nb.id)
+                write += 1
+                all_neighbors[write] = nb
+            end
+        end
+        resize!(all_neighbors, write)
 
         # Extract IDs
         ids = Vector{Int}(undef, length(all_neighbors))
@@ -711,6 +762,31 @@ function _sample_neighbor_ids_with_reverse!(
     @inbounds for nb in heap
         push!(scratch, nb.id)
     end
+    append!(scratch, reverse_ids)
+    isempty(scratch) && return scratch
+    sort!(scratch)
+    unique!(scratch)
+    len = length(scratch)
+    len <= limit && return scratch
+    shuffle!(rng, scratch)
+    resize!(scratch, limit)
+    return scratch
+end
+
+# Variant of `_sample_neighbor_ids_with_reverse!` that takes a pre-extracted
+# id vector instead of a heap. Used by the threaded local-join after the
+# heap's ids have been snapshotted under lock — we cannot iterate the live
+# heap while another task may be mutating it.
+function _sample_ids_from_vector_with_reverse!(
+    scratch::Vector{Int},
+    forward_ids::Vector{Int},
+    reverse_ids::Vector{Int},
+    limit::Int,
+    rng::AbstractRNG,
+)
+    empty!(scratch)
+    limit <= 0 && return scratch
+    append!(scratch, forward_ids)
     append!(scratch, reverse_ids)
     isempty(scratch) && return scratch
     sort!(scratch)
