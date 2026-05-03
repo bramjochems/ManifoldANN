@@ -1,4 +1,5 @@
 using LinearAlgebra
+using Distances
 
 """
     KDTreeNode
@@ -52,3 +53,23 @@ const KDTREE_DEFAULT_LEAFSIZE = 16
 index_distance(index::KDTreeIndex) = index.distance
 configured_k(::KDTreeIndex) = nothing
 supports_mutation(::KDTreeIndex) = false
+
+# KDTree's pruning bound `|q[axis] - split_value| <= worst` is a valid lower
+# bound on the full distance only for componentwise-monotone metrics — those
+# where a per-axis difference can never exceed the full L_p-style aggregate.
+# Cosine, Hamming, Jaccard, KL etc. violate this and would give silently wrong
+# results. The build gate accepts the in-tree default helpers and the
+# Distances.jl metrics that satisfy the property; everything else errors out
+# at construction with a pointer to HNSW/LSH.
+@inline _kdtree_safe_metric(::typeof(default_distance)) = true
+@inline _kdtree_safe_metric(::typeof(default_squared_distance)) = true
+@inline _kdtree_safe_metric(::Distances.Euclidean) = true
+@inline _kdtree_safe_metric(::Distances.SqEuclidean) = true
+@inline _kdtree_safe_metric(::Distances.Cityblock) = true
+@inline _kdtree_safe_metric(::Distances.Chebyshev) = true
+@inline _kdtree_safe_metric(::Distances.Minkowski) = true
+@inline _kdtree_safe_metric(::Distances.WeightedEuclidean) = true
+@inline _kdtree_safe_metric(::Distances.WeightedSqEuclidean) = true
+@inline _kdtree_safe_metric(::Distances.WeightedCityblock) = true
+@inline _kdtree_safe_metric(::Distances.WeightedMinkowski) = true
+@inline _kdtree_safe_metric(_) = false
