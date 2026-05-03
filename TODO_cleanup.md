@@ -63,6 +63,23 @@ Independent code review surfaced concrete issues where the implementation does n
 
 - 📌 **HNSW threaded build: stale `cur_max` snapshot can silently skip connect on layers (rare).** When a thread snapshots `cur_max=2` at insertion start and another thread bumps `index.max_layer` past `level=4` mid-execution, our connect loop runs only on layers 2..0 — never connects at layers 3, 4 even though they now exist. Same effect as serial HNSW would have had if it inserted that node when max_layer was 2, so HNSW-correct in the local sense, but globally a quality hit when concurrent inserts at higher levels race ours. Brutal-critic flagged this as issue #3 in the threading review. Tried a fix (re-snapshot under global lock + run additional connect rounds at high layers under the lock); recall collapsed to ~0.5 — the fix had a bug I couldn't quickly debug, so reverted. Estimated impact: ~0.1% of inserts hit the race, recall hit ~0.001 absolute. Acceptable to ship, worth fixing later. Approach: hold `index.global_lock` for the entire connect loop *only* when `level > cur_max_at_snapshot`, re-reading `index.max_layer` inside the lock, running greedy descent through any newly-bumped layers, then running connect on `min(level, new_max)..0`. Stress + invariant tests would catch a corrupting fix immediately (recall floor 0.80 over 10 trials).
 
+- 📌 **HNSW: lock-free adjacency + visited-buffer pool (review for ROI before committing).** Two pieces of work that together would close most of the remaining threading gap to hnswlib. **Do not pick this up without first re-running the fair benchmark to confirm the gap is still worth the effort** — it may already be acceptable for thesis/library purposes after the worker-pool batch query landed in `3f0e434`.
+
+  **Piece 1 — slab adjacency**: replace `Vector{Vector{Int}}` with a `Matrix{Int}` (max_degree × n) + `Vector{Int32}` of current degrees. Mutations become atomic: write neighbor ids into the slab, then `@atomic` store the new degree. Readers `@atomic` load the degree, then iterate `[1..degree]`. Torn reads during a write produce a wrong-but-bounded neighbor id (the slot still contains *some* valid id), so the search recall takes a small bounded hit rather than crashing. Same pattern hnswlib uses. Removes the per-node `ReentrantLock` from the build hot path.
+
+  **Piece 2 — visited-buffer pool**: pre-allocate N stamp buffers (where N ≥ nthreads), guard the pool with an atomic stack head. Tasks `pop` a buffer at query/insert start, `push` it back on exit. Already most of the way there in the new `BatchQueryScratch` design — would need to lift it from per-batch to index-lifetime ownership.
+
+  **Estimated gains** (post `3f0e434`, on n=50k SIFT-128):
+  - Build -t 8: 3.96s → ~2.0-2.5s (vs hnswlib 1.56s; gap 2.54× → ~1.4×)
+  - Query -t 8: 16040 qps → ~30-40k qps (vs hnswlib 49717; gap 3.0× → ~1.4×)
+  - Single-threaded: marginal (uncontested locks are nearly free)
+
+  **What it does NOT close**: the C++ vs Julia constant-factor gap on the inner search loop (~1.5-2× single-thread on real data) is not recoverable in pure Julia without distance-kernel hand-tuning. So even with both pieces landed we're at ~1.4-1.5× behind hnswlib end-to-end, not parity.
+
+  **Cost**: 2-3 days of careful work. Slab adjacency is invasive — changes the public-ish struct layout, breaks any code that does `length(adjacency[i])`-style introspection (`_finalize_neighbors`, `_prune_list!`, every diagnostic), and `@atomic` in Julia is sharp-edged enough to warrant a brutal-critic review. The first day is *just* writing the slab + atomic protocol; the second day is reworking every consumer of the adjacency type; the third day is tests and the critic round.
+
+  **ROI judgment**: the gain ratio (days per × of speedup) is much worse than what the worker-pool batch query just achieved (~half a day for 2.5× on multi-thread query). Diminishing returns. Re-evaluate after thesis submission whether the library publishability story needs hnswlib parity, or whether "competitive but Julia-native" is sufficient.
+
 ### Areas not reviewed
 
 The independent code review skipped: `src/indices/multilevel/*` (IVF-HNSW hybrid, only file structure skimmed), `src/transforms/kmeans/*`, `src/preprocessing/*`, `src/geodesic/refinement.jl` (~580 lines), `src/geometry/neighborhood.jl` (~625 lines, expanding-shell strategies), `src/geometry/criteria.jl`, ORC `EdgeNeighborhoodView` construction (`graphs/refinement/types.jl`, `filtering.jl`, `effective_epsilon_policy.jl`). Test quality not audited beyond confirming tests exist for major code paths. Worth a second pass over these before claiming a complete review.
