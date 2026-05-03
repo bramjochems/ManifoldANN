@@ -24,11 +24,11 @@ index, enabling merge strategies to reuse those computations.
 """
 function query(
     index::MultiLevelIndex,
-    data::AbstractMatrix,
-    q::AbstractVector,
+    data::AbstractMatrix{T},
+    q::AbstractVector{T},
     k::Integer;
     kwargs...
-)
+) where {T}
     # Query recursively through the index tree
     all_results = _query_recursive(index.root, data, q, k; kwargs...)
 
@@ -36,50 +36,6 @@ function query(
     merged_neighbors = merge_results(index.merge_strategy, all_results, k)
 
     return merged_neighbors
-end
-
-"""
-    query(index::MultiLevelIndex, data::AbstractMatrix, queries::AbstractMatrix, k::Integer)
-
-Batch query variant for multi-level indices. Processes each column independently and
-aggregates the neighbor id lists.
-"""
-function query(
-    index::MultiLevelIndex,
-    data::AbstractMatrix,
-    queries::AbstractMatrix,
-    k::Integer;
-    kwargs...
-)
-    size(queries, 1) == size(data, 1) ||
-        throw(DimensionMismatch("Expected queries with $(size(data, 1)) rows"))
-
-    n_queries = size(queries, 2)
-    results = Vector{Vector{Neighbor{float(eltype(data))}}}(undef, n_queries)
-
-    @inbounds for i in 1:n_queries
-        q = @view queries[:, i]
-        results[i] = query(index, data, q, k; kwargs...)
-    end
-
-    return results
-end
-
-"""
-    query(index::MultiLevelIndex, data::AbstractMatrix, queries::Vector{<:AbstractVector}, k::Integer)
-
-Convenience overload that accepts a vector of query vectors.
-"""
-function query(
-    index::MultiLevelIndex,
-    data::AbstractMatrix,
-    queries::Vector{<:AbstractVector},
-    k::Integer;
-    kwargs...
-)
-    isempty(queries) && return Vector{Vector{Neighbor{float(eltype(data))}}}()
-    queries_mat = reduce(hcat, queries)
-    return query(index, data, queries_mat, k; kwargs...)
 end
 
 """

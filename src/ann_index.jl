@@ -75,6 +75,14 @@ function query(
     k::Integer;
     kwargs...,
 ) where {T}
+    # Dimension check up front so an empty batch still surfaces caller bugs
+    # (otherwise a `dim=999, n_queries=0` query against a `dim=8` index
+    # would silently return `[]` instead of throwing). Matches the per-index
+    # behaviour for non-empty batches via validate_index_dimensions on the
+    # single-query path.
+    size(queries, 1) == size(data, 1) ||
+        throw(DimensionMismatch("Expected queries with $(size(data, 1)) rows, got $(size(queries, 1))"))
+
     n_queries = size(queries, 2)
     S = float(T)
     n_queries == 0 && return Vector{Vector{Neighbor{S}}}()
