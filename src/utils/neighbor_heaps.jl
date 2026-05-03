@@ -131,12 +131,13 @@ end
 """
     to_sorted_vector(heap::BoundedMaxHeap)
 
-Extract all neighbors sorted by distance (closest first).
+Extract all neighbors sorted by distance (closest first), with id as a
+tiebreaker. Sorts the heap's underlying buffer in place and returns it; the
+heap must not be used after this call.
 """
 function to_sorted_vector(heap::BoundedMaxHeap{T}) where {T}
-    sorted = copy(heap.data)
-    sort!(sorted, by = n -> n.dist)
-    return sorted
+    sort!(heap.data, by = n -> (n.dist, n.id))
+    return heap.data
 end
 
 """

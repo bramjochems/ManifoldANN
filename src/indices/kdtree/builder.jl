@@ -23,7 +23,7 @@ function build_index(
     indices = collect(1:n)
     nodes = Vector{KDTreeNode{T}}()
     sizehint!(nodes, n)
-    root = _build_kdtree!(nodes, data, indices, axis_selector, 1)
+    root = _build_kdtree!(nodes, data, indices, 1, n, axis_selector, 1)
     return KDTreeIndex{T}(nodes, d, n, root)
 end
 
@@ -31,14 +31,17 @@ function _build_kdtree!(
     nodes::Vector{KDTreeNode{T}},
     data::AbstractMatrix{T},
     indices::Vector{Int},
+    lo::Int,
+    hi::Int,
     axis_selector::Symbol,
     depth::Int,
 ) where {T<:LinearAlgebra.BlasFloat}
-    isempty(indices) && return 0
+    lo > hi && return 0
 
-    axis = _pick_axis(data, indices, axis_selector, depth)
-    sort!(indices, by = i -> data[axis, i])
-    median_pos = (length(indices) + 1) >>> 1
+    axis = _pick_axis(data, indices, lo, hi, axis_selector, depth)
+    len = hi - lo + 1
+    median_pos = lo + ((len + 1) >>> 1) - 1
+    _quickselect_axis!(indices, lo, hi, median_pos, data, axis)
     point_index = indices[median_pos]
     split_value = data[axis, point_index]
 
@@ -46,12 +49,8 @@ function _build_kdtree!(
     push!(nodes, node_placeholder)
     node_id = length(nodes)
 
-    left_indices = median_pos > 1 ? Vector{Int}(indices[1:median_pos-1]) : Int[]
-    right_indices =
-        median_pos < length(indices) ? Vector{Int}(indices[median_pos+1:end]) : Int[]
-
-    left_child = _build_kdtree!(nodes, data, left_indices, axis_selector, depth + 1)
-    right_child = _build_kdtree!(nodes, data, right_indices, axis_selector, depth + 1)
+    left_child = _build_kdtree!(nodes, data, indices, lo, median_pos - 1, axis_selector, depth + 1)
+    right_child = _build_kdtree!(nodes, data, indices, median_pos + 1, hi, axis_selector, depth + 1)
 
     nodes[node_id] = KDTreeNode{T}(axis, point_index, split_value, left_child, right_child)
     return node_id
@@ -60,6 +59,8 @@ end
 function _pick_axis(
     data::AbstractMatrix{T},
     indices::Vector{Int},
+    lo::Int,
+    hi::Int,
     axis_selector::Symbol,
     depth::Int,
 ) where {T<:LinearAlgebra.BlasFloat}
@@ -67,17 +68,89 @@ function _pick_axis(
         d = size(data, 1)
         return ((depth - 1) % d) + 1
     end
-    return _axis_with_max_spread(data, indices)
+    return _axis_with_max_spread(data, indices, lo, hi)
 end
 
-function _axis_with_max_spread(data::AbstractMatrix, indices::Vector{Int})
+# Hoare-partition quickselect on `indices[lo:hi]` keyed by `data[axis, *]`.
+# Median-of-three pivot avoids O(n^2) on sorted/adversarial inputs.
+@inline function _quickselect_axis!(
+    indices::Vector{Int},
+    lo::Int,
+    hi::Int,
+    target::Int,
+    data::AbstractMatrix,
+    axis::Int,
+)
+    @inbounds while lo < hi
+        if hi - lo < 16
+            for i in (lo + 1):hi
+                idx_i = indices[i]
+                key = data[axis, idx_i]
+                j = i - 1
+                while j >= lo && data[axis, indices[j]] > key
+                    indices[j + 1] = indices[j]
+                    j -= 1
+                end
+                indices[j + 1] = idx_i
+            end
+            return
+        end
+        mid = (lo + hi) >>> 1
+        a = data[axis, indices[lo]]
+        b = data[axis, indices[mid]]
+        c = data[axis, indices[hi]]
+        if a > b
+            indices[lo], indices[mid] = indices[mid], indices[lo]
+            a, b = b, a
+        end
+        if a > c
+            indices[lo], indices[hi] = indices[hi], indices[lo]
+            a, c = c, a
+        end
+        if b > c
+            indices[mid], indices[hi] = indices[hi], indices[mid]
+            b, c = c, b
+        end
+        indices[mid], indices[hi - 1] = indices[hi - 1], indices[mid]
+        pivot_idx = indices[hi - 1]
+        pivot_val = data[axis, pivot_idx]
+        i = lo
+        j = hi - 1
+        while true
+            i += 1
+            while data[axis, indices[i]] < pivot_val
+                i += 1
+            end
+            j -= 1
+            while data[axis, indices[j]] > pivot_val
+                j -= 1
+            end
+            if i >= j
+                break
+            end
+            indices[i], indices[j] = indices[j], indices[i]
+        end
+        indices[i], indices[hi - 1] = indices[hi - 1], indices[i]
+        if target == i
+            return
+        elseif target < i
+            hi = i - 1
+        else
+            lo = i + 1
+        end
+    end
+    return
+end
+
+function _axis_with_max_spread(data::AbstractMatrix, indices::Vector{Int}, lo::Int, hi::Int)
     d = size(data, 1)
     best_axis = 1
     best_span = -Inf
     for axis in 1:d
         min_val = Inf
         max_val = -Inf
-        @inbounds for idx in indices
+        @inbounds for k in lo:hi
+            idx = indices[k]
             value = data[axis, idx]
             if value < min_val
                 min_val = value
