@@ -86,7 +86,8 @@ function query(
     S = float(T)
     k <= 0 && return Neighbor{S}[]
 
-    candidates = _collect_candidates(index, q)
+    scratch = _lsh_task_scratch(S)
+    candidates = _collect_candidates!(scratch, index, q)
     isempty(candidates) && return Neighbor{S}[]
 
     if candidate_cap !== nothing && length(candidates) > candidate_cap
@@ -95,7 +96,8 @@ function query(
     end
 
     dist_fn = distance_function(index.tables[1].hash_function)
-    distances = Vector{S}(undef, length(candidates))
+    distances = scratch.distances
+    resize!(distances, length(candidates))
     @inbounds for (i, id) in enumerate(candidates)
         distances[i] = dist_fn(@view(data[:, id]), q)
     end
@@ -110,13 +112,42 @@ function query(
     return results
 end
 
-function _collect_candidates(index::LSHIndex, q::AbstractVector)
-    candidates = Int[]
+# Per-task scratch buffers reused across queries on the same task. Eliminates
+# the per-call alloc of `candidates::Vector{Int}`, `distances::Vector{S}`, and
+# the BitSet visited set. Same task-local-storage pattern as the KDTree query
+# path. Each query starts by resetting the buffers (empty! / fill! generation
+# bump) — capacity is preserved.
+mutable struct LSHQueryScratch{S<:AbstractFloat}
+    candidates::Vector{Int}
+    distances::Vector{S}
+    seen::BitSet
+end
+
+LSHQueryScratch{S}() where {S<:AbstractFloat} = LSHQueryScratch{S}(Int[], S[], BitSet())
+
+const _LSH_TASK_SCRATCH_KEY = :ManifoldANN_LSH_task_scratch
+
+@inline function _lsh_task_scratch(::Type{S}) where {S<:AbstractFloat}
+    tls = task_local_storage()
+    stored = get(tls, _LSH_TASK_SCRATCH_KEY, nothing)
+    if stored isa LSHQueryScratch{S}
+        empty!(stored.candidates)
+        empty!(stored.seen)
+        # `distances` is resize!'d at use site, no need to clear here.
+        return stored::LSHQueryScratch{S}
+    end
+    scratch = LSHQueryScratch{S}()
+    tls[_LSH_TASK_SCRATCH_KEY] = scratch
+    return scratch
+end
+
+function _collect_candidates!(scratch::LSHQueryScratch, index::LSHIndex, q::AbstractVector)
+    candidates = scratch.candidates
+    seen = scratch.seen
     n_tables = length(index.tables)
     n_tables == 0 && return candidates
     expected = n_tables * LSH_EXPECTED_CANDIDATES_PER_TABLE
     sizehint!(candidates, expected)
-    seen = BitSet()
     sizehint!(seen, expected)
     for table in index.tables
         h = hash_point(table.hash_function, q)
