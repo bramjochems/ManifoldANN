@@ -34,22 +34,42 @@ function build_index(
     nprobe::Int = 10,
     distance::Dm = default_distance,
     centroid_metric::Dc = Distances.Euclidean(),
+    kmeans_max_iters::Int = 5,
+    kmeans_tol::Float64 = 1e-4,
+    kmeans_subsample_size::Union{Nothing,Int} = max(256 * nlist, 32_768),
 ) where {T<:Real,Dm,Dc<:Distances.SemiMetric}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
     n > 0 || throw(ArgumentError("Dataset must contain at least one point"))
     nlist > 0 || throw(ArgumentError("nlist must be positive"))
 
-    # Fit k-means using existing transform to avoid reinventing distance kernels
-    kmeans = KMeansTransform(k = nlist, distance = centroid_metric, init = :kmeans_plus_plus)
+    # Fit k-means using existing transform to avoid reinventing distance kernels.
+    # IVF-style defaults: few Lloyd iterations on a subsample (faiss-style),
+    # then a single full-data assignment pass — see KMeansTransform.fit!.
+    kmeans = KMeansTransform(
+        k = nlist,
+        distance = centroid_metric,
+        init = :kmeans_plus_plus,
+        max_iters = kmeans_max_iters,
+        tol = kmeans_tol,
+        subsample_size = kmeans_subsample_size,
+    )
     fit!(kmeans, data)
     assignments = take_pending_assignments!(kmeans)
     assignments === nothing && error("KMeansTransform did not return assignments")
     length(assignments) == n || error("Assignment length mismatch")
 
-    lists = [Int[] for _ in 1:nlist]
+    # Pre-size each cluster's list by counting first; avoids the push!
+    # reallocation churn at large n.
+    sizes = zeros(Int, nlist)
+    @inbounds for cid in assignments
+        sizes[cid] += 1
+    end
+    lists = [Vector{Int}(undef, sizes[c]) for c in 1:nlist]
+    cursors = zeros(Int, nlist)
     @inbounds for (idx, cid) in enumerate(assignments)
-        push!(lists[cid], idx)
+        cursors[cid] += 1
+        lists[cid][cursors[cid]] = idx
     end
 
     centroids = kmeans.centroids
