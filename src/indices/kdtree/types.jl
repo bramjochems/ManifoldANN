@@ -9,16 +9,15 @@ KD-tree node. Two roles, distinguished by `axis`:
   split value, and child node indices. Does NOT store a data point — there
   is no per-internal-node distance computation. All data points live in
   leaves.
-- **Leaf node** (`axis == 0`): stores a half-open range `[bucket_lo, bucket_hi]`
-  (inclusive both ends) into `KDTreeIndex.indices`. At query time the leaf
-  is scanned linearly: the bucket members are `indices[bucket_lo:bucket_hi]`.
+- **Leaf node** (`axis == 0`): stores a range `[bucket_lo, bucket_hi]` (both
+  inclusive) into `KDTreeIndex.indices`. At query time the leaf is scanned
+  linearly: the bucket members are `indices[bucket_lo:bucket_hi]`.
 
-`split_value` and `point_index` are unused for leaves; `bucket_lo` is stored
-in `left`, `bucket_hi` in `right`.
+`split_value` is unused for leaves; `bucket_lo` is stored in `left`,
+`bucket_hi` in `right`.
 """
 struct KDTreeNode{T<:LinearAlgebra.BlasFloat}
     axis::Int           # >=1 internal (split axis); 0 leaf
-    point_index::Int    # internal: unused (kept zero); leaf: unused
     split_value::T      # internal: split threshold; leaf: unused
     left::Int           # internal: left child id; leaf: bucket_lo
     right::Int          # internal: right child id; leaf: bucket_hi

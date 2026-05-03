@@ -46,7 +46,7 @@ function _build_kdtree!(
 
     # Leaf: range fits in a bucket, no further split.
     if hi - lo + 1 <= leafsize
-        push!(nodes, KDTreeNode{T}(0, 0, zero(T), lo, hi))
+        push!(nodes, KDTreeNode{T}(0, zero(T), lo, hi))
         return length(nodes)
     end
 
@@ -56,18 +56,15 @@ function _build_kdtree!(
     _quickselect_axis!(indices, lo, hi, median_pos, data, axis)
     split_value = data[axis, indices[median_pos]]
 
-    # Internal node: pure router. point_index is unused (kept 0). All
-    # points in this subtree live in descendant leaves, including the
-    # median-positioned point — it goes into the right subtree's leaf via
-    # `lo = median_pos`.
-    placeholder = KDTreeNode{T}(axis, 0, split_value, 0, 0)
-    push!(nodes, placeholder)
+    # Internal node: pure router. The median-positioned point goes into the
+    # right subtree's leaf via `lo = median_pos`.
+    push!(nodes, KDTreeNode{T}(axis, split_value, 0, 0))
     node_id = length(nodes)
 
     left_child  = _build_kdtree!(nodes, data, indices, lo, median_pos - 1, axis_selector, leafsize, depth + 1)
     right_child = _build_kdtree!(nodes, data, indices, median_pos, hi, axis_selector, leafsize, depth + 1)
 
-    nodes[node_id] = KDTreeNode{T}(axis, 0, split_value, left_child, right_child)
+    nodes[node_id] = KDTreeNode{T}(axis, split_value, left_child, right_child)
     return node_id
 end
 
