@@ -88,16 +88,20 @@ This function:
 - TransformedIndex with fitted transform and constructed children
 """
 function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
-    # Step 1: Fit transform on data
-    ManifoldANN.fit!(config.transform, X)
+    # Step 1: Treat config.transform as an immutable prototype. Make a fresh
+    # copy and fit it; the user's config object is never mutated by build.
+    # This is what gives each TransformedIndex its own fitted state and lets
+    # us share `config.child_config` across worker tasks without races.
+    transform = deepcopy(config.transform)
+    ManifoldANN.fit!(transform, X)
 
     # Step 2: Check if transform produces bucketing
     # Sample one point to check assignment type
-    sample_result = ManifoldANN.transform(config.transform, X[:, 1])
+    sample_result = ManifoldANN.transform(transform, X[:, 1])
 
-    preserves = ManifoldANN.preserves_data(config.transform)
+    preserves = ManifoldANN.preserves_data(transform)
     precomputed_assignments = preserves ?
-        ManifoldANN.take_pending_assignments!(config.transform) :
+        ManifoldANN.take_pending_assignments!(transform) :
         nothing
     if precomputed_assignments !== nothing && length(precomputed_assignments) != size(X, 2)
         # Safety: discard mismatched assignments rather than erroring
@@ -108,7 +112,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
         # Step 3a: Partition data by bucket assignments
         partitions, id_mappings = partition_by_transform(
             X,
-            config.transform;
+            transform;
             capture_data = !preserves,
             precomputed_assignments = preserves ? precomputed_assignments : nothing,
         )
@@ -138,14 +142,14 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
 
         # Build all children in parallel into a Vector{Any} buffer, then
         # narrow to Vector{ChildType} once we know the concrete return type.
-        # `_per_child_config` returns a fresh copy when needed (nested
-        # TransformedConfig — its `transform` field is fitted in-place) and
-        # the original otherwise (TerminalConfig — purely immutable).
+        # `config.child_config` is safe to share across tasks: TerminalConfig is
+        # purely immutable, and TransformedConfig is now treated as a declarative
+        # prototype — _build_transformed deepcopies its transform before fitting.
         children_buf = Vector{Any}(undef, n_children)
         stored_child_data = preserves ? nothing : Vector{typeof(child_inputs[1])}(undef, n_children)
 
         Threads.@threads for idx in 1:n_children
-            children_buf[idx] = _build_from_config(child_inputs[idx], _per_child_config(config.child_config))
+            children_buf[idx] = _build_from_config(child_inputs[idx], config.child_config)
             if !preserves
                 stored_child_data[idx] = child_inputs[idx]
             end
@@ -163,7 +167,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
         end
 
         return TransformedIndex(
-            config.transform,
+            transform,
             config.routing,
             children,
             child_id_mappings,
@@ -176,7 +180,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
             child_input = X
             stored_child_data = nothing
         else
-            child_input = apply_transform_batch(config.transform, X)
+            child_input = apply_transform_batch(transform, X)
             stored_child_data = [child_input]
         end
 
@@ -185,7 +189,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
 
         # Step 4: Create TransformedIndex without ID mappings and with transformed data
         return TransformedIndex(
-            config.transform,
+            transform,
             config.routing,
             children,
             nothing,
@@ -229,12 +233,6 @@ function _build_from_config(X::AbstractMatrix, config::TransformedConfig)
     # Recursive case: build another TransformedIndex
     return _build_transformed(X, config)
 end
-
-# TerminalConfig is fully immutable (params is a NamedTuple of immutables);
-# share across worker tasks. TransformedConfig holds an AbstractTransform
-# that is fitted in-place during build, so each task gets its own copy.
-@inline _per_child_config(c::TerminalConfig) = c
-@inline _per_child_config(c::TransformedConfig) = deepcopy(c)
 
 @inline function _materialize_partition(X::AbstractMatrix, ids::Vector{Int})
     # Materialize a contiguous Matrix rather than a non-strided SubArray.

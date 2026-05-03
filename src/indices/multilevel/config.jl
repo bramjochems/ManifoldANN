@@ -49,7 +49,9 @@ end
 Configuration for a transformed index (internal node) in a multi-level structure.
 
 # Fields
-- `transform::T`: Transform to apply (unfitted)
+- `transform::T`: Prototype transform (declarative, never mutated by build).
+  `build_index` deepcopies this once per `TransformedIndex` it constructs and
+  fits the copy on that index's slice of data; the config object stays reusable.
 - `routing::AbstractRoutingStrategy`: Strategy for selecting child indices to probe
 - `child_config::C`: Configuration for child indices (may be TerminalConfig or another TransformedConfig)
 
