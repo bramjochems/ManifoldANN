@@ -124,7 +124,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
             isempty(ids) && continue
             push!(child_bucket_ids, bucket_id)
             push!(child_id_mappings, ids)
-            child_input = preserves ? _view_partition(X, ids) : partitions[bucket_id]
+            child_input = preserves ? _materialize_partition(X, ids) : partitions[bucket_id]
             push!(child_inputs, child_input)
         end
 
@@ -230,6 +230,10 @@ function _build_from_config(X::AbstractMatrix, config::TransformedConfig)
     return _build_transformed(X, config)
 end
 
-@inline function _view_partition(X::AbstractMatrix, ids::Vector{Int})
-    @views return view(X, :, ids)
+@inline function _materialize_partition(X::AbstractMatrix, ids::Vector{Int})
+    # Materialize a contiguous Matrix rather than a non-strided SubArray.
+    # Downstream transforms (e.g. KMeansTransform via mul!/BLAS) require
+    # a stride-1 column layout; a `view(X, :, ids)` is a gather pattern
+    # that defeats BLAS dispatch and breaks `::Matrix`-typed signatures.
+    return X[:, ids]
 end
