@@ -68,7 +68,8 @@ something.
   committing).** Two pieces that together would close most of the
   remaining threading gap to hnswlib (estimated multi-thread build
   3.96s → ~2.0s, multi-thread query 16k → ~30-40k QPS at SIFT-128
-  n=50k). Slab adjacency: replace `Vector{Vector{Int}}` with
+  n=50k — these are old projections, re-measure baseline before
+  committing). Slab adjacency: replace `Vector{Vector{Int}}` with
   `Matrix{Int}` + atomic degree counters, eliminate per-node
   `ReentrantLock`. Visited pool: lift `BatchQueryScratch`-style buffers
   from per-batch to index-lifetime ownership, atomic-stack pool.
@@ -199,18 +200,20 @@ bringing the reference up to a respectable baseline.
 
 `KMeansTransform.fit!`, `init_random`, `init_kmeans_plus_plus`,
 `pairwise_distances!`, and the kmeans `lloyd!` driver all type-restrict
-to `::Matrix{T}` rather than `::AbstractMatrix{T}`. The recently-landed
-`_materialize_partition` workaround copies SubArrays into a fresh
-`Matrix` at the partition boundary so this never bites in practice, and
-preserves BLAS dispatch in `pairwise_euclidean!` / `pairwise_sqeuclidean!`
-(`mul!` requires StridedArray for GEMM).
+to `::Matrix{T}` rather than `::AbstractMatrix{T}`. The narrow
+signatures are intentional: `pairwise_euclidean!` /
+`pairwise_sqeuclidean!` use BLAS `mul!`, which requires `StridedArray`
+for GEMM dispatch — a non-strided gather `view(X, :, ::Vector{Int})`
+silently falls to a slow generic path.
 
-**Goal/rationale:** the narrow signatures are intentional for BLAS
-dispatch but are easy to trip on if someone changes the partition path.
-Worth either (a) leaving as-is and documenting the contract, or (b)
-widening to `AbstractMatrix` and explicitly handling the strided/non-
-strided fork inside `pairwise_distances!`. Defer until there's a real
-need.
+`_materialize_partition` (in `src/indices/multilevel/builder.jl`)
+copies SubArrays into a fresh `Matrix` at the partition boundary so
+this never bites in practice. **Goal/rationale:** the constraint is
+load-bearing but easy to trip on if someone changes the partition
+path. Worth either (a) leaving as-is and documenting the contract on
+the kmeans signatures, or (b) widening to `AbstractMatrix` and
+explicitly handling the strided/non-strided fork inside
+`pairwise_distances!`. Defer until there's a real need.
 
 ### New indices to consider
 
