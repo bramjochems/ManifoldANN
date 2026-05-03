@@ -129,6 +129,16 @@ unless LSH becomes a more central thesis comparison.
   accept `T`" or "you must pre-bind `T` via a closure." Decide when
   surfacing it.
 
+- **Zero-norm cosine semantics changed in 0834a73.** Old hand-rolled
+  `cosine_distance` returned `Inf` on zero-norm inputs (sort them last
+  in priority queues); `Distances.CosineDist()` returns `NaN`. No
+  current callsite is affected (no zero vectors in test data, no code
+  reads ordering of NaN distances). If a user reports
+  `RandomHyperplaneHash` results misbehaving on a dataset with zero
+  vectors, this is the difference. Either revert to a thin wrapper
+  enforcing `Inf` semantics, or document the precondition (no
+  zero-norm inputs).
+
 ### KDTree
 
 KDTree is reference-only for the thesis (the contribution lives in the
@@ -198,11 +208,11 @@ clean; residuals worth knowing about:
   the contract isn't explicitly tested. Worth a defensive testset if
   this comes up.
 
-- **Per-batch `queries_per_child` allocates `n_children` empty Vectors**
-  even for empty cells (`query.jl:347`). At nlist=128 that's 128 empties
-  per batch — small but real. CSR-style flat layout (counts pass +
-  offsets + flat array) would halve the gather-bookkeeping memory.
-  Bounded value; defer.
+- **Per-batch `queries_per_child` allocates `n_children` empty `Int[]`
+  vectors** even for empty cells. At nlist=128 that's 128 empties per
+  batch — small but real. CSR-style flat layout (counts pass + offsets
+  + flat array) would replace the Vector-of-Vectors with two
+  contiguous Int arrays. Bounded value; defer.
 
 - **Doc bloat in multilevel.** Multilevel docstrings duplicate the same
   IVF example 3-4× across `multilevel/{multilevel_index,multilevel,
