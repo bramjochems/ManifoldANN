@@ -258,11 +258,18 @@ Recall numbers ARE defensible (consistent ground truth, consistent k, no
 off-by-one). Build-time and QPS comparisons against external libraries
 need fixing or re-running through focused scripts.
 
-Three critical issues — fix these before relying on any harness build/qps
-number. ManifoldANN-internal comparisons are mostly fair to each other
-*except* for the HNSW JIT gap.
+**STATUS:** the three critical issues below were fixed in commit `d19aaad`
+("benchmarking: fix three fairness issues in the harness"). Per-dim warmup,
+symmetric data marshalling via `prepare_data`, and a `--threads N` CLI
+flag with a JULIA_NUM_THREADS-mismatch warning are all in place. Smoke-
+test on fashion-mnist (n=5000, threads=4) showed the expected swing:
+ManifoldANN-HNSW build 2.19s→1.02s and QPS 350→30,657 (the previous
+"query time" was dominated by JIT, not graph traversal); LSH build
+2.07s→0.09s, QPS 535→7,688; IVF-HNSW build 3.58s→0.47s. Recall
+unchanged. Original audit text retained below for reference; the
+**lower-priority** items further down are still open.
 
-- **JIT not warmed for every Julia index type.**
+- **[FIXED] JIT not warmed for every Julia index type.**
   `benchmarking/benchmarking/wrappers/manifoldann.py:39-72` warms
   `BruteForceIndex` and `IVF-HNSW` only. `HNSWIndex`, `KDTreeIndex`,
   `LSHIndex` (both hash families), `IVFFlatIndex`, and `NNDescentIndex` pay
@@ -274,7 +281,7 @@ number. ManifoldANN-internal comparisons are mostly fair to each other
   warmup uses dim=10; rerun warmup with the actual dataset dim before
   the first timed `fit` to cover dim-specialised code paths.
 
-- **Competitor thread counts uncontrolled.**
+- **[FIXED] Competitor thread counts uncontrolled.**
   `wrappers/{hnswlib,faiss,annoy,pynndescent}.py` — no wrapper calls
   `set_num_threads`, `omp_set_num_threads`, or sets `n_jobs` /
   `NUMBA_NUM_THREADS`. hnswlib silently uses `min(cpus, 8)`, FAISS uses
@@ -285,7 +292,7 @@ number. ManifoldANN-internal comparisons are mostly fair to each other
   every wrapper's library-specific thread setter, plus require
   `JULIA_NUM_THREADS=N` to match.
 
-- **Data marshalling charged asymmetrically.** `manifoldann.py:101-112`,
+- **[FIXED] Data marshalling charged asymmetrically.** `manifoldann.py:101-112`,
   `julia_external.py:66-74,185-193,274-282`. Every Julia wrapper does
   `np.asfortranarray(X.T, dtype=np.float32) + _to_matrix(...)` inside
   `fit()`. `wrappers/hnswlib.py:28-49` and `wrappers/faiss.py:26-57`
