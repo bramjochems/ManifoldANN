@@ -49,6 +49,7 @@ function build_ivf_hnsw_index(
     kmeans_init::Symbol = :kmeans_plus_plus,
     kmeans_max_iters::Int = 5,  # Fewer iterations for faster IVF build
     kmeans_tol::Float64 = 1e-4,  # Relaxed tolerance for faster IVF build
+    kmeans_subsample_size::Union{Nothing,Int} = max(256 * nlist, 32_768),
     hnsw_M::Int = HNSW_DEFAULT_M,
     hnsw_ef_construction::Int = HNSW_DEFAULT_EF_CONSTRUCTION,
     hnsw_ef_search::Int = HNSW_DEFAULT_EF_SEARCH,
@@ -64,6 +65,7 @@ function build_ivf_hnsw_index(
         init = kmeans_init,
         max_iters = kmeans_max_iters,
         tol = kmeans_tol,
+        subsample_size = kmeans_subsample_size,
     )
     hnsw_params = (
         M = hnsw_M,
