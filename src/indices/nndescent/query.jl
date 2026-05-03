@@ -80,18 +80,32 @@ function query(
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
     n_queries = size(queries, 2)
     n_queries == 0 && return Vector{Vector{Neighbor{float(T)}}}()
+    # Spawn deterministic per-query child RNGs up front so threaded execution
+    # stays reproducible (each task gets its own RNG; no shared mutable state).
     child_rngs = spawn_child_rngs(rng, n_queries)
     results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
-    @inbounds for i in 1:n_queries
-        qi = view(queries, :, i)
-        results[i] = query(
-            index,
-            data,
-            qi,
-            k;
-            ef_search = ef_search,
-            rng = child_rngs[i],
-        )
+    if Threads.nthreads() == 1 || n_queries < BATCH_THREAD_THRESHOLD
+        @inbounds for i in 1:n_queries
+            results[i] = query(
+                index,
+                data,
+                view(queries, :, i),
+                k;
+                ef_search = ef_search,
+                rng = child_rngs[i],
+            )
+        end
+    else
+        Threads.@threads for i in 1:n_queries
+            results[i] = query(
+                index,
+                data,
+                view(queries, :, i),
+                k;
+                ef_search = ef_search,
+                rng = child_rngs[i],
+            )
+        end
     end
     return results
 end

@@ -71,48 +71,6 @@ function query(
 end
 
 """
-    query(index::BruteForceIndex, data, queries::Matrix, k)
-
-Batch query interface: compute exact nearest neighbors for multiple queries.
-Returns a vector of result vectors, one per query.
-"""
-function query(
-    index::BruteForceIndex{T},
-    data::AbstractMatrix{T},
-    queries::AbstractMatrix{T},
-    k::Integer;
-) where {T}
-    size(queries, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
-
-    n_queries = size(queries, 2)
-    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
-
-    @inbounds for i in 1:n_queries
-        q = @view queries[:, i]
-        results[i] = query(index, data, q, k)
-    end
-
-    return results
-end
-
-"""
-    query(index::BruteForceIndex, data, queries::Vector{<:Vector}, k)
-
-Convenience batch query interface using a vector of query vectors.
-"""
-function query(
-    index::BruteForceIndex{T},
-    data::AbstractMatrix{T},
-    queries::Vector{<:AbstractVector{T}},
-    k::Integer;
-) where {T}
-    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
-    queries_mat = reduce(hcat, queries)
-    return query(index, data, queries_mat, k)
-end
-
-"""
     default_distance(x, y)
 
 Default distance function using Euclidean (L2) distance.

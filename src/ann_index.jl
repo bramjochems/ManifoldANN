@@ -42,6 +42,75 @@ policies.
 function query end
 
 """
+Batch sizes at or above this threshold use `Threads.@threads` in the generic
+matrix-input batch query. Below it, the spawn/scheduling overhead would beat
+any parallel speedup, so we run a serial loop. Tuned for typical embedding
+dimensions; not configurable on purpose — indices that need different policies
+should ship a more-specific batch method (HNSW does).
+"""
+const BATCH_THREAD_THRESHOLD = 64
+
+"""
+    query(index::AbstractANNIndex, data, queries::AbstractMatrix, k; kwargs...)
+
+Generic threaded batch-query fallback. Iterates over query columns, dispatching
+to the per-index single-query method. Threads when `Threads.nthreads() > 1` and
+the batch is at least `BATCH_THREAD_THRESHOLD`; otherwise runs serially.
+
+# Re-entrancy contract
+The single-query method `query(::ConcreteIndex, data, q::AbstractVector, k; ...)`
+MUST be safe to call concurrently with shared `index` and `data`. All concrete
+indices in this package satisfy that contract (they do not mutate `index` on
+read). Indices with thread-unsafe single-query state must override this method
+or document the restriction.
+
+Indices needing per-task scratch pooling (HNSW) provide a more-specific batch
+method that wins dispatch. Indices needing per-query pre-processing (e.g.
+NN-Descent's deterministic child-RNG spawning) likewise override this.
+"""
+function query(
+    index::AbstractANNIndex,
+    data::AbstractMatrix{T},
+    queries::AbstractMatrix{T},
+    k::Integer;
+    kwargs...,
+) where {T}
+    n_queries = size(queries, 2)
+    S = float(T)
+    n_queries == 0 && return Vector{Vector{Neighbor{S}}}()
+    results = Vector{Vector{Neighbor{S}}}(undef, n_queries)
+    if Threads.nthreads() == 1 || n_queries < BATCH_THREAD_THRESHOLD
+        @inbounds for i in 1:n_queries
+            results[i] = query(index, data, view(queries, :, i), k; kwargs...)
+        end
+    else
+        Threads.@threads for i in 1:n_queries
+            results[i] = query(index, data, view(queries, :, i), k; kwargs...)
+        end
+    end
+    return results
+end
+
+"""
+    query(index::AbstractANNIndex, data, queries::Vector{<:AbstractVector}, k; kwargs...)
+
+Vector-of-vectors batch convenience: stacks into a matrix and dispatches to the
+matrix-input method (which may be the generic threaded fallback above or a
+specialised override on the concrete index).
+"""
+function query(
+    index::AbstractANNIndex,
+    data::AbstractMatrix{T},
+    queries::Vector{<:AbstractVector{T}},
+    k::Integer;
+    kwargs...,
+) where {T}
+    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
+    queries_mat = reduce(hcat, queries)
+    return query(index, data, queries_mat, k; kwargs...)
+end
+
+"""
     materialize_graph(index::AbstractGraphIndex)
 
 Produce a `KNNGraph` representing the index connectivity. Used by downstream

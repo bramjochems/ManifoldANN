@@ -142,20 +142,3 @@ function query(
     return candidates[1:k_eff]
 end
 
-function query(
-    index::IVFFlatIndex{T,Dm},
-    data::AbstractMatrix{T},
-    queries::AbstractMatrix{T},
-    k::Integer;
-    nprobe::Int = index.default_nprobe,
-) where {T,Dm}
-    size(queries, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
-    n_queries = size(queries, 2)
-    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
-    @inbounds for i in 1:n_queries
-        q = @view queries[:, i]
-        results[i] = query(index, data, q, k; nprobe=nprobe)
-    end
-    return results
-end

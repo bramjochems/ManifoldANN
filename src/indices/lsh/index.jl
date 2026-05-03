@@ -87,49 +87,6 @@ function query(
     return results
 end
 
-"""
-    query(index::LSHIndex, data::Matrix, queries::Matrix, k::Integer; kwargs...)
-
-Batch query interface for LSH: process multiple queries efficiently.
-"""
-function query(
-    index::LSHIndex{T},
-    data::AbstractMatrix{T},
-    queries::AbstractMatrix{T},
-    k::Integer;
-    kwargs...
-) where {T<:BlasFloat}
-    size(queries, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
-
-    n_queries = size(queries, 2)
-    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
-
-    @inbounds for i in 1:n_queries
-        q = @view queries[:, i]
-        results[i] = query(index, data, q, k; kwargs...)
-    end
-
-    return results
-end
-
-"""
-    query(index::LSHIndex, data::Matrix, queries::Vector{<:Vector}, k::Integer; kwargs...)
-
-Convenience batch query interface using a vector of query vectors.
-"""
-function query(
-    index::LSHIndex{T},
-    data::AbstractMatrix{T},
-    queries::Vector{<:AbstractVector{T}},
-    k::Integer;
-    kwargs...
-) where {T<:BlasFloat}
-    isempty(queries) && return Vector{Vector{Neighbor{float(T)}}}()
-    queries_mat = reduce(hcat, queries)
-    return query(index, data, queries_mat, k; kwargs...)
-end
-
 function _collect_candidates(index::LSHIndex, q::AbstractVector)
     candidates = Int[]
     n_tables = length(index.tables)
