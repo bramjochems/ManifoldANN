@@ -480,24 +480,11 @@ second pass before claiming the package has been comprehensively reviewed.
 Items surfaced by a read-only architecture review (mid-session). None are
 gating; most are mechanical cleanups for a future housekeeping pass.
 
-- **`lloyd!` returns `iter=0` always.** `src/transforms/kmeans/lloyd.jl:55-57`.
-  Loop variable `iter` is shadowed by `for iter in 1:max_iters` (Julia 1.0+
-  loop locals), so the outer binding is never updated. Benign because no
-  caller uses the returned iteration count, but a future caller will get
-  bitten. One-line fix.
-
 - **Two test files orphaned outside `test/unit/`.**
   `test/indices/multilevel/test_deepcopy_fix.jl` and `test_ivf_smoke.jl` are
   not picked up by `runtests.jl` (which only walks `test/unit/`). Either
   silent test gap or stale code. Move into `test/unit/indices/multilevel/`
   or delete.
-
-- **`::Function`-typed fields on multilevel hot paths.** Same family as the
-  KDTree-distance fix (already landed): `multilevel/{builder,ivf_hnsw,query}.jl`
-  uses `::Function` for distance/cost slots. Compiler may already specialise
-  via single-call-site inlining (per the KDTree experiment's negative
-  result), so a no-op perf change in current usage but removes a latent
-  cliff if non-default callables are passed. ~30 LOC if pursued.
 
 - **`NodeNeighborhood.geometry::Union{Nothing,Any}`.**
   `src/graphs/refinement/types.jl:10`. Type-erased — every access is dynamic
