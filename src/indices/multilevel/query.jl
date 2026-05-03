@@ -126,7 +126,7 @@ end
         data::AbstractMatrix,
         q::AbstractVector,
         k::Integer,
-        fallback_distance::Function
+        fallback_distance
     )::Vector{Vector{Neighbor}}
 
 Query a TransformedIndex child (recursive case).
@@ -150,7 +150,7 @@ end
         data::AbstractMatrix,
         q::AbstractVector,
         k::Integer,
-        fallback_distance::Function
+        fallback_distance
     )::Vector{Vector{Neighbor}}
 
 Query a terminal index (base case).

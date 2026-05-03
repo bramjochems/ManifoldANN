@@ -19,7 +19,7 @@ using Distances: Euclidean, SemiMetric
         hnsw_ef_search::Int = 64,
         hnsw_neighbor_policy::Symbol = :diversified,
         merge_strategy::AbstractMergeStrategy = SimpleMerge(),
-        distance::Function = default_distance,
+        distance = default_distance,
     )::MultiLevelIndex
 
 Build a two-level IVF index where a KMeans transform (coarse quantization) routes
@@ -54,8 +54,8 @@ function build_ivf_hnsw_index(
     hnsw_ef_search::Int = HNSW_DEFAULT_EF_SEARCH,
     hnsw_neighbor_policy::Symbol = :diversified,
     merge_strategy::AbstractMergeStrategy = SimpleMerge(),
-    distance::Function = default_distance,
-)
+    distance::D = default_distance,
+) where {D}
     nlist > 0 || throw(ArgumentError("nlist must be positive, got $nlist"))
     routing = TopKRouting(clamp(routing_k, 1, nlist))
     transform = KMeansTransform(

@@ -25,7 +25,7 @@ using ...ManifoldANN:
         X::AbstractMatrix,
         config::TransformedConfig;
         merge_strategy::AbstractMergeStrategy = SimpleMerge(),
-        distance::Function = default_distance,
+        distance = default_distance,
     )::MultiLevelIndex
 
 Build a multi-level index from a declarative configuration tree.
@@ -59,8 +59,8 @@ function build_index(
     X::AbstractMatrix,
     config::TransformedConfig;
     merge_strategy::AbstractMergeStrategy = SimpleMerge(),
-    distance::Function = default_distance,
-)
+    distance::D = default_distance,
+) where {D}
     # Build the root TransformedIndex recursively
     root = _build_transformed(X, config)
 
