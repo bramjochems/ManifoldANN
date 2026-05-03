@@ -68,6 +68,141 @@ function query(
     return neighbors
 end
 
+"""
+    NNDescentBatchScratch{S}
+
+Per-worker scratch state for the NN-Descent BATCH query path. Reused across
+all queries one worker processes, so its allocation cost amortises over many
+calls.
+
+Holds:
+- a `BitVector` visited mask (sized to `n_points`)
+- backing `Vector{NeighborCandidate{S}}` for the pending min-heap
+- `best` result buffer (`Vector{NeighborCandidate{S}}`)
+- entry-point selection buffers (`Set{Int}` + `Vector{Int}`)
+
+Lifetime is owned by one task. Concurrent use of the same `NNDescentBatchScratch`
+from multiple threads is undefined behaviour.
+
+NOT used by the single-query API — that path allocates fresh buffers per call
+to preserve the existing thread-safety contract (single-query callers may share
+an index across threads).
+"""
+mutable struct NNDescentBatchScratch{S<:AbstractFloat}
+    visited::BitVector
+    pending_data::Vector{NeighborCandidate{S}}
+    best::Vector{NeighborCandidate{S}}
+    entry_seen::Set{Int}
+    entry_selected::Vector{Int}
+end
+
+function NNDescentBatchScratch{S}(n_points::Int, beam_hint::Int) where {S<:AbstractFloat}
+    pending = Vector{NeighborCandidate{S}}()
+    best    = Vector{NeighborCandidate{S}}()
+    sizehint!(pending, beam_hint)
+    sizehint!(best, beam_hint)
+    return NNDescentBatchScratch{S}(
+        falses(n_points),
+        pending,
+        best,
+        Set{Int}(),
+        Int[],
+    )
+end
+
+# Run one query against `index` using caller-owned scratch buffers. NOT
+# re-entrant — caller must guarantee exclusive ownership of `scratch`.
+function _query_pooled!(
+    scratch::NNDescentBatchScratch{S},
+    index::NNDescentIndex{T},
+    data::AbstractMatrix{T},
+    q::AbstractVector{T},
+    k::Integer,
+    ef_search::Union{Nothing,Integer},
+    rng::AbstractRNG,
+) where {T<:LinearAlgebra.BlasFloat,S<:AbstractFloat}
+    validate_index_dimensions(index, data, q)
+    k <= 0 && return Neighbor{S}[]
+    actual_k = min(Int(k), index.n_points)
+    actual_k == 0 && return Neighbor{S}[]
+
+    beam = ef_search === nothing ? max(actual_k, index.k) : max(actual_k, Int(ef_search))
+    beam > 0 || (beam = actual_k)
+
+    fill!(scratch.visited, false)
+    empty!(scratch.pending_data)
+    empty!(scratch.best)
+
+    start_ids = _pick_entry_points_pooled!(
+        scratch.entry_selected, scratch.entry_seen,
+        index.n_points, min(index.k, beam), rng,
+    )
+
+    first_id = start_ids[1]
+    first_dist = S(index.distance(view(data, :, first_id), q))
+
+    candidates = NeighborMinHeap{S}(scratch.pending_data)
+    push!(candidates, NeighborCandidate{S}(first_id, first_dist))
+    @inbounds scratch.visited[first_id] = true
+
+    @inbounds for idx in 2:length(start_ids)
+        id = start_ids[idx]
+        scratch.visited[id] = true
+        dist = S(index.distance(view(data, :, id), q))
+        push!(candidates, NeighborCandidate{S}(id, dist))
+    end
+
+    best = scratch.best
+    while !isempty(candidates)
+        current = popfirst!(candidates)
+        if length(best) >= beam && current.dist > best[end].dist
+            break
+        end
+        _insert_best_neighbor!(best, current, beam)
+        @inbounds for neighbor_id in index.neighbors[current.id]
+            scratch.visited[neighbor_id] && continue
+            scratch.visited[neighbor_id] = true
+            neighbor_dist = S(index.distance(view(data, :, neighbor_id), q))
+            push!(candidates, NeighborCandidate{S}(neighbor_id, neighbor_dist))
+        end
+    end
+
+    result_count = min(actual_k, length(best))
+    neighbors = Vector{Neighbor{S}}(undef, result_count)
+    @inbounds for i in 1:result_count
+        candidate = best[i]
+        neighbors[i] = Neighbor{S}(candidate.id, S(candidate.dist))
+    end
+    return neighbors
+end
+
+# Worker body extracted into a real function so Julia's closure conversion
+# gives each spawned task an isolated `scratch`. Defining it inline as
+# `Threads.@spawn let scratch = ... end` was observed to allow scratch
+# state to alias between sibling tasks under -t > 1 on Julia 1.12; making
+# the task body a plain function call sidesteps that.
+function _nndescent_batch_worker!(
+    results::Vector{Vector{Neighbor{S}}},
+    work::Channel{Int},
+    index::NNDescentIndex{T},
+    data::AbstractMatrix{T},
+    queries::AbstractMatrix{T},
+    k::Integer,
+    ef_search::Union{Nothing,Integer},
+    child_rngs::Vector{<:AbstractRNG},
+    ::Type{S},
+    beam_hint::Int,
+) where {T<:LinearAlgebra.BlasFloat,S<:AbstractFloat}
+    scratch = NNDescentBatchScratch{S}(index.n_points, beam_hint)
+    for i in work
+        results[i] = _query_pooled!(
+            scratch, index, data, view(queries, :, i),
+            k, ef_search, child_rngs[i],
+        )
+    end
+    return nothing
+end
+
 function query(
     index::NNDescentIndex{T},
     data::AbstractMatrix{T},
@@ -78,35 +213,48 @@ function query(
 ) where {T<:LinearAlgebra.BlasFloat}
     size(queries, 1) == index.dimension ||
         throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
+    S = float(T)
     n_queries = size(queries, 2)
-    n_queries == 0 && return Vector{Vector{Neighbor{float(T)}}}()
+    n_queries == 0 && return Vector{Vector{Neighbor{S}}}()
     # Spawn deterministic per-query child RNGs up front so threaded execution
     # stays reproducible (each task gets its own RNG; no shared mutable state).
     child_rngs = spawn_child_rngs(rng, n_queries)
-    results = Vector{Vector{Neighbor{float(T)}}}(undef, n_queries)
-    if Threads.nthreads() == 1 || n_queries < BATCH_THREAD_THRESHOLD
+    results = Vector{Vector{Neighbor{S}}}(undef, n_queries)
+
+    actual_k = min(Int(k), index.n_points)
+    if k <= 0 || actual_k == 0
         @inbounds for i in 1:n_queries
-            results[i] = query(
-                index,
-                data,
-                view(queries, :, i),
-                k;
-                ef_search = ef_search,
-                rng = child_rngs[i],
+            results[i] = Neighbor{S}[]
+        end
+        return results
+    end
+    beam_hint = ef_search === nothing ? max(actual_k, index.k) : max(actual_k, Int(ef_search))
+
+    if Threads.nthreads() == 1 || n_queries < BATCH_THREAD_THRESHOLD
+        scratch = NNDescentBatchScratch{S}(index.n_points, beam_hint)
+        @inbounds for i in 1:n_queries
+            results[i] = _query_pooled!(
+                scratch, index, data, view(queries, :, i), k, ef_search, child_rngs[i],
             )
         end
-    else
-        Threads.@threads for i in 1:n_queries
-            results[i] = query(
-                index,
-                data,
-                view(queries, :, i),
-                k;
-                ef_search = ef_search,
-                rng = child_rngs[i],
-            )
+        return results
+    end
+
+    nworkers = Threads.nthreads()
+    work = Channel{Int}(min(n_queries, max(64, 4 * nworkers)); spawn=true) do ch
+        @inbounds for i in 1:n_queries
+            put!(ch, i)
         end
     end
+
+    workers = Vector{Task}(undef, nworkers)
+    for w in 1:nworkers
+        workers[w] = Threads.@spawn _nndescent_batch_worker!(
+            results, work, index, data, queries, k, ef_search, child_rngs,
+            S, beam_hint,
+        )
+    end
+    foreach(wait, workers)
     return results
 end
 
@@ -127,6 +275,28 @@ function _pick_entry_points(n_points::Int, count::Int, rng::AbstractRNG)
     count = min(count, n_points)
     selected = Int[]
     seen = Set{Int}()
+    while length(selected) < count
+        candidate = rand(rng, 1:n_points)
+        candidate in seen && continue
+        push!(selected, candidate)
+        push!(seen, candidate)
+    end
+    return selected
+end
+
+# Pooled variant: writes into caller-owned `selected` Vector and `seen` Set,
+# both of which are emptied first. Returns `selected` for convenience.
+function _pick_entry_points_pooled!(
+    selected::Vector{Int},
+    seen::Set{Int},
+    n_points::Int,
+    count::Int,
+    rng::AbstractRNG,
+)
+    count = max(count, 1)
+    count = min(count, n_points)
+    empty!(selected)
+    empty!(seen)
     while length(selected) < count
         candidate = rand(rng, 1:n_points)
         candidate in seen && continue
