@@ -1,10 +1,9 @@
 """
     query(index::KDTreeIndex, data, q, k)
 
-Exact kNN search using a balanced KD-tree. The pruning strategy assumes an
-Euclidean-compatible metric (the index's `distance`); falls back to exploring
-both subtrees when in doubt by comparing the query's coordinate offset to the
-current worst neighbor distance.
+Exact kNN search using a balanced KD-tree with leaf buckets. Internal
+nodes prune via the canonical `axis_distance ≤ worst` check; bucket
+members are scanned linearly into the heap on leaf hit.
 """
 function query(
     index::KDTreeIndex{T,D},
@@ -31,17 +30,27 @@ function _search_kdtree!(
     heap::BoundedMaxHeap{S},
 ) where {T<:LinearAlgebra.BlasFloat,D,S<:AbstractFloat}
     node_id == 0 && return
-    node = index.nodes[node_id]
-    point_id = node.point_index
-    dist = S(index.distance(@view(data[:, point_id]), q))
-    push!(heap, point_id, dist)
+    @inbounds node = index.nodes[node_id]
 
+    # Leaf: linear-scan the bucket members.
+    if is_leaf(node)
+        bucket_lo = node.left
+        bucket_hi = node.right
+        @inbounds for j in bucket_lo:bucket_hi
+            point_id = index.indices[j]
+            dist = S(index.distance(@view(data[:, point_id]), q))
+            push!(heap, point_id, dist)
+        end
+        return
+    end
+
+    # Internal: pure router (no anchor distance computed here).
     axis = node.axis
     split_value = node.split_value
     q_val = q[axis]
     go_left = q_val < split_value
     near_child = go_left ? node.left : node.right
-    far_child = go_left ? node.right : node.left
+    far_child  = go_left ? node.right : node.left
 
     _search_kdtree!(index, near_child, data, q, heap)
 

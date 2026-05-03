@@ -1,9 +1,11 @@
 """
-    build_index(KDTreeIndex, data; axis_selector = :variance)
+    build_index(KDTreeIndex, data; axis_selector = :variance, leafsize = KDTREE_DEFAULT_LEAFSIZE)
 
-Construct a balanced KD-tree over `data`. Only metadata required for search
-is retained inside the index, so callers are still responsible for supplying
-the point matrix when querying.
+Construct a balanced KD-tree over `data`. Internal nodes are pure routers
+(split axis + threshold); points live in leaf buckets of size up to
+`leafsize`. Only metadata required for search is retained inside the
+index, so callers are still responsible for supplying the point matrix
+when querying.
 
 `axis_selector` controls how split dimensions are chosen:
 - `:variance` (default): pick the axis with the largest spread per subtree
@@ -13,19 +15,21 @@ function build_index(
     ::Type{KDTreeIndex},
     data::AbstractMatrix{T};
     axis_selector::Symbol = :variance,
+    leafsize::Int = KDTREE_DEFAULT_LEAFSIZE,
     distance::D = default_distance,
 ) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
     n > 0 || throw(ArgumentError("Dataset must contain at least one point"))
+    leafsize >= 1 || throw(ArgumentError("leafsize must be >= 1"))
     axis_selector in (:variance, :cyclic) ||
         throw(ArgumentError("axis_selector must be :variance or :cyclic"))
 
     indices = collect(1:n)
     nodes = Vector{KDTreeNode{T}}()
-    sizehint!(nodes, n)
-    root = _build_kdtree!(nodes, data, indices, 1, n, axis_selector, 1)
-    return KDTreeIndex{T,D}(nodes, d, n, root, distance)
+    sizehint!(nodes, max(1, 2 * (n ÷ max(leafsize, 1)) - 1))
+    root = _build_kdtree!(nodes, data, indices, 1, n, axis_selector, leafsize, 1)
+    return KDTreeIndex{T,D}(nodes, indices, d, n, root, leafsize, distance)
 end
 
 function _build_kdtree!(
@@ -35,25 +39,35 @@ function _build_kdtree!(
     lo::Int,
     hi::Int,
     axis_selector::Symbol,
+    leafsize::Int,
     depth::Int,
 ) where {T<:LinearAlgebra.BlasFloat}
     lo > hi && return 0
+
+    # Leaf: range fits in a bucket, no further split.
+    if hi - lo + 1 <= leafsize
+        push!(nodes, KDTreeNode{T}(0, 0, zero(T), lo, hi))
+        return length(nodes)
+    end
 
     axis = _pick_axis(data, indices, lo, hi, axis_selector, depth)
     len = hi - lo + 1
     median_pos = lo + ((len + 1) >>> 1) - 1
     _quickselect_axis!(indices, lo, hi, median_pos, data, axis)
-    point_index = indices[median_pos]
-    split_value = data[axis, point_index]
+    split_value = data[axis, indices[median_pos]]
 
-    node_placeholder = KDTreeNode{T}(axis, point_index, split_value, 0, 0)
-    push!(nodes, node_placeholder)
+    # Internal node: pure router. point_index is unused (kept 0). All
+    # points in this subtree live in descendant leaves, including the
+    # median-positioned point — it goes into the right subtree's leaf via
+    # `lo = median_pos`.
+    placeholder = KDTreeNode{T}(axis, 0, split_value, 0, 0)
+    push!(nodes, placeholder)
     node_id = length(nodes)
 
-    left_child = _build_kdtree!(nodes, data, indices, lo, median_pos - 1, axis_selector, depth + 1)
-    right_child = _build_kdtree!(nodes, data, indices, median_pos + 1, hi, axis_selector, depth + 1)
+    left_child  = _build_kdtree!(nodes, data, indices, lo, median_pos - 1, axis_selector, leafsize, depth + 1)
+    right_child = _build_kdtree!(nodes, data, indices, median_pos, hi, axis_selector, leafsize, depth + 1)
 
-    nodes[node_id] = KDTreeNode{T}(axis, point_index, split_value, left_child, right_child)
+    nodes[node_id] = KDTreeNode{T}(axis, 0, split_value, left_child, right_child)
     return node_id
 end
 
