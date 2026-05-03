@@ -20,6 +20,18 @@ class ManifoldANNWrapper(BaseANNWrapper):
     _to_matrix = None
     _to_vector = None
 
+    # Per-dim warmup tracking. We compile each index type's hot path against
+    # a small dummy matrix of the actual dataset dim before the first timed
+    # call so dim-specialised methods don't recompile inside `fit()`.
+    # Key: (index_kind, dim). Value: True if warmed.
+    _warmed_keys = set()
+
+    # Subclasses set this to opt into per-dim JIT warmup. The string is a
+    # stable identifier for the index kind (used as the key in
+    # `_warmed_keys`). Subclasses also implement `_warmup(dim)` doing a
+    # tiny build + query on `randn(Float32, dim, 64)`.
+    _warmup_kind = None
+
     def __init__(self, metric):
         """Initialize the wrapper.
 
@@ -35,45 +47,46 @@ class ManifoldANNWrapper(BaseANNWrapper):
             # Create conversion functions once
             ManifoldANNWrapper._to_matrix = jl.seval("x -> Matrix{Float32}(x)")
             ManifoldANNWrapper._to_vector = jl.seval("x -> Vector{Float32}(x)")
-
-            # JIT warmup: compile core functions with small dummy data
-            # This ensures compilation time is excluded from benchmark timings
-            print("Warming up ManifoldANN (first use only)...")
-            warmup_data = jl.seval("randn(Float32, 10, 100)")  # 10-dim, 100 points
-            warmup_query = jl.seval("randn(Float32, 10)")
-
-            # Warmup a simple index (BruteForce is fastest to compile)
-            warmup_index = jl.build_index(jl.BruteForceIndex, warmup_data)
-            jl.query(warmup_index, warmup_data, warmup_query, 5)
-
-            # Warmup a tiny IVF-HNSW build to avoid JIT in timed runs
-            try:
-                jl.eval(
-                    """
-                    begin
-                        warmup_ivf = build_ivf_hnsw_index(
-                            warmup_data;
-                            nlist=4,
-                            routing_k=2,
-                            kmeans_max_iters=2,
-                            hnsw_M=8,
-                            hnsw_ef_construction=40,
-                            hnsw_ef_search=16,
-                            distance=default_distance,
-                        )
-                        warmup_ivf
-                    end
-                    """
-                )
-            except Exception:
-                # If warmup fails, skip without breaking benchmarks
-                pass
-
-            print("✓ ManifoldANN warmup complete")
             ManifoldANNWrapper._julia_initialized = True
 
         self._index = None
         self._data = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle: marshal numpy -> Julia outside the timed region
+    # ------------------------------------------------------------------
+
+    def prepare_data(self, X):
+        """Convert numpy (n_samples, n_features) -> Julia Matrix{Float32}
+        of shape (n_features, n_samples). Charged outside `fit()`."""
+        X_fortran = np.asfortranarray(X.T, dtype=np.float32)
+        prepared = self._to_matrix(X_fortran)
+
+        # Per-dim JIT warmup for this index kind. Done outside the timed
+        # region. Only warms once per (kind, dim) across the whole process.
+        kind = type(self)._warmup_kind
+        if kind is not None:
+            key = (kind, int(X.shape[1]))
+            if key not in ManifoldANNWrapper._warmed_keys:
+                try:
+                    self._warmup(int(X.shape[1]))
+                except Exception as exc:
+                    print(f"  ⚠ {kind} warmup at dim={X.shape[1]} failed: {exc}")
+                ManifoldANNWrapper._warmed_keys.add(key)
+
+        return prepared
+
+    def prepare_queries(self, Q):
+        """Convert query batch numpy (n_queries, n_features) -> Julia
+        Matrix{Float32} of shape (n_features, n_queries)."""
+        Q_fortran = np.asfortranarray(Q.T, dtype=np.float32)
+        return self._to_matrix(Q_fortran)
+
+    def _warmup(self, dim: int) -> None:
+        """Default warmup: subclasses with `_warmup_kind` set should
+        override. Builds a tiny instance of the index and runs one batch
+        query so dim-specialised code paths compile."""
+        pass
 
     def _neighbors_to_ids(self, jl_neighbors):
         """Convert Julia neighbor structs to 0-indexed Python ids."""
@@ -99,17 +112,10 @@ class ManifoldANNWrapper(BaseANNWrapper):
             return jl.ManifoldANN.default_distance
 
     def fit(self, X):
-        """Build the index from training data.
-
-        Args:
-            X: numpy array of shape (n_samples, n_features)
-        """
-        # Convert to Fortran-contiguous array (column-major) for Julia
-        # Julia expects (n_features, n_samples) while numpy gives (n_samples, n_features)
-        X_fortran = np.asfortranarray(X.T, dtype=np.float32)
-
-        # Convert to Julia array using pre-created converter
-        self._data = self._to_matrix(X_fortran)
+        """Subclasses must override. `X` is the prepared Julia matrix from
+        `prepare_data`."""
+        # Default: assume `X` is already a Julia matrix and stash it.
+        self._data = X
 
     def query(self, v, n):
         """Query for nearest neighbors.
@@ -134,21 +140,15 @@ class ManifoldANNWrapper(BaseANNWrapper):
     def query_batch(self, queries, n):
         """Query for nearest neighbors of multiple queries at once.
 
-        This is significantly faster than calling query() in a loop because it
-        minimizes Python↔Julia boundary crossings (1 crossing instead of N).
-
-        Args:
-            queries: numpy array of shape (n_queries, n_features)
-            n: Number of neighbors to return per query
-
-        Returns:
-            List of lists: [[neighbor_indices for query1], [for query2], ...]
-            All indices are 0-indexed for Python.
+        `queries` is the prepared Julia matrix returned from
+        `prepare_queries` (or a numpy array, which we convert as a
+        fallback). The Python↔Julia boundary is crossed once.
         """
-        # Convert to Fortran-contiguous (column-major) for Julia
-        # Julia expects (n_features, n_queries) while numpy gives (n_queries, n_features)
-        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
-        queries_jl = self._to_matrix(queries_fortran)
+        if isinstance(queries, np.ndarray):
+            queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+            queries_jl = self._to_matrix(queries_fortran)
+        else:
+            queries_jl = queries
 
         # Call Julia batch query function - crosses boundary only ONCE
         results_jl = jl.query(self._index, self._data, queries_jl, n)
@@ -165,16 +165,33 @@ class ManifoldANNWrapper(BaseANNWrapper):
             return False
 
 
+def _warm_data(dim: int, n: int = 64):
+    """Build a small Julia warmup matrix of the requested dim."""
+    return jl.seval(f"randn(Float32, {dim}, {n})")
+
+
+def _warm_queries(dim: int, n: int = 4):
+    return jl.seval(f"randn(Float32, {dim}, {n})")
+
+
 class ManifoldANN_BruteForce(ManifoldANNWrapper):
     """Wrapper for ManifoldANN BruteForceIndex (baseline)."""
+
+    _warmup_kind = "BruteForceIndex"
 
     def __init__(self, metric):
         """Initialize brute force wrapper."""
         super().__init__(metric)
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim)
+        qs = _warm_queries(dim)
+        idx = jl.build_index(jl.BruteForceIndex, data, distance=self._get_distance_function())
+        jl.query(idx, data, qs, 5)
+
     def fit(self, X):
-        """Build the brute force index."""
-        super().fit(X)
+        """Build the brute force index. `X` is the prepared Julia matrix."""
+        self._data = X
         distance_fn = self._get_distance_function()
         self._index = jl.build_index(jl.BruteForceIndex, self._data, distance=distance_fn)
 
@@ -188,6 +205,8 @@ class ManifoldANN_BruteForce(ManifoldANNWrapper):
 
 class ManifoldANN_LSH(ManifoldANNWrapper):
     """Wrapper for ManifoldANN LSHIndex."""
+
+    _warmup_kind = "LSHIndex"
 
     def __init__(self, metric, n_tables=8, hash_length=16, bin_width=None):
         """Initialize LSH wrapper.
@@ -204,32 +223,46 @@ class ManifoldANN_LSH(ManifoldANNWrapper):
         self._hash_length = hash_length
         self._bin_width = bin_width
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim)
+        qs = _warm_queries(dim)
+        # Warm both hash families against this dim.
+        try:
+            idx_h = jl.build_index(
+                jl.LSHIndex, data,
+                n_tables=2, hash_length=4,
+                hash_factory=jl.make_random_hyperplane_hash,
+                T=jl.Float32,
+            )
+            jl.query(idx_h, data, qs, 5)
+        except Exception:
+            pass
+        try:
+            idx_b = jl.build_index(
+                jl.LSHIndex, data,
+                n_tables=2, hash_length=4,
+                hash_factory=jl.make_binning_hash,
+                bin_width=1.0,
+                use_offset=True,
+                T=jl.Float32,
+            )
+            jl.query(idx_b, data, qs, 5)
+        except Exception:
+            pass
+
     def fit(self, X):
-        """Build the LSH index."""
-        super().fit(X)
+        """Build the LSH index. `X` is the prepared Julia matrix."""
+        self._data = X
 
         # Select appropriate hash family based on metric
         if self._metric == "euclidean":
             # Use BinningHash (p-stable LSH) for Euclidean distance
             if self._bin_width is None:
-                # Auto-compute bin_width using heuristic: w ≈ 3 × avg_nn_distance
-                # Sample a subset of points to estimate average NN distance
-                n_samples = min(1000, X.shape[0])
-                indices = np.random.choice(X.shape[0], size=n_samples, replace=False)
-                sample = X[indices]
-
-                # Compute pairwise distances and find nearest neighbor for each sample
-                from scipy.spatial.distance import cdist
-
-                distances = cdist(sample, sample, metric="euclidean")
-                np.fill_diagonal(distances, np.inf)  # Ignore self-distances
-                avg_nn_dist = np.mean(np.min(distances, axis=1))
-
-                self._bin_width = 3.0 * avg_nn_dist
-                print(
-                    f"LSH: Auto-computed bin_width = {self._bin_width:.4f} "
-                    f"(3 × avg_nn_dist = 3 × {avg_nn_dist:.4f})"
-                )
+                # Auto-bin_width is computed from the original numpy data
+                # in `prepare_data`. If this hasn't been computed yet (e.g.
+                # the harness called `fit` directly with the prepared
+                # matrix), fall back to a sensible default.
+                self._bin_width = getattr(self, "_bin_width_auto", 1.0)
 
             # Build index with BinningHash
             self._index = jl.build_index(
@@ -253,6 +286,26 @@ class ManifoldANN_LSH(ManifoldANNWrapper):
                 T=jl.Float32,
             )
 
+    def prepare_data(self, X):
+        """Override to compute auto bin_width from the numpy view (we still
+        have access to it here) before handing the matrix to Julia."""
+        if self._metric == "euclidean" and self._bin_width is None:
+            n_samples = min(1000, X.shape[0])
+            indices = np.random.choice(X.shape[0], size=n_samples, replace=False)
+            sample = X[indices]
+
+            from scipy.spatial.distance import cdist
+            distances = cdist(sample, sample, metric="euclidean")
+            np.fill_diagonal(distances, np.inf)
+            avg_nn_dist = np.mean(np.min(distances, axis=1))
+
+            self._bin_width_auto = 3.0 * avg_nn_dist
+            print(
+                f"LSH: Auto-computed bin_width = {self._bin_width_auto:.4f} "
+                f"(3 × avg_nn_dist = 3 × {avg_nn_dist:.4f})"
+            )
+        return super().prepare_data(X)
+
     def query(self, v, n):
         """Query for nearest neighbors with LSH."""
         query_vec = np.asfortranarray(v, dtype=np.float32)
@@ -274,7 +327,8 @@ class ManifoldANN_LSH(ManifoldANNWrapper):
             if hasattr(self, "_candidate_cap")
             else ""
         )
-        bw_str = f", bin_width={self._bin_width:.4f}" if self._bin_width is not None else ""
+        bw = self._bin_width if self._bin_width is not None else getattr(self, "_bin_width_auto", None)
+        bw_str = f", bin_width={bw:.4f}" if bw is not None else ""
         return f"ManifoldANN-LSH(n_tables={self._n_tables}, hash_length={self._hash_length}{bw_str}{cap_str})"
 
     @staticmethod
@@ -286,6 +340,7 @@ class ManifoldANN_KDTree(ManifoldANNWrapper):
     """Wrapper for ManifoldANN KDTreeIndex."""
 
     _VALID_AXIS_SELECTORS = ("variance", "cyclic")
+    _warmup_kind = "KDTreeIndex"
 
     def __init__(self, metric, axis_selector="variance"):
         """Initialize KDTree wrapper.
@@ -310,9 +365,19 @@ class ManifoldANN_KDTree(ManifoldANNWrapper):
                 UserWarning,
             )
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim)
+        warm_q = jl.seval(f"randn(Float32, {dim})")
+        for sel in ("variance", "cyclic"):
+            try:
+                idx = jl.build_index(jl.KDTreeIndex, data, axis_selector=jl.Symbol(sel))
+                jl.query(idx, data, warm_q, 5)
+            except Exception:
+                pass
+
     def fit(self, X):
-        """Build the KD-tree index."""
-        super().fit(X)
+        """Build the KD-tree index. `X` is the prepared Julia matrix."""
+        self._data = X
 
         axis_symbol = jl.Symbol(self._axis_selector)
         self._index = jl.build_index(
@@ -322,7 +387,21 @@ class ManifoldANN_KDTree(ManifoldANNWrapper):
         )
 
     def query_batch(self, queries, n):
-        """KDTreeIndex exposes only scalar queries; batch in Python."""
+        """KDTreeIndex exposes only scalar queries; batch in Python.
+
+        Accepts numpy or already-prepared Julia matrix. We always loop in
+        Python anyway so the prepared Julia matrix is unused for this
+        algorithm — fall back to numpy iteration.
+        """
+        if not isinstance(queries, np.ndarray):
+            # Caller handed us a Julia matrix; we don't currently expose a
+            # cheap way to iterate Julia columns from Python, so this path
+            # is best avoided. Fall through with the assumption that the
+            # caller saved the original numpy array.
+            raise TypeError(
+                "ManifoldANN_KDTree.query_batch requires the original numpy "
+                "queries (no Julia matrix path); use a numpy array."
+            )
         return [self.query(q, n) for q in queries]
 
     def __str__(self):
@@ -337,6 +416,7 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
     """Wrapper for ManifoldANN HNSWIndex."""
 
     _VALID_NEIGHBOR_POLICIES = {"heuristic", "diversified"}
+    _warmup_kind = "HNSWIndex"
 
     def __init__(
         self,
@@ -365,9 +445,27 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
             )
         self._neighbor_policy = neighbor_policy
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim, n=128)
+        qs = _warm_queries(dim, n=4)
+        warm_q = jl.seval(f"randn(Float32, {dim})")
+        distance_fn = self._get_distance_function()
+        for policy in ("heuristic", "diversified"):
+            try:
+                idx = jl.build_index(
+                    jl.HNSWIndex, data,
+                    M=8, ef_construction=40, ef_search=16,
+                    neighbor_policy=jl.Symbol(policy),
+                    distance=distance_fn,
+                )
+                jl.query(idx, data, warm_q, 5, ef_search=16)
+                jl.query(idx, data, qs, 5, ef_search=16)
+            except Exception:
+                pass
+
     def fit(self, X):
-        """Build the HNSW index."""
-        super().fit(X)
+        """Build the HNSW index. `X` is the prepared Julia matrix."""
+        self._data = X
 
         # Build index using Julia with appropriate distance function
         neighbor_policy_symbol = jl.Symbol(self._neighbor_policy)
@@ -392,6 +490,18 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
 
         return self._neighbors_to_ids(result)
 
+    def query_batch(self, queries, n):
+        """Batch HNSW query, respecting `ef_search`."""
+        if isinstance(queries, np.ndarray):
+            queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+            queries_jl = self._to_matrix(queries_fortran)
+        else:
+            queries_jl = queries
+        results_jl = jl.query(
+            self._index, self._data, queries_jl, n, ef_search=self._ef_search
+        )
+        return self._batch_neighbors_to_ids(results_jl)
+
     def __str__(self):
         return (
             f"ManifoldANN-HNSW(M={self._M}, ef_construction={self._ef_construction}, "
@@ -405,6 +515,8 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
 
 class ManifoldANN_IVFHNSW(ManifoldANNWrapper):
     """Wrapper for the IVF (KMeans) + HNSW multi-level index."""
+
+    _warmup_kind = "IVFHNSW"
 
     def __init__(
         self,
@@ -435,9 +547,31 @@ class ManifoldANN_IVFHNSW(ManifoldANNWrapper):
             return jl.seval("ManifoldANN.Distances.CosineDist()")
         return jl.seval("ManifoldANN.Distances.Euclidean()")
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim, n=128)
+        warm_q = jl.seval(f"randn(Float32, {dim})")
+        try:
+            idx = jl.build_ivf_hnsw_index(
+                data,
+                nlist=4,
+                routing_k=2,
+                kmeans_distance=self._kmeans_metric(),
+                kmeans_init=jl.Symbol(self._kmeans_init),
+                kmeans_max_iters=2,
+                kmeans_tol=self._kmeans_tol,
+                hnsw_M=8,
+                hnsw_ef_construction=40,
+                hnsw_ef_search=16,
+                hnsw_neighbor_policy=jl.Symbol(self._neighbor_policy),
+                distance=self._get_distance_function(),
+            )
+            jl.query(idx, data, warm_q, 5)
+        except Exception:
+            pass
+
     def fit(self, X):
-        """Build the IVF+HNSW index."""
-        super().fit(X)
+        """Build the IVF+HNSW index. `X` is the prepared Julia matrix."""
+        self._data = X
         distance_fn = self._get_distance_function()
         routing_k = max(1, min(self._routing_k, self._nlist))
         kmeans_metric = self._kmeans_metric()
@@ -473,6 +607,8 @@ class ManifoldANN_IVFHNSW(ManifoldANNWrapper):
 class ManifoldANN_IVFFlat(ManifoldANNWrapper):
     """Wrapper for the Julia IVF-Flat index."""
 
+    _warmup_kind = "IVFFlatIndex"
+
     def __init__(
         self,
         metric,
@@ -494,9 +630,25 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
             return jl.seval("ManifoldANN.Distances.CosineDist()")
         return jl.seval("ManifoldANN.Distances.Euclidean()")
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim, n=128)
+        warm_q = jl.seval(f"randn(Float32, {dim})")
+        qs = _warm_queries(dim)
+        try:
+            idx = jl.build_index(
+                jl.IVFFlatIndex, data,
+                nlist=4, nprobe=2,
+                distance=self._get_distance_function(),
+                centroid_metric=self._kmeans_metric(),
+            )
+            jl.query(idx, data, warm_q, 5, nprobe=2)
+            jl.query(idx, data, qs, 5, nprobe=2)
+        except Exception:
+            pass
+
     def fit(self, X):
-        """Build the IVF-Flat index."""
-        super().fit(X)
+        """Build the IVF-Flat index. `X` is the prepared Julia matrix."""
+        self._data = X
         distance_fn = self._get_distance_function()
         kmeans_metric = self._kmeans_metric()
         self._index = jl.build_index(
@@ -516,8 +668,11 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
         return self._neighbors_to_ids(result)
 
     def query_batch(self, queries, n):
-        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
-        queries_jl = self._to_matrix(queries_fortran)
+        if isinstance(queries, np.ndarray):
+            queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+            queries_jl = self._to_matrix(queries_fortran)
+        else:
+            queries_jl = queries
         results = jl.query(self._index, self._data, queries_jl, n, nprobe=self._nprobe)
         return self._batch_neighbors_to_ids(results)
 
@@ -535,6 +690,8 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
 
 class ManifoldANN_NNDescent(ManifoldANNWrapper):
     """Wrapper for ManifoldANN NNDescentIndex."""
+
+    _warmup_kind = "NNDescentIndex"
 
     def __init__(
         self,
@@ -568,9 +725,30 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         self._apply_symmetry_continuously = bool(apply_symmetry_continuously)
         self._ef_search = ef_search if ef_search is not None else max(self._k, 2 * self._k)
 
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim, n=128)
+        warm_q = jl.seval(f"randn(Float32, {dim})")
+        qs = _warm_queries(dim)
+        sampling = jl.ManifoldANN.UniformPairSampling(0.5)
+        for symmetry in ("pruned", "full"):
+            for cont in (True, False):
+                try:
+                    idx = jl.build_index(
+                        jl.NNDescentIndex, data,
+                        k=8, max_iterations=2, convergence_threshold=0.1,
+                        sampling_policy=sampling,
+                        symmetry_policy=jl.Symbol(symmetry),
+                        apply_symmetry_continuously=cont,
+                        distance=self._get_distance_function(),
+                    )
+                    jl.query(idx, data, warm_q, 5, ef_search=16)
+                    jl.query(idx, data, qs, 5, ef_search=16)
+                except Exception:
+                    pass
+
     def fit(self, X):
-        """Build the NN-Descent index."""
-        super().fit(X)
+        """Build the NN-Descent index. `X` is the prepared Julia matrix."""
+        self._data = X
         sampling_policy = jl.ManifoldANN.UniformPairSampling(self._sample_rate)
 
         # Convert symmetry policy string to Julia symbol
@@ -604,8 +782,11 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
 
     def query_batch(self, queries, n):
         """Batch query variant that respects ef_search."""
-        queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
-        queries_jl = self._to_matrix(queries_fortran)
+        if isinstance(queries, np.ndarray):
+            queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
+            queries_jl = self._to_matrix(queries_fortran)
+        else:
+            queries_jl = queries
         results = jl.query(
             self._index,
             self._data,

@@ -28,6 +28,11 @@ class SciPy_KDTree(BaseANNWrapper):
 
         self.leafsize = leafsize
         self.index = None
+        self._num_threads = 1
+
+    def set_num_threads(self, n: int) -> None:
+        """SciPy's `cKDTree.query` accepts `workers=N` per call."""
+        self._num_threads = int(n)
 
     def fit(self, X: np.ndarray) -> None:
         """Build the KDTree index.
@@ -52,11 +57,18 @@ class SciPy_KDTree(BaseANNWrapper):
         Returns:
             List of neighbor indices
         """
-        distances, indices = self.index.query(v, k=n)
+        distances, indices = self.index.query(v, k=n, workers=self._num_threads)
 
         # Handle single neighbor case
         if n == 1:
             return [int(indices)]
+        return indices.tolist()
+
+    def query_batch(self, queries: np.ndarray, n: int) -> List[List[int]]:
+        """Vectorised batch query honouring the configured worker count."""
+        distances, indices = self.index.query(queries, k=n, workers=self._num_threads)
+        if n == 1:
+            return [[int(i)] for i in indices]
         return indices.tolist()
 
     def __str__(self) -> str:

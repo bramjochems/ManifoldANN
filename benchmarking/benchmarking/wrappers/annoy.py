@@ -20,6 +20,11 @@ class Annoy(BaseANNWrapper):
         self.n_trees = n_trees
         self.index = None
         self.dimension = None
+        self._num_threads = -1  # Annoy default: all cores
+
+    def set_num_threads(self, n: int) -> None:
+        """Annoy honours `n_jobs` on `index.build`. Store for use in fit."""
+        self._num_threads = int(n)
 
     def fit(self, X: np.ndarray) -> None:
         """Build the Annoy index.
@@ -36,7 +41,7 @@ class Annoy(BaseANNWrapper):
         for i, vec in enumerate(X):
             self.index.add_item(i, vec.tolist())
 
-        self.index.build(self.n_trees)
+        self.index.build(self.n_trees, n_jobs=self._num_threads)
 
     def query(self, v: np.ndarray, n: int) -> List[int]:
         """Query for nearest neighbors.

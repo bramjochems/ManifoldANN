@@ -22,21 +22,46 @@ class FAISS_IVF(BaseANNWrapper):
         self.nprobe = nprobe
         self.index = None
         self.dimension = None
+        self._num_threads = None
+
+    def set_num_threads(self, n: int) -> None:
+        """Set FAISS OMP thread count process-wide."""
+        try:
+            import faiss
+            faiss.omp_set_num_threads(int(n))
+            self._num_threads = int(n)
+        except ImportError:
+            self._num_threads = int(n)
+
+    def prepare_data(self, X: np.ndarray) -> np.ndarray:
+        """Coerce to float32 contiguous and (for angular) L2-normalise.
+
+        These steps are required before `index.train` / `index.add`; doing
+        them outside the timed region matches what we do for the Julia
+        wrappers (charge marshalling symmetrically).
+        """
+        out = np.ascontiguousarray(X, dtype=np.float32)
+        if self._metric == "angular":
+            try:
+                import faiss
+                # faiss.normalize_L2 mutates in place; copy first so we
+                # don't surprise the caller by mutating their array.
+                out = out.copy()
+                faiss.normalize_L2(out)
+            except ImportError:
+                pass
+        return out
 
     def fit(self, X: np.ndarray) -> None:
         """Build the FAISS IVF index.
 
         Args:
-            X: Training data, shape (n_samples, n_features)
+            X: Training data, shape (n_samples, n_features), already
+               float32 / L2-normalised by `prepare_data`.
         """
         import faiss
 
         self.dimension = X.shape[1]
-        X = X.astype(np.float32)
-
-        # Normalize vectors for angular distance
-        if self._metric == "angular":
-            faiss.normalize_L2(X)
 
         # Create quantizer and IVF index
         quantizer = faiss.IndexFlatL2(self.dimension)

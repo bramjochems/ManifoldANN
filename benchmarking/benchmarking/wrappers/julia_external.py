@@ -17,8 +17,11 @@ class JuliaExternalWrapper(BaseANNWrapper):
     """Base wrapper for external Julia ANN libraries."""
 
     _julia_initialized = False
+    _vov_defined = False
     _to_matrix = None
     _to_vector = None
+    _warmed_keys = set()
+    _warmup_kind = None
 
     def __init__(self, metric):
         """Initialize wrapper and Julia environment.
@@ -37,45 +40,60 @@ class JuliaExternalWrapper(BaseANNWrapper):
             # Create conversion functions
             JuliaExternalWrapper._to_matrix = jl.seval("x -> Matrix{Float32}(x)")
             JuliaExternalWrapper._to_vector = jl.seval("x -> Vector{Float32}(x)")
-
-            # JIT warmup: compile functions with small dummy data to exclude compilation
-            # time from benchmarks (same as ManifoldANN does)
-            print("Warming up Julia external libraries (first use only)...")
-
-            try:
-                # Create warmup data: 10 dimensions, 100 points (column-major: each column is a point)
-                warmup_data = jl.seval("randn(Float32, 10, 100)")
-                warmup_query = jl.seval("randn(Float32, 10)")
-
-                # Warmup NearestNeighbors.jl
-                kdtree_warmup = jl.KDTree(warmup_data, jl.Euclidean())
-                jl.knn(kdtree_warmup, warmup_query, 5)
-                print("  ✓ NearestNeighbors.jl warmed up")
-            except Exception as e:
-                print(f"  ⚠ NearestNeighbors.jl warmup failed: {e}")
-
-            # Note: HNSW.jl has API issues with querying, so we skip its warmup
-            # The library will be disabled in benchmarks
-
-            print("✓ Julia warmup complete")
             JuliaExternalWrapper._julia_initialized = True
+
+        if not JuliaExternalWrapper._vov_defined:
+            jl.seval("""
+            function matrix_to_vector_of_vectors(M)
+                [M[:, i] for i in 1:size(M, 2)]
+            end
+            """)
+            JuliaExternalWrapper._vov_defined = True
 
         self._index = None
         self._data = None
 
-    def _prepare_data(self, X: np.ndarray):
-        """Convert numpy array to Julia format.
+    # ------------------------------------------------------------------
+    # Lifecycle: marshal numpy -> Julia outside the timed region
+    # ------------------------------------------------------------------
 
-        Args:
-            X: numpy array of shape (n_samples, n_features)
-        """
-        # Julia expects (n_features, n_samples)
+    def _matrix_form(self):
+        """One of 'matrix' or 'vector_of_vectors'. Subclasses override."""
+        return "matrix"
+
+    def prepare_data(self, X):
+        """Charge marshalling outside the timed `fit()` region."""
         X_fortran = np.asfortranarray(X.T, dtype=np.float32)
-        self._data = self._to_matrix(X_fortran)
+        matrix_jl = self._to_matrix(X_fortran)
+        if self._matrix_form() == "vector_of_vectors":
+            prepared = jl.matrix_to_vector_of_vectors(matrix_jl)
+        else:
+            prepared = matrix_jl
+
+        # Per-dim JIT warmup keyed off (kind, dim).
+        kind = type(self)._warmup_kind
+        if kind is not None:
+            key = (kind, int(X.shape[1]))
+            if key not in JuliaExternalWrapper._warmed_keys:
+                try:
+                    self._warmup(int(X.shape[1]))
+                except Exception as exc:
+                    print(f"  ⚠ {kind} warmup at dim={X.shape[1]} failed: {exc}")
+                JuliaExternalWrapper._warmed_keys.add(key)
+        return prepared
+
+    def prepare_queries(self, Q):
+        Q_fortran = np.asfortranarray(Q.T, dtype=np.float32)
+        return self._to_matrix(Q_fortran)
+
+    def _warmup(self, dim: int) -> None:
+        pass
 
 
 class NearestNeighbors_KDTree(JuliaExternalWrapper):
     """Wrapper for NearestNeighbors.jl KDTree."""
+
+    _warmup_kind = "NN_jl_KDTree"
 
     def __init__(self, metric, leafsize=10):
         """Initialize NearestNeighbors.jl KDTree.
@@ -87,21 +105,23 @@ class NearestNeighbors_KDTree(JuliaExternalWrapper):
         super().__init__(metric)
         self.leafsize = leafsize
 
-    def fit(self, X: np.ndarray) -> None:
-        """Build the KDTree index."""
-        self._prepare_data(X)
+    def _warmup(self, dim: int) -> None:
+        data = jl.seval(f"randn(Float32, {dim}, 128)")
+        q = jl.seval(f"randn(Float32, {dim})")
+        idx = jl.KDTree(data, jl.Euclidean(), leafsize=self.leafsize)
+        jl.knn(idx, q, 5)
 
-        # Map metric
+    def fit(self, X) -> None:
+        """Build the KDTree index. `X` is the prepared Julia matrix."""
+        self._data = X
+
         if self._metric == "angular":
-            # Use cosine distance (1 - dot product for normalized vectors)
-            # Note: NearestNeighbors.jl doesn't have built-in cosine, so normalize first
             import warnings
             warnings.warn(
                 "NearestNeighbors.jl KDTree with angular metric: "
                 "normalizing data and using Euclidean distance",
                 UserWarning
             )
-            # Normalize in Julia
             jl.seval("""
             function normalize_cols(X)
                 X_norm = similar(X)
@@ -117,7 +137,6 @@ class NearestNeighbors_KDTree(JuliaExternalWrapper):
         else:
             metric_obj = jl.Euclidean()
 
-        # Build KDTree
         self._index = jl.KDTree(self._data, metric_obj, leafsize=self.leafsize)
 
     def query(self, v: np.ndarray, n: int) -> List[int]:
@@ -141,10 +160,8 @@ class NearestNeighbors_KDTree(JuliaExternalWrapper):
 
     @staticmethod
     def is_available() -> bool:
-        """Check if NearestNeighbors.jl is available."""
         try:
             from juliacall import Main as jl
-            # Check if we can activate the Julia environment
             return True
         except ImportError:
             return False
@@ -157,7 +174,7 @@ class NearestNeighbors_KDTree(JuliaExternalWrapper):
 class HNSW_jl(JuliaExternalWrapper):
     """Wrapper for HNSW.jl."""
 
-    _converter_defined = False
+    _warmup_kind = "HNSW_jl"
 
     def __init__(self, metric, M=16, ef_construction=200, ef=50):
         """Initialize HNSW.jl.
@@ -173,33 +190,32 @@ class HNSW_jl(JuliaExternalWrapper):
         self.ef_construction = ef_construction
         self.ef = ef
 
-        # Define conversion function once (outside of fit timing)
-        if not HNSW_jl._converter_defined:
-            jl.seval("""
-            function matrix_to_vector_of_vectors(M)
-                [M[:, i] for i in 1:size(M, 2)]
-            end
-            """)
-            HNSW_jl._converter_defined = True
+    def _matrix_form(self):
+        return "vector_of_vectors"
 
-    def fit(self, X: np.ndarray) -> None:
-        """Build the HNSW index."""
-        # HNSW.jl requires data as a vector of vectors, not a matrix
-        # Convert: (n_samples, n_features) -> Vector{Vector{Float32}}
-        X_fortran = np.asfortranarray(X.T, dtype=np.float32)  # (n_features, n_samples)
+    def _warmup(self, dim: int) -> None:
+        data_mat = jl.seval(f"randn(Float32, {dim}, 128)")
+        data_vov = jl.matrix_to_vector_of_vectors(data_mat)
+        q = jl.seval(f"randn(Float32, {dim})")
+        metric_obj = jl.CosineDist() if self._metric == "angular" else jl.Euclidean()
+        idx = jl.HierarchicalNSW(
+            data_vov, metric=metric_obj, M=8, efConstruction=40, ef=16,
+        )
+        jl.seval("add_to_graph!")(idx)
+        try:
+            jl.knn_search(idx, q, 5)
+        except Exception:
+            pass
 
-        # Convert to Julia vector of vectors using pre-defined function
-        matrix_jl = self._to_matrix(X_fortran)
-        self._data = jl.matrix_to_vector_of_vectors(matrix_jl)
+    def fit(self, X) -> None:
+        """Build the HNSW index. `X` is the prepared Julia vector-of-vectors."""
+        self._data = X
 
-        # Map metric
         if self._metric == "angular":
-            # HNSW.jl uses Distances.jl metrics
             metric_obj = jl.CosineDist()
         else:
             metric_obj = jl.Euclidean()
 
-        # Build HNSW index
         self._index = jl.HierarchicalNSW(
             self._data,
             metric=metric_obj,
@@ -227,7 +243,6 @@ class HNSW_jl(JuliaExternalWrapper):
 
     @staticmethod
     def is_available() -> bool:
-        """Check if HNSW.jl is available."""
         try:
             from juliacall import Main as jl
             return True
@@ -242,7 +257,7 @@ class HNSW_jl(JuliaExternalWrapper):
 class NearestNeighborDescent_jl(JuliaExternalWrapper):
     """Wrapper for NearestNeighborDescent.jl."""
 
-    _converter_defined = False
+    _warmup_kind = "NND_jl"
 
     def __init__(self, metric, k=32, max_iterations=10, sample_rate=1.0, precision=0.001, max_candidates=None):
         """Initialize NearestNeighborDescent.jl.
@@ -262,32 +277,32 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
         self.precision = precision
         self.max_candidates = max_candidates if max_candidates is not None else max(k, 20)
 
-        # Define conversion function once (outside of fit timing)
-        if not NearestNeighborDescent_jl._converter_defined:
-            jl.seval("""
-            function matrix_to_vector_of_vectors(M)
-                [M[:, i] for i in 1:size(M, 2)]
-            end
-            """)
-            NearestNeighborDescent_jl._converter_defined = True
+    def _matrix_form(self):
+        return "vector_of_vectors"
 
-    def fit(self, X: np.ndarray) -> None:
-        """Build the NN-Descent graph."""
-        # NearestNeighborDescent.jl accepts both matrices and vector of vectors
-        # Using vector of vectors for consistency with HNSW.jl
-        X_fortran = np.asfortranarray(X.T, dtype=np.float32)  # (n_features, n_samples)
+    def _warmup(self, dim: int) -> None:
+        data_mat = jl.seval(f"randn(Float32, {dim}, 128)")
+        data_vov = jl.matrix_to_vector_of_vectors(data_mat)
+        q = jl.seval(f"randn(Float32, {dim})")
+        metric_obj = jl.CosineDist() if self._metric == "angular" else jl.Euclidean()
+        graph = jl.nndescent(
+            data_vov, 8, metric_obj,
+            max_iters=2, sample_rate=0.5, precision=0.1,
+        )
+        try:
+            jl.search(graph, [q], 5, max_candidates=16)
+        except Exception:
+            pass
 
-        # Convert to Julia vector of vectors
-        matrix_jl = self._to_matrix(X_fortran)
-        self._data = jl.matrix_to_vector_of_vectors(matrix_jl)
+    def fit(self, X) -> None:
+        """Build the NN-Descent graph. `X` is the prepared Julia vector-of-vectors."""
+        self._data = X
 
-        # Map metric
         if self._metric == "angular":
             metric_obj = jl.CosineDist()
         else:
             metric_obj = jl.Euclidean()
 
-        # Build NN-Descent graph
         self._graph = jl.nndescent(
             self._data,
             self.k,
@@ -302,17 +317,10 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
         query_vec = np.asfortranarray(v, dtype=np.float32)
         query_jl = self._to_vector(query_vec)
 
-        # Search using the graph with max_candidates parameter
-        # search returns (indices, distances) as matrices where:
-        #   - rows = neighbors (k)
-        #   - columns = queries (1 in our case)
         indices, distances = jl.search(self._graph, [query_jl], n, max_candidates=self.max_candidates)
 
-        # Extract the first (and only) column: indices[:, 1] (Julia 1-indexed)
-        # But from Python with juliacall, we use Python indexing: [:, 0]
         result_indices = indices[:, 0]
 
-        # Convert from Julia 1-indexed to Python 0-indexed
         return [int(idx) - 1 for idx in result_indices]
 
     def __str__(self) -> str:
@@ -321,7 +329,6 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
 
     @staticmethod
     def is_available() -> bool:
-        """Check if NearestNeighborDescent.jl is available."""
         try:
             from juliacall import Main as jl
             return True

@@ -12,13 +12,47 @@ using standardized datasets and metrics.
 import os
 import sys
 
-if "JULIA_NUM_THREADS" not in os.environ:
+# Threading: a `--threads` CLI flag (parsed below in `main`) is the source of
+# truth at runtime, but Julia's thread count is fixed at process start by
+# JULIA_NUM_THREADS, so we have to settle the env var BEFORE juliacall is
+# imported. We do a coarse pre-parse here: pick up `--threads N` from argv
+# (or the existing env var, or cpu_count) so JULIA_NUM_THREADS is set before
+# any Julia code runs. The harness later validates that the resolved
+# `--threads` value matches JULIA_NUM_THREADS and warns on mismatch.
+def _early_thread_count():
+    # Look for --threads N or --threads=N in argv (best-effort; argparse
+    # runs again later for the full CLI).
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--threads" and i + 1 < len(argv):
+            try:
+                return int(argv[i + 1])
+            except ValueError:
+                pass
+        elif a.startswith("--threads="):
+            try:
+                return int(a.split("=", 1)[1])
+            except ValueError:
+                pass
+    if "JULIA_NUM_THREADS" in os.environ:
+        try:
+            return int(os.environ["JULIA_NUM_THREADS"])
+        except ValueError:
+            pass
     import multiprocessing
-    n_threads = multiprocessing.cpu_count()
-    os.environ["JULIA_NUM_THREADS"] = str(n_threads)
-    print(f"⚙️  Auto-configured Julia threading: JULIA_NUM_THREADS={n_threads}")
-else:
-    print(f"⚙️  Using existing Julia threading: JULIA_NUM_THREADS={os.environ['JULIA_NUM_THREADS']}")
+    return multiprocessing.cpu_count()
+
+
+_RESOLVED_THREADS = _early_thread_count()
+if os.environ.get("JULIA_NUM_THREADS") != str(_RESOLVED_THREADS):
+    if "JULIA_NUM_THREADS" in os.environ:
+        # User passed an env var; if --threads disagrees, the env var wins
+        # for Julia (already locked in) and we warn during run_benchmark.
+        pass
+    else:
+        os.environ["JULIA_NUM_THREADS"] = str(_RESOLVED_THREADS)
+print(f"⚙️  Threads: --threads={_RESOLVED_THREADS}, "
+      f"JULIA_NUM_THREADS={os.environ.get('JULIA_NUM_THREADS', '<unset>')}")
 
 # Suppress juliacall threading warning
 if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
@@ -253,7 +287,7 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
     print(f"✓ Saved results to {csv_path}")
 
 
-def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False):
+def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False, threads: int = None):
     """Run benchmarks for a single dataset configuration.
 
     Args:
@@ -299,6 +333,20 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     print(f"Test queries: {n_test}")
     print(f"k (neighbors): {k}")
 
+    # Resolve thread count and warn on JULIA_NUM_THREADS mismatch.
+    if threads is None:
+        threads = _RESOLVED_THREADS
+    julia_env = os.environ.get("JULIA_NUM_THREADS")
+    if julia_env is not None and julia_env != str(threads):
+        print(
+            f"\n⚠️  WARNING: --threads={threads} but JULIA_NUM_THREADS={julia_env}. "
+            f"Julia's thread pool is fixed at process start and CANNOT be changed at runtime; "
+            f"competitor libraries WILL run with --threads={threads}. "
+            f"Cross-library timings will be asymmetric.\n"
+            f"   Fix: set JULIA_NUM_THREADS={threads} before invoking benchmark.py."
+        )
+    print(f"Threads (competitor libs): {threads}")
+
     # Verify Julia threading (only check once, when Julia is first initialized)
     _verify_julia_threading()
 
@@ -341,10 +389,30 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         print(f"Configuration: {algo}")
 
         try:
+            # Apply thread setting (no-op for wrappers that piggy-back on
+            # JULIA_NUM_THREADS).
+            try:
+                algo.set_num_threads(threads)
+            except Exception as exc:
+                print(f"⚠️  set_num_threads({threads}) failed: {exc}")
+
+            # Marshal data outside the timed region so every wrapper gets
+            # its preprocessing charged symmetrically (numpy -> Julia
+            # matrix for Julia wrappers, dtype/contiguity coercion for
+            # FAISS/hnswlib, pass-through for the rest).
+            prepared_train = algo.prepare_data(train)
+            # KDTree's loop-of-singletons batch path needs the original
+            # numpy queries; everything else benefits from a one-shot
+            # marshalling.
+            try:
+                prepared_test = algo.prepare_queries(test)
+            except Exception:
+                prepared_test = test
+
             # Build index
             print("Building index...")
             build_start = time.perf_counter()
-            algo.fit(train)
+            algo.fit(prepared_train)
             build_time = time.perf_counter() - build_start
             print(f"✓ Build time: {build_time:.2f}s")
 
@@ -352,9 +420,15 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             print(f"Querying {n_test} test points...")
             query_start = time.perf_counter()
 
-            # Use batch query if available, otherwise loop
+            # Use batch query if available, otherwise loop. Some wrappers
+            # (e.g. ManifoldANN_KDTree) only support numpy in `query_batch`;
+            # fall back to the unprepared `test` if the prepared form is
+            # rejected.
             if hasattr(algo, "query_batch"):
-                predictions = algo.query_batch(test, k)
+                try:
+                    predictions = algo.query_batch(prepared_test, k)
+                except TypeError:
+                    predictions = algo.query_batch(test, k)
             else:
                 predictions = [algo.query(q, k) for q in test]
 
@@ -531,6 +605,18 @@ Available datasets:
         help="Save results to timestamped directory under benchmarking/output/",
     )
 
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help=(
+            "Number of threads for competitor libraries (hnswlib, FAISS, Annoy, "
+            "PyNNDescent, SciPy). Default: JULIA_NUM_THREADS if set, else cpu_count(). "
+            "Julia's thread pool is fixed at process start by JULIA_NUM_THREADS, so "
+            "for fair comparisons set JULIA_NUM_THREADS=N to match --threads N."
+        ),
+    )
+
     args = parser.parse_args()
 
     # Handle --list-configs
@@ -551,7 +637,15 @@ Available datasets:
         return
 
     # Run benchmark
-    run_benchmark(args.config, args.data_dir, args.k, args.n_train, args.n_test, args.save_output)
+    run_benchmark(
+        args.config,
+        args.data_dir,
+        args.k,
+        args.n_train,
+        args.n_test,
+        args.save_output,
+        threads=args.threads,
+    )
 
 
 if __name__ == "__main__":

@@ -23,6 +23,11 @@ class PyNNDescent(BaseANNWrapper):
         self.diversify_prob = diversify_prob
         self.pruning_degree_multiplier = pruning_degree_multiplier
         self.index = None
+        self._num_threads = None
+
+    def set_num_threads(self, n: int) -> None:
+        """PyNNDescent honours `n_jobs` (numba-backed parallelism)."""
+        self._num_threads = int(n)
 
     def fit(self, X: np.ndarray) -> None:
         """Build the PyNNDescent index.
@@ -36,13 +41,15 @@ class PyNNDescent(BaseANNWrapper):
         metric_name = "cosine" if self._metric == "angular" else "euclidean"
 
         # Build index
-        self.index = NNDescent(
-            X,
+        kwargs = dict(
             metric=metric_name,
             n_neighbors=self.n_neighbors,
             diversify_prob=self.diversify_prob,
             pruning_degree_multiplier=self.pruning_degree_multiplier,
         )
+        if self._num_threads is not None:
+            kwargs["n_jobs"] = self._num_threads
+        self.index = NNDescent(X, **kwargs)
 
     def query(self, v: np.ndarray, n: int) -> List[int]:
         """Query for nearest neighbors.

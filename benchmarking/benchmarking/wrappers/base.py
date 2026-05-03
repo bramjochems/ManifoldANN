@@ -1,7 +1,7 @@
 """Base wrapper interface for ANN algorithms."""
 
 from abc import ABC, abstractmethod
-from typing import List
+from typing import Any, List
 import numpy as np
 
 
@@ -22,12 +22,54 @@ class BaseANNWrapper(ABC):
             raise ValueError(f"Invalid metric: {metric}. Must be 'angular' or 'euclidean'")
         self._metric = metric
 
+    # ------------------------------------------------------------------
+    # Lifecycle hooks for fair timing
+    # ------------------------------------------------------------------
+
+    def prepare_data(self, X: np.ndarray) -> Any:
+        """Prepare training data outside the timed build region.
+
+        Wrappers that need to perform data conversions (numpy -> Julia
+        matrix, dtype/layout coercion, normalisation) should do that here so
+        the cost is *not* charged to the timed `fit()` region.
+
+        The harness calls this once outside the timed region and passes the
+        returned object to `fit`.
+
+        Default: pass-through.
+        """
+        return X
+
+    def prepare_queries(self, Q: np.ndarray) -> Any:
+        """Prepare a batch of query points outside the timed query region.
+
+        Same rationale as `prepare_data` but for queries. Default
+        pass-through. Override only if your wrapper wants to amortise
+        per-batch conversion cost outside the timed region.
+        """
+        return Q
+
+    def set_num_threads(self, n: int) -> None:
+        """Set library-specific build/query thread count.
+
+        Default: no-op. Wrappers backing libraries with their own thread
+        knobs (hnswlib's `set_num_threads`, FAISS's `omp_set_num_threads`,
+        pynndescent's `n_jobs`, scipy's per-query `n_jobs`) should override
+        and store / forward `n` so all libraries run with matched
+        parallelism. Wrappers that piggy-back on Julia's thread pool
+        (everything in `manifoldann.py` / `julia_external.py`) can leave
+        this as a no-op since `JULIA_NUM_THREADS` is set process-wide.
+        """
+        return None
+
     @abstractmethod
-    def fit(self, X: np.ndarray) -> None:
+    def fit(self, X) -> None:
         """Build the index from training data.
 
         Args:
-            X: Training data, shape (n_samples, n_features)
+            X: Training data (output of `prepare_data`). For wrappers that
+               do not override `prepare_data`, this is a numpy array of
+               shape (n_samples, n_features).
         """
         pass
 
