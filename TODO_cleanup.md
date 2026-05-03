@@ -131,15 +131,17 @@ silently breaks something.
 
 ### LSH
 
-- **`_collect_candidates` dedup is wrong.** `src/indices/lsh/index.jl:133-151`
-  uses sort+unique (O(C log C) where BitSet is O(C)) and the post-dedup
-  `resize!(candidates, candidate_cap)` keeps lowest-numbered IDs after sort —
-  not a meaningful subset. Fix: BitSet for dedup; either don't truncate
-  (compute distances for all then top-k) or sample uniformly.
-
-- **`pack_bins(bins) = UInt64(hash(Tuple(bins)))`** allocates a Tuple per call
-  on the inner LSH hash path. `src/indices/lsh/hash_functions.jl:52`. Fold a
-  simple FNV/xxhash over the Int projections directly.
+- **Tiny LSH follow-ups (consider later if worthwhile).** Surfaced by
+  brutal-critic on the dedup + `pack_bins` fixes; both are non-issues at
+  thesis-typical sizes, neither worth a dedicated session:
+  - Replace `shuffle!` + `resize!` in `query` with reservoir sampling
+    when `candidate_cap << length(candidates)` — O(cap) instead of O(C).
+    Irrelevant at C up to a few thousand.
+  - `_collect_candidates` calls `sizehint!(seen::BitSet, expected)`,
+    which is misleading: BitSet storage scales with `max(id)`, not
+    element count, so the hint is a no-op for memory. Either drop the
+    line or revisit BitSet vs `Set{Int}` at large N (~1.25 MB/query at
+    N=10M).
 
 ### KDTree
 
