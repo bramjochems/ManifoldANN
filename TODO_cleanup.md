@@ -180,22 +180,6 @@ bringing the reference up to a respectable baseline.
 - Metric-specific kernel branches (Chebyshev, etc.) — couples the tree
   to metrics we don't ship.
 
-### Geodesic / graph
-
-- **`pushfirst!(path, current)` in `_reconstruct_path`.**
-  `src/geodesic/geodesic_model.jl:288`. O(n) per call → O(n²)
-  reconstruction. Use `push!` then `reverse!` once.
-
-- **`GreedySolver` complexity claim wrong.**
-  `src/graphs/refinement/solvers.jl:459` documents O(k² log k); actual
-  is O(k⁴) worst case. Either fix the algorithm (heap of edges) or fix
-  the docstring.
-
-- **`_fit_geometries(::ShareSimilarTangents)` boxing.** Both sharing
-  variants use `Vector{Any}` because they fill out of order with
-  `nothing` placeholders. Could tighten to `Vector{Union{Nothing, G}}`
-  once `G` is known after the first fit. Low-priority polish.
-
 ### Latent type-narrowing in kmeans (multilevel-build path)
 
 `KMeansTransform.fit!`, `init_random`, `init_kmeans_plus_plus`,
