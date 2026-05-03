@@ -324,12 +324,28 @@ function _query_recursive_batch(
     probe_positions = Vector{Vector{Int}}(undef, n_queries)
     # Cache transformed query data for the gather step. Only materialised
     # when the transform does NOT preserve the input representation; if it
-    # does, we view the original Q columns directly.
+    # does, we view the original Q columns directly. The transform is
+    # consistent across queries (same fitted state, same return shape), so
+    # we infer the cache eltype from one probe call and allocate a concrete
+    # Vector{V} rather than Vector{Any} — keeps inference happy in the
+    # gather loop downstream.
     transform_preserves = preserves_data(node.transform)
-    transformed_cols = transform_preserves ? nothing :
-        Vector{Any}(undef, n_queries)
+    transformed_cols = if transform_preserves
+        nothing
+    else
+        first_result = ManifoldANN.transform(node.transform, view(Q, :, 1))
+        cache = Vector{typeof(first_result.data)}(undef, n_queries)
+        cache[1] = first_result.data
+        route_domain = node.bucket_lookup === nothing ?
+            node.indices :
+            BucketProxy(length(node.bucket_lookup))
+        probe_indices = select_indices(node.routing_strategy, first_result.assignment, route_domain)
+        probe_positions[1] = _resolve_child_positions(node, probe_indices)
+        cache
+    end
 
-    @inbounds for i in 1:n_queries
+    start = transform_preserves ? 1 : 2
+    @inbounds for i in start:n_queries
         result = ManifoldANN.transform(node.transform, view(Q, :, i))
         if !transform_preserves
             transformed_cols[i] = result.data
@@ -342,14 +358,14 @@ function _query_recursive_batch(
     end
 
     # Step 2: invert the loop — for each child, collect the queries probing
-    # it. queries_per_child[c] is the list of (query_index, slot_in_probe_list)
-    # pairs so we can scatter results back to the right per-query bucket.
+    # it. queries_per_child[c] is the list of query indices we'll scatter
+    # results back to.
     n_children = length(node.indices)
-    queries_per_child = [Tuple{Int,Int}[] for _ in 1:n_children]
+    queries_per_child = [Int[] for _ in 1:n_children]
     @inbounds for qi in 1:n_queries
         positions = probe_positions[qi]
-        for (slot, child_idx) in pairs(positions)
-            push!(queries_per_child[child_idx], (qi, slot))
+        for child_idx in positions
+            push!(queries_per_child[child_idx], qi)
         end
     end
 
@@ -387,31 +403,28 @@ end
 # otherwise we copy from the cached transformed column vectors.
 function _gather_sub_batch(
     Q::AbstractMatrix{T},
-    transformed_cols::Union{Nothing,Vector{Any}},
-    assignments::Vector{Tuple{Int,Int}},
+    transformed_cols::Union{Nothing,Vector{V}},
+    assignments::Vector{Int},
     preserves::Bool,
-) where {T}
+) where {T,V}
     d = size(Q, 1)
     sub_n = length(assignments)
     if preserves
         Q_sub = Matrix{T}(undef, d, sub_n)
         @inbounds for j in 1:sub_n
-            qi, _ = assignments[j]
+            qi = assignments[j]
             for r in 1:d
                 Q_sub[r, j] = Q[r, qi]
             end
         end
         return Q_sub
     else
-        # transformed_cols[qi] is whatever the transform returned. We assume
-        # all entries share a length and elementwise-copyable element type.
-        first_qi, _ = assignments[1]
-        proto = transformed_cols[first_qi]
+        proto = transformed_cols[assignments[1]]
         Tt = eltype(proto)
         d_t = length(proto)
         Q_sub = Matrix{Tt}(undef, d_t, sub_n)
         @inbounds for j in 1:sub_n
-            qi, _ = assignments[j]
+            qi = assignments[j]
             col = transformed_cols[qi]
             for r in 1:d_t
                 Q_sub[r, j] = col[r]
@@ -431,7 +444,7 @@ function _query_node_batch_into!(
     child_data::AbstractMatrix,
     Q_sub::AbstractMatrix,
     k::Integer,
-    assignments::Vector{Tuple{Int,Int}},
+    assignments::Vector{Int},
     ::Type{S},
     id_mapping::Union{Nothing,Vector{Int}};
     kwargs...,
@@ -443,7 +456,7 @@ function _query_node_batch_into!(
     sub_results = query(index, child_data, Q_sub, k; kwargs...)
 
     @inbounds for j in eachindex(assignments)
-        qi, _ = assignments[j]
+        qi = assignments[j]
         neighbors = sub_results[j]
         if id_mapping === nothing && neighbors isa Vector{Neighbor{S}}
             push!(per_query_results[qi], neighbors)
@@ -466,7 +479,7 @@ function _query_node_batch_into!(
     child_data::AbstractMatrix,
     Q_sub::AbstractMatrix,
     k::Integer,
-    assignments::Vector{Tuple{Int,Int}},
+    assignments::Vector{Int},
     ::Type{S},
     id_mapping::Union{Nothing,Vector{Int}};
     kwargs...,
@@ -479,7 +492,7 @@ function _query_node_batch_into!(
     # entry into the parent query's result lists (matching the
     # `_append_child_results!` behaviour on the single-vector path).
     @inbounds for j in eachindex(assignments)
-        qi, _ = assignments[j]
+        qi = assignments[j]
         sublists = nested[j]
         for r in sublists
             if id_mapping === nothing && r isa Vector{Neighbor{S}}
