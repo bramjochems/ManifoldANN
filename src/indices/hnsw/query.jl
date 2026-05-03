@@ -628,78 +628,97 @@ function _build_index_threaded!(
     index.max_layer = levels[1]
     index.n_points = 1
 
-    # Pre-allocate per-thread state OUTSIDE the loop. Size to maxthreadid()
-    # because Julia 1.10+ can dynamically grow the thread pool and
-    # threadid() may exceed nthreads() (interactive pool, dynamic spawning).
-    nthreads = Threads.maxthreadid()
-    visit_buffers = [zeros(UInt32, n) for _ in 1:nthreads]
-    visit_gens = zeros(UInt32, nthreads)
-    nbr_scratches = [Vector{Int}(undef, 0) for _ in 1:nthreads]
-    @inbounds for s in nbr_scratches
-        sizehint!(s, cap)
+    # Worker-pool pattern: spawn `nthreads` long-lived tasks; each owns its
+    # own visit buffer + neighbor scratch. Tasks pull work from a Channel, so
+    # a task that gets migrated to a different OS thread still uses its OWN
+    # buffer (closure captures by reference, not by Threads.threadid()).
+    # This is the only safe pattern under Julia 1.10+ where ReentrantLock
+    # acquisition is a yield point and `threadid()` is unstable across it.
+    nthreads = Threads.nthreads()
+    work = Channel{Int}(max(n, 1))
+    for nid in 2:n
+        put!(work, nid)
     end
+    close(work)
 
-    # Phase 2: parallel insert of nodes 2..n. We schedule by static range so
-    # node-id locality (neighboring ids from the same chunk) gives some cache
-    # benefit. Tasks spawn from the main thread.
-    Threads.@threads :static for node_id in 2:n
-        tid = Threads.threadid()
-        level = levels[node_id]
-        point = @view data[:, node_id]
+    workers = Vector{Task}(undef, nthreads)
+    for t in 1:nthreads
+        workers[t] = Threads.@spawn begin
+            # Per-task state — captured by closure, NOT indexed by threadid.
+            visit_buf = zeros(UInt32, n)
+            visit_gen = UInt32(0)
+            nbr_scratch = Int[]
+            sizehint!(nbr_scratch, cap)
 
-        # Snapshot entry under global lock — the values may be stale relative
-        # to a future commit but they're internally consistent.
-        Base.lock(index.global_lock)
-        cur_entry = index.entry_point
-        cur_max = index.max_layer
-        Base.unlock(index.global_lock)
+            for node_id in work
+                level = levels[node_id]
+                point = @view data[:, node_id]
 
-        # Greedy descent on layers above this node's level.
-        current = cur_entry
-        current_dist = index.distance(@view(data[:, current]), point)
-        for layer = cur_max:-1:max(level + 1, 1)
-            cand = _greedy_descent_threaded(index, layer, current, point, data, nbr_scratches[tid])
-            current = cand.id
-            current_dist = cand.dist
-        end
-
-        # Search + connect on layers ≤ level.
-        for layer = min(level, cur_max):-1:0
-            # Reset visited for this layer's search by bumping the generation.
-            gen = visit_gens[tid] + UInt32(1)
-            if gen == UInt32(0)
-                fill!(visit_buffers[tid], UInt32(0))
-                gen = UInt32(1)
-            end
-            visit_gens[tid] = gen
-            visited = StampVisited(visit_buffers[tid], gen)
-
-            results = _search_layer_threaded(
-                index, layer,
-                NeighborCandidate(current, current_dist),
-                point, data, index.ef_construction, visited, nbr_scratches[tid],
-            )
-            neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
-            _connect_new_node_threaded!(index, layer, node_id, neighbors, data)
-            if !isempty(neighbors)
-                current = neighbors[1].id
-                current_dist = neighbors[1].dist
-            end
-        end
-
-        # Update entry point if we exceeded the current max_layer.
-        if level > cur_max
-            Base.lock(index.global_lock)
-            try
-                if level > index.max_layer
-                    index.max_layer = level
-                    index.entry_point = node_id
-                end
-            finally
+                # Snapshot entry/max under global lock. The values may be
+                # stale by the time we use them; that's tolerated (recall
+                # may suffer slightly, but no structural defect — see
+                # connect-loop comment below).
+                Base.lock(index.global_lock)
+                cur_entry = index.entry_point
+                cur_max = index.max_layer
                 Base.unlock(index.global_lock)
+
+                # Greedy descent on layers above this node's level.
+                current = cur_entry
+                current_dist = index.distance(@view(data[:, current]), point)
+                for layer = cur_max:-1:max(level + 1, 1)
+                    cand = _greedy_descent_threaded(index, layer, current, point, data, nbr_scratch)
+                    current = cand.id
+                    current_dist = cand.dist
+                end
+
+                # Connect loop on layers min(level, cur_max)..0.
+                # If level > cur_max, layers cur_max+1..level are intentionally
+                # skipped here — same as serial HNSW when this node becomes
+                # the new highest-level node alone. Other nodes at those
+                # layers (added concurrently by other threads) won't have a
+                # reverse edge to this node, but the global-lock update at
+                # the end ensures this node becomes entry_point if level is
+                # still the max. The race where another thread overtakes us
+                # past `level` mid-execution is handled by the conditional
+                # update — we just don't become entry_point in that case.
+                for layer = min(level, cur_max):-1:0
+                    visit_gen += UInt32(1)
+                    if visit_gen == UInt32(0)
+                        fill!(visit_buf, UInt32(0))
+                        visit_gen = UInt32(1)
+                    end
+                    visited = StampVisited(visit_buf, visit_gen)
+
+                    results = _search_layer_threaded(
+                        index, layer,
+                        NeighborCandidate(current, current_dist),
+                        point, data, index.ef_construction, visited, nbr_scratch,
+                    )
+                    neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
+                    _connect_new_node_threaded!(index, layer, node_id, neighbors, data)
+                    if !isempty(neighbors)
+                        current = neighbors[1].id
+                        current_dist = neighbors[1].dist
+                    end
+                end
+
+                # Update entry point if we exceeded the current max_layer.
+                if level > cur_max
+                    Base.lock(index.global_lock)
+                    try
+                        if level > index.max_layer
+                            index.max_layer = level
+                            index.entry_point = node_id
+                        end
+                    finally
+                        Base.unlock(index.global_lock)
+                    end
+                end
             end
         end
     end
+    foreach(wait, workers)
 
     index.n_points = n
     return index

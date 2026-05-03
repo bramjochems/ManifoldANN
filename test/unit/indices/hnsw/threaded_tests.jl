@@ -90,3 +90,57 @@ end
         @test all(1 <= n.id <= 1500 for n in r)
     end
 end
+
+# Structural invariants — these would catch corruption that a recall test
+# might miss (wrong-buffer writes from threadid bug, off-by-one in level
+# allocation, duplicates from a missing dedup invariant, etc.).
+function _hnsw_check_invariants(idx, n::Int)
+    @test idx.n_points == n
+    @test 1 <= idx.entry_point <= n
+    @test 0 <= idx.max_layer < length(idx.layers)
+    for li in eachindex(idx.layers)
+        layer = idx.layers[li]
+        @test length(layer) == n
+        for ni in 1:n
+            adj = layer[ni]
+            # All ids in range
+            @test all(1 <= id <= n for id in adj)
+            # No self-loops
+            @test ni ∉ adj
+            # No duplicates (NeighborList uniqueness invariant)
+            @test allunique(adj)
+        end
+    end
+end
+
+@testset "HNSW threaded build: structural invariants (single build)" begin
+    data = randn(MersenneTwister(0x11), Float32, 16, 2000)
+    idx = build_index(HNSWIndex, data; M=8, ef_construction=80, threaded=true)
+    _hnsw_check_invariants(idx, 2000)
+end
+
+@testset "HNSW threaded build: stress (10 builds, structural + recall floor)" begin
+    # Repeated builds at the same config catch races that only fire
+    # occasionally. 10 trials is a compromise between coverage and CI time.
+    n = 1500
+    data = randn(MersenneTwister(0x21), Float32, 16, n)
+    brute = build_index(BruteForceIndex, data)
+    test_qs = [randn(MersenneTwister(0x100 + i), Float32, 16) for i in 1:30]
+
+    recalls = Float64[]
+    for trial in 1:10
+        idx = build_index(HNSWIndex, data; M=8, ef_construction=80, threaded=true)
+        _hnsw_check_invariants(idx, n)
+        h, t = 0, 0
+        for q in test_qs
+            a = Set(r.id for r in query(idx, data, q, 5; ef_search=40))
+            tr = Set(r.id for r in query(brute, data, q, 5))
+            h += length(intersect(a, tr)); t += 5
+        end
+        push!(recalls, h / t)
+    end
+    # Every individual build must clear the floor, not just the average.
+    # Floor is well below typical (~0.95) but high enough to catch a
+    # corruption-induced collapse to ~0.5.
+    @test all(r >= 0.80 for r in recalls)
+end
