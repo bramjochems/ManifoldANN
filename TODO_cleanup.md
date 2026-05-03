@@ -259,15 +259,32 @@ off-by-one). Build-time and QPS comparisons against external libraries
 need fixing or re-running through focused scripts.
 
 **STATUS:** the three critical issues below were fixed in commit `d19aaad`
-("benchmarking: fix three fairness issues in the harness"). Per-dim warmup,
-symmetric data marshalling via `prepare_data`, and a `--threads N` CLI
-flag with a JULIA_NUM_THREADS-mismatch warning are all in place. Smoke-
-test on fashion-mnist (n=5000, threads=4) showed the expected swing:
-ManifoldANN-HNSW build 2.19s→1.02s and QPS 350→30,657 (the previous
-"query time" was dominated by JIT, not graph traversal); LSH build
-2.07s→0.09s, QPS 535→7,688; IVF-HNSW build 3.58s→0.47s. Recall
-unchanged. Original audit text retained below for reference; the
-**lower-priority** items further down are still open.
+("benchmarking: fix three fairness issues in the harness"): per-dim
+warmup, symmetric data marshalling via `prepare_data`, and a `--threads N`
+CLI flag with a JULIA_NUM_THREADS-mismatch warning. A FOURTH fix landed
+in `f9765dc`: native batch query (`query_batch`) on every wrapper that
+has one (HNSWlib/FAISS/PyNNDescent natively; HNSW.jl/NND.jl/NN.jl-KDTree
+via Julia native batch APIs), plus an 8-query warmup batch run via
+`prepare_queries → query_batch` before the timed query so each wrapper
+warms at the actual batch shape. Annoy intentionally not given
+`query_batch` — no native batch API; loop-of-singletons matches its
+real-world usage.
+
+After all four fixes, the same-algorithm head-to-heads on Fashion-MNIST
+(n=5000, threads=4, post `f9765dc`) match what direct-Julia spot-checks
+show outside the harness:
+  - HNSW: MANN 30,530 qps vs HNSWlib 35,838 qps (~0.85× behind C++,
+    matches `scripts/hnsw_fair_compare.py`).
+  - NN-Descent: MANN 5500 qps vs NND.jl 12,000 qps multi-thread, but
+    MANN 6700 qps vs NND.jl 3200 qps single-thread — i.e., we win
+    serial, lose because NND.jl threads its batch and we (currently)
+    don't (item under HNSW/NN-Descent open work).
+  - HNSW.jl 7,498 qps — much lower than MANN-HNSW's 30,530 because
+    HNSW.jl is unmaintained / less tuned, NOT a harness artefact.
+
+Recall numbers were always defensible and remain so. Original audit
+text retained below for reference; the **lower-priority** items further
+down are still open.
 
 - **[FIXED] JIT not warmed for every Julia index type.**
   `benchmarking/benchmarking/wrappers/manifoldann.py:39-72` warms
@@ -303,22 +320,73 @@ unchanged. Original audit text retained below for reference; the
   charge a `np.ascontiguousarray(X, dtype=np.float32)` to every
   competitor.
 
-Lower-priority harness fixes (group when above is done):
+- **[FIXED in `f9765dc`] Asymmetric query batching across wrappers.**
+  Only ManifoldANN and SciPy implemented `query_batch`. HNSWlib, FAISS,
+  PyNNDescent and all three `julia_external` wrappers fell through to a
+  Python `for q in test: query(q)` loop in `benchmark.py`, paying
+  per-query boundary overhead while ManifoldANN got one batched call
+  with internal threading. Each library has a native batch API
+  (`hnswlib.knn_query(matrix, k)`, `faiss.search(matrix, k)`,
+  `NearestNeighbors.knn(tree, matrix, k)`,
+  `HNSW.knn_search(hnsw, vec_of_vecs, K)`, `NND.search(graph, matrix, k)`)
+  — wired up symmetrically. Plus added an 8-query warmup batch in
+  `benchmark.py` so the first timed call doesn't pay JIT/cache setup
+  for any library. Annoy intentionally not given `query_batch` — no
+  native batch API. Smoke test: HNSWlib 17,412→35,838 qps;
+  FAISS-IVF 22,767→37,697; HNSW.jl 1,215→7,498; NND.jl 226→19,193.
+  Recall unchanged.
+
+#### High-priority open harness items (fairness still has gaps)
+
+- **Cross-library parameter sets are not automatically apples-to-apples.**
+  Each algorithm in `benchmarking/configs/*.yaml` gets its own params
+  block (`MANN-NNDescent: k=32, max_iterations=5, sample_rate=0.5,
+  convergence_threshold=0.01, ef_search=64`; `NearestNeighborDescent-jl:
+  k=32, max_iterations=5, sample_rate=0.5, precision=0.01, max_candidates=64`).
+  Some parameters mean the same thing across libraries (`k`,
+  `max_iterations`, `sample_rate`); others look similar but are slightly
+  different (`convergence_threshold` vs `precision` — both delta-style
+  but different defaults; `ef_search` for our search beam vs
+  `max_candidates` for NND.jl's; HNSW `M`/`ef_construction` vs FAISS
+  `nlist`/`nprobe` are entirely different algorithm controls). The
+  harness has no automated check that parameter sets actually correspond
+  for cross-library pairs, so a config-author error silently produces an
+  unfair comparison. Same concern for IVF (MANN-IVF-Flat vs FAISS-IVF —
+  `nlist`, `nprobe` should match). Fix shape: a "comparable groups" YAML
+  section that names which configs are meant to be cross-library
+  apples-to-apples and runs a check that the shared parameters match;
+  or a comment block in each config explaining the equivalence.
+
+#### Lower-priority open harness items (group when above is done):
 
 - Query result conversion (Julia → 0-indexed Python ids) charged to Julia
   only — inside the `query_batch` timed region. `manifoldann.py:78-86,134-156`.
-- pynndescent / numba JIT not warmed; first NNDescent call lands in
-  timed build. Same for HNSW.jl `add_to_graph!` (the wrapper explicitly
-  skips its warmup at `julia_external.py:57`).
+- pynndescent build (numba JIT) not warmed at the actual config —
+  `f9765dc`'s 8-query warmup helps the query path, not the BUILD path.
+  First `NNDescent(...)` call still pays numba JIT inside the timed
+  `fit()`. Same shape as the original Julia-build JIT issue, applied
+  to PyNNDescent. Currently moot (PyNNDescent excluded from configs);
+  becomes relevant once enabled.
+- HNSW.jl `add_to_graph!` warmup explicitly skipped at
+  `julia_external.py:57` ("we skip its warmup"). The `d19aaad` per-(kind,
+  dim) warmup hopefully covers it now via the `_warmup` method that
+  HNSW.jl's wrapper class exposes; verify by reading the wrapper to
+  confirm `_warmup` actually calls `add_to_graph!`. If it doesn't,
+  HNSW.jl pays JIT in the timed build.
 - Single-shot timing, no variance, no `gc.collect()` / `GC.gc()` between
   algorithms — first algorithm pays cold-cache cost. `benchmark.py:344-367`.
   Fix: 1 untimed warm rep + 3 timed reps, report median, force GC between.
 - No memory / allocation reporting — only wall time. Thesis claims about
   index footprint not backed by harness output.
-- KDTree query is loop-of-singletons (`manifoldann.py:324-326` overrides
-  `query_batch` to a Python loop), paying N×juliacall-boundary overhead
-  vs SciPy's vectorised `cKDTree.query`. Algorithm-not-harness issue;
-  flag rather than fix.
+- KDTree query was loop-of-singletons (`manifoldann.py:324-326` overrides
+  `query_batch` to a Python loop), paying N×juliacall-boundary overhead.
+  Will be partially addressed by the AbstractANNIndex generic batch
+  query method (in flight in another agent task) — KDTree gets threaded
+  batch query for free via the Julia-side abstract dispatch, eliminating
+  the per-query Python boundary crossing. The remaining gap to SciPy's
+  vectorised `cKDTree.query` is a Julia-side algorithm question (no
+  per-element loop avoidable without restructuring the per-query state),
+  not a harness issue.
 
 Two ann-benchmarks-style additions worth folding in once the harness is
 fair:
