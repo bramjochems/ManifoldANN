@@ -78,10 +78,39 @@ end
                     rng=MersenneTwister(0xCAFE))
     @test length(a.neighbors) == length(b.neighbors)
     for i in eachindex(a.neighbors)
-        # Sorted-id equality: serial path is deterministic up to graph
-        # signature.
-        @test sort(a.neighbors[i]) == sort(b.neighbors[i])
+        # Strict id-order equality: _finalize_neighbors emits ids in
+        # distance-ascending order, which is itself deterministic given
+        # identical heap state. Sorting before compare would mask any future
+        # bug that scrambles the distance order without changing membership.
+        @test a.neighbors[i] == b.neighbors[i]
     end
+end
+
+@testset "NN-Descent _finalize_neighbors: dedup keeps smallest-distance entry" begin
+    # Targeted regression for the dedup tie-break fix in commit f414ff4.
+    # Before the fix, _finalize_neighbors iterated old_neighbors first and
+    # kept whichever entry it visited first per id — so an id present in
+    # both heaps with a SMALLER distance in `new` was silently dropped in
+    # favour of the older, larger-distance entry. Locks in a 5-line
+    # pathological case that would otherwise be invisible at the recall-
+    # floor level.
+    using ManifoldANN: NNDescentNeighborNode
+    # Two-node graph; we only care about node 1.
+    g = [NNDescentNeighborNode{Float32}(4) for _ in 1:2]
+    # node 1: id=2 in OLD at dist 5.0 (older, worse), id=2 in NEW at dist 3.0
+    # (newer, better). Plus a unique id so the result has length > 1.
+    push!(g[1].old_neighbors, 2, 5.0f0)
+    push!(g[1].new_neighbors, 2, 3.0f0)
+    push!(g[1].new_neighbors, 3, 4.0f0)
+    # node 2 doesn't matter for this test but must finalize cleanly.
+    push!(g[2].new_neighbors, 1, 1.0f0)
+
+    adj = ManifoldANN._finalize_neighbors(g, 4)
+    # Ids in distance-ascending order: id 2 (dist 3.0), id 3 (dist 4.0).
+    # Critically: id 2 appears, id 5.0-dist version was discarded.
+    @test adj[1] == [2, 3]
+    @test 2 in adj[1]
+    @test length(adj[1]) == 2   # not 3 — id 2 was deduped
 end
 
 @testset "NN-Descent threaded build: nondeterminism is real (≥ 2 threads)" begin

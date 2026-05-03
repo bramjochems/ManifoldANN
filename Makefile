@@ -5,7 +5,7 @@ VENV_ACTIVATE := .venv/bin/activate
 .PHONY: test format benchmark benchmark-setup benchmark-orc clean
 
 test:
-	julia --project=. -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+	julia --project=. --threads=auto -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 
 format:
 	julia --project=. -e 'using Pkg; Pkg.instantiate(); using JuliaFormatter; format(["src","test","docs/examples"])'
