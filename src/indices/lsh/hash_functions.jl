@@ -49,7 +49,21 @@ pack_bits(bits::AbstractVector{Bool}) = begin
     return value
 end
 
-pack_bins(bins::AbstractVector{Int}) = UInt64(hash(Tuple(bins)))
+# FNV-1a 64-bit folded over the raw bin integers. Avoids the per-call Tuple
+# allocation of `hash(Tuple(bins))` on the inner LSH hash path.
+const _FNV_OFFSET_BASIS_64 = 0xcbf29ce484222325
+const _FNV_PRIME_64        = 0x00000100000001b3
+
+@inline function pack_bins(bins::AbstractVector{Int})
+    h = _FNV_OFFSET_BASIS_64
+    @inbounds for b in bins
+        u = reinterpret(UInt64, Int64(b))
+        for shift in (0, 8, 16, 24, 32, 40, 48, 56)
+            h = (h ⊻ ((u >> shift) & 0xff)) * _FNV_PRIME_64
+        end
+    end
+    return h
+end
 
 """
     euclidean_distance(x, y)
