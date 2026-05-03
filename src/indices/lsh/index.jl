@@ -16,6 +16,10 @@ mutable struct LSHIndex{T<:BlasFloat,H<:AbstractLSHHash} <: AbstractANNIndex
     tables::Vector{LSHTable{H}}
     dimension::Int
     n_points::Int
+    # Expected per-bucket size = n_points / 2^hash_length. Used to size the
+    # candidates / seen scratch buffers in _collect_candidates! so they don't
+    # grow during the table sweep.
+    mean_bucket_size::Float64
 end
 
 configured_k(::LSHIndex) = nothing
@@ -59,7 +63,8 @@ function build_index(
         tables[idx] = LSHTable(hash_fn, buckets)
     end
 
-    return LSHIndex{T, typeof(tables[1].hash_function)}(tables, d, n)
+    mean_bucket = n / max(2.0^hash_length, 1.0)
+    return LSHIndex{T, typeof(tables[1].hash_function)}(tables, d, n, mean_bucket)
 end
 
 """
@@ -146,7 +151,12 @@ function _collect_candidates!(scratch::LSHQueryScratch, index::LSHIndex, q::Abst
     seen = scratch.seen
     n_tables = length(index.tables)
     n_tables == 0 && return candidates
-    expected = n_tables * LSH_EXPECTED_CANDIDATES_PER_TABLE
+    # Pre-dedup expected candidate count = n_tables * mean_bucket_size, capped
+    # at n_points (can't dedup to more unique ids than exist). The constant
+    # LSH_EXPECTED_CANDIDATES_PER_TABLE was a stand-in that systematically
+    # under-sized at typical hash_length; the build-time-derived estimate
+    # eliminates the per-call _growend! churn.
+    expected = min(index.n_points, ceil(Int, n_tables * index.mean_bucket_size))
     sizehint!(candidates, expected)
     sizehint!(seen, expected)
     for table in index.tables
