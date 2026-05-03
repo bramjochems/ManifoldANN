@@ -72,7 +72,7 @@ function select_neighbors(
         return candidates
     end
 
-    sorted = sort(candidates; by = c -> c.dist)
+    sorted = sort(candidates; alg = Base.Sort.MergeSort, by = c -> c.dist)
     selected = Vector{NeighborCandidate{T}}()
     selected_ids = BitSet()
     cap = min(cap, length(sorted))

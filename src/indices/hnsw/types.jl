@@ -1,6 +1,12 @@
 using LinearAlgebra
 using Random
 
+# INVARIANT: a NeighborList contains unique ids. The sole writer is
+# `_connect_new_node!` (src/indices/hnsw/query.jl), which pushes each new
+# `node_id` exactly once into a neighbor's list. `_prune_list!` relies on
+# this invariant — there is no `unique!` defense. Any future code path that
+# mutates adjacency (e.g. graph import, `add_edge!`-style API) MUST preserve
+# uniqueness, or `_prune_list!`'s diversified scan will misbehave.
 const NeighborList = Vector{Int}
 
 """
@@ -50,6 +56,20 @@ mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP,D} <: AbstractANNIn
     neighbor_policy::NP
     traversal_policy::TP
     distance::D
+    # Generation-stamped visited buffer. Replaces per-call BitSet allocation
+    # in _search_layer during build. `visit_stamps[i] == visit_generation` ⟺
+    # node `i` has been visited in the current traversal. Bumping
+    # `visit_generation` is an O(1) reset. On UInt32 wrap, the buffer is
+    # zeroed (UInt32 is the deliberate width — 2^32 calls amortizes the wrap
+    # cost; widening to UInt64 makes the wrap branch effectively unreachable
+    # and a buffer-zeroing bug becomes a 4-billion-call invariant).
+    #
+    # COUPLING: this buffer is index-state, used ONLY by the single-threaded
+    # build path via `_acquire_build_visited!`. Concurrent build (or
+    # concurrent insert!) is unsupported. Thread-safe builds will need to
+    # move this state from the index into a per-task structure.
+    visit_stamps::Vector{UInt32}
+    visit_generation::UInt32
 end
 
 index_distance(index::HNSWIndex) = index.distance

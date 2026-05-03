@@ -43,6 +43,8 @@ function build_index(
         neighbor_policy,
         traversal_policy,
         distance,
+        UInt32[],
+        UInt32(0),
     )
 
     for col in 1:n

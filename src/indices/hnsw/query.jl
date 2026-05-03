@@ -1,5 +1,54 @@
 using Base: BitSet
 
+# Visited-set abstraction. Two implementations:
+#   * StampVisited: O(1) reset via a generation counter, used during build
+#     where the buffer can be reused across all insert!/_search_layer calls.
+#     Not thread-safe — single-build only.
+#   * BitSetVisited: per-call BitSet, used by `query` (potentially concurrent).
+struct StampVisited
+    stamps::Vector{UInt32}
+    generation::UInt32
+end
+
+@inline _was_visited(v::StampVisited, id::Int) = (@inbounds v.stamps[id] == v.generation)
+@inline function _mark_visited!(v::StampVisited, id::Int)
+    @inbounds v.stamps[id] = v.generation
+    return
+end
+
+struct BitSetVisited
+    set::BitSet
+end
+BitSetVisited() = BitSetVisited(BitSet())
+
+@inline _was_visited(v::BitSetVisited, id::Int) = id in v.set
+@inline _mark_visited!(v::BitSetVisited, id::Int) = (push!(v.set, id); nothing)
+
+# Acquire a build-time visited buffer. Bumps the generation; on wrap,
+# zeroes the buffer. Caller must ensure stamps is sized to n_points.
+function _acquire_build_visited!(index::HNSWIndex)
+    # Size to n_points + 1: defensive against any future call path that ever
+    # marks the in-flight new node (currently it doesn't, because the new node
+    # has no incoming edges yet at search time, but losing that invariant
+    # silently corrupts memory via @inbounds writes).
+    n = index.n_points + 1
+    if length(index.visit_stamps) < n
+        old = length(index.visit_stamps)
+        resize!(index.visit_stamps, max(n, 2 * old, 16))
+        @inbounds for i in (old+1):length(index.visit_stamps)
+            index.visit_stamps[i] = UInt32(0)
+        end
+    end
+    gen = index.visit_generation + UInt32(1)
+    if gen == UInt32(0)
+        # Wrapped — zero buffer and start at 1.
+        fill!(index.visit_stamps, UInt32(0))
+        gen = UInt32(1)
+    end
+    index.visit_generation = gen
+    return StampVisited(index.visit_stamps, gen)
+end
+
 function query(
     index::HNSWIndex{T},
     data::AbstractMatrix{T},
@@ -16,8 +65,8 @@ function query(
     ef = max(ef, k)
 
     entry = NeighborCandidate(index.entry_point, index.distance(@view(data[:, index.entry_point]), q))
-    visited = BitSet()
-    push!(visited, entry.id)
+    visited = BitSetVisited()
+    _mark_visited!(visited, entry.id)
 
     for layer = index.max_layer:-1:1
         entry = _greedy_descent(index, layer, entry.id, q, data)
@@ -139,13 +188,15 @@ function insert!(
     end
 
     for layer = min(level, index.max_layer):-1:0
+        visited = _acquire_build_visited!(index)
         results = _search_layer(
             index,
             layer,
             NeighborCandidate(current, current_dist),
             point,
             data,
-            index.ef_construction,
+            index.ef_construction;
+            visited = visited,
         )
         neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
         _connect_new_node!(index, layer, node_id, neighbors, data)
@@ -187,11 +238,11 @@ function _search_layer(
     q,
     data,
     ef::Int;
-    visited = BitSet(),
+    visited = BitSetVisited(),
 ) where {T}
     policy = with_ef(index.traversal_policy, ef)
     state = initialize_state(policy, entry)
-    push!(visited, entry.id)
+    _mark_visited!(visited, entry.id)
     adjacency = index.layers[layer + 1]
 
     while should_continue(policy, state)
@@ -201,19 +252,23 @@ function _search_layer(
             break
         end
         @inbounds for neighbor in adjacency[current.id]
-            if neighbor in visited
+            if _was_visited(visited, neighbor)
                 continue
             end
-            push!(visited, neighbor)
+            _mark_visited!(visited, neighbor)
             dist = index.distance(@view(data[:, neighbor]), q)
             if length(state.best) < policy.ef_search || dist < worst_distance(state.best)
                 maybe_push_candidate!(policy, state, NeighborCandidate(neighbor, dist))
             end
         end
     end
-    # Sort heap results before returning (heap is unsorted internally)
-    sorted_results = sort(state.best.data, by = c -> c.dist)
-    return sorted_results
+    # CONTRACT: caller takes ownership of the returned vector (= heap's backing
+    # buffer). Heap is dead after this point. Buffer is sorted ascending by
+    # distance — the build path's `select_neighbors` short-circuit at
+    # neighbor_policy.jl line ~71 relies on `neighbors[1]` being the nearest.
+    # MergeSort pinned for graph-signature stability across Julia versions.
+    sort!(state.best.data, alg = Base.Sort.MergeSort, by = c -> c.dist)
+    return state.best.data
 end
 
 function _connect_new_node!(
@@ -225,11 +280,15 @@ function _connect_new_node!(
 ) where {T}
     adjacency = index.layers[layer + 1]
 
-    # Directly assign neighbors (already ≤ M from select_neighbors)
-    # No need to prune the new node's list
-    adjacency[node_id] = [n.id for n in neighbors]
+    # Write neighbor ids into the pre-sized adjacency slot in place. It already
+    # has capacity max_degree+1 from _ensure_node_slots! / _ensure_layers!.
+    own_list = adjacency[node_id]
+    resize!(own_list, length(neighbors))
+    @inbounds for (i, n) in enumerate(neighbors)
+        own_list[i] = n.id
+    end
 
-    # Only update reverse edges (add node_id to each neighbor's list)
+    # Update reverse edges.
     for neighbor in neighbors
         list_b = adjacency[neighbor.id]
         push!(list_b, node_id)
@@ -237,28 +296,7 @@ function _connect_new_node!(
     end
 end
 
-function _link_nodes!(index::HNSWIndex, layer::Int, a::Int, b::Int, data)
-    a == b && return
-    adjacency = index.layers[layer + 1]
-    list_a = adjacency[a]
-    list_b = adjacency[b]
-
-    # Add neighbors without checking for duplicates (O(1) instead of O(M))
-    # Pruning will naturally handle any duplicates that arise
-    push!(list_a, b)
-    _prune_list!(index, list_a, a, data, max_degree(index.neighbor_policy))
-
-    push!(list_b, a)
-    _prune_list!(index, list_b, b, data, max_degree(index.neighbor_policy))
-
-    # No need to reassign: list_a and list_b are references to adjacency lists,
-    # already modified in-place by push! and _prune_list!
-end
-
 function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, limit::Int)
-    # Remove duplicates that may have been added by _link_nodes!
-    # Must do this BEFORE the length check, otherwise duplicates persist
-    unique!(list)
     length(list) <= limit && return
 
     center_vec = @view(data[:, center])
@@ -273,30 +311,122 @@ function _prune_list!(index::HNSWIndex, list::Vector{Int}, center::Int, data, li
         dist = index.distance(center_vec, @view(data[:, id]))
         candidates[i] = NeighborCandidate(id, dist)
     end
-    pruned = select_neighbors(
+    n_kept = _select_into!(
         index.neighbor_policy,
+        list,
         candidates,
         data,
-        index.distance;
-        limit = limit,
+        index.distance,
+        limit,
     )
-    resize!(list, length(pruned))
-    @inbounds for (i, cand) in enumerate(pruned)
-        list[i] = cand.id
+    resize!(list, n_kept)
+    return
+end
+
+# In-place select: writes kept neighbor ids straight into `out_ids[1:n_kept]`,
+# returns n_kept. Avoids the per-call `selected` Vector and `selected_ids`
+# BitSet that the generic select_neighbors allocates.
+
+# Note: _select_into! does NOT short-circuit on `length(candidates) <= cap`
+# the way `select_neighbors(::DiversifiedNeighborPolicy)` does — at the prune
+# call site the caller already guards on `length(list) > limit`, so the
+# short-circuit branch is unreachable. The two implementations are therefore
+# NOT general-purpose interchangeable.
+function _select_into!(
+    policy::HeuristicNeighborPolicy,
+    out_ids::Vector{Int},
+    candidates::Vector{NeighborCandidate{T}},
+    ::AbstractMatrix,
+    ::Function,
+    limit::Int,
+) where {T}
+    cap = min(limit, length(candidates))
+    cap == 0 && return 0
+    # partialsort! is not stable; tie-breaking is input-order-dependent. This
+    # mirrors the legacy `select_neighbors(::HeuristicNeighborPolicy)` path.
+    partialsort!(candidates, 1:cap, by = c -> c.dist)
+    @inbounds for i in 1:cap
+        out_ids[i] = candidates[i].id
     end
+    return cap
+end
+
+function _select_into!(
+    policy::DiversifiedNeighborPolicy,
+    out_ids::Vector{Int},
+    candidates::Vector{NeighborCandidate{T}},
+    data::AbstractMatrix,
+    distance_fn,
+    limit::Int,
+) where {T}
+    n = length(candidates)
+    n == 0 && return 0
+    cap = min(limit, n)
+    # MergeSort pinned for graph-signature stability across Julia versions.
+    sort!(candidates, alg = Base.Sort.MergeSort, by = c -> c.dist)
+
+    n_kept = 0
+    @inbounds for ci in 1:n
+        cand = candidates[ci]
+        dominated = false
+        # Linear scan over kept prefix (n_kept ≤ cap = M, typically ≤ 16).
+        for j in 1:n_kept
+            chosen_id = out_ids[j]
+            d_bc = distance_fn(@view(data[:, cand.id]), @view(data[:, chosen_id]))
+            if d_bc < cand.dist
+                dominated = true
+                break
+            end
+        end
+        if !dominated
+            n_kept += 1
+            out_ids[n_kept] = cand.id
+            n_kept == cap && break
+        end
+    end
+
+    # keepPrunedConnections fallback: fill remaining slots from rejected
+    # candidates in distance order, skipping already-selected ids.
+    if n_kept < cap
+        @inbounds for ci in 1:n
+            id = candidates[ci].id
+            already = false
+            for j in 1:n_kept
+                if out_ids[j] == id
+                    already = true
+                    break
+                end
+            end
+            already && continue
+            n_kept += 1
+            out_ids[n_kept] = id
+            n_kept == cap && break
+        end
+    end
+    return n_kept
 end
 
 function _ensure_layers!(index::HNSWIndex, level::Int)
     required = level + 1
+    cap = max_degree(index.neighbor_policy) + 1
     while length(index.layers) < required
-        push!(index.layers, [Int[] for _ in 1:index.n_points])
+        new_layer = Vector{NeighborList}(undef, index.n_points)
+        @inbounds for i in 1:index.n_points
+            v = Int[]
+            sizehint!(v, cap)
+            new_layer[i] = v
+        end
+        push!(index.layers, new_layer)
     end
 end
 
 function _ensure_node_slots!(index::HNSWIndex, node_id::Int)
+    cap = max_degree(index.neighbor_policy) + 1
     for layer in index.layers
         while length(layer) < node_id
-            push!(layer, Int[])
+            v = Int[]
+            sizehint!(v, cap)
+            push!(layer, v)
         end
     end
 end
