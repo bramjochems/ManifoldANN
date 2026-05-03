@@ -552,7 +552,9 @@ mid-session at n=20000, d=32, k=20, -t 4 via
 NND.jl tops out around 0.94 recall on this config (even at
 `max_candidates=300`); MANN hits 0.999 at the same value. At every
 matched-recall level both can reach, MANN is 1.7-2.7× faster. Build is
-~1.6× faster than NND.jl independent of search settings.
+~3.6-4.2× faster than NND.jl independent of search settings (the 1.6×
+number that appeared in the Pareto run was machine-state noise — clean
+3-trial re-measure: MANN 0.86-0.95s, NND.jl 3.44-3.60s).
 
 **Optional follow-up:** expose a `bounded_candidates`/`max_candidates`
 knob on MANN mirroring NND.jl's behaviour, for users who want a faster
