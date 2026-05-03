@@ -42,7 +42,12 @@ dataset at query time.
 - `LP`: Layer planner type
 - `NP`: Neighbor policy type
 - `TP`: Traversal policy type
-- `D`: Distance function type (must be thread-safe)
+- `D`: Distance function type. **Must be re-entrant / thread-safe**: the
+  batch `query(index, data, queries::Matrix, k)` and the threaded
+  `build_index(...; threaded=true)` paths call this concurrently from
+  multiple worker tasks. The default `default_distance` and Distances.jl
+  metrics satisfy this. A stateful distance functor (e.g. with internal
+  cache) does NOT.
 """
 mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP,D} <: AbstractANNIndex
     layers::Vector{HNSWLayer}
