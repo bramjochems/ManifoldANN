@@ -13,8 +13,9 @@ using ManifoldANN
                       threaded = false, rng = MersenneTwister(0xA))
 
     seed_rng = MersenneTwister(123)
-    child_rngs = ManifoldANN.spawn_child_rngs(seed_rng, n_queries)
-    ref = [query(idx, data, view(queries, :, i), 5; ef_search = 20, rng = child_rngs[i])
+    parent_seed = ManifoldANN.derive_child_seed(seed_rng)
+    ref = [query(idx, data, view(queries, :, i), 5; ef_search = 20,
+                 rng = ManifoldANN.query_child_rng(parent_seed, i))
            for i in 1:n_queries]
 
     got = query(idx, data, queries, 5; ef_search = 20, rng = MersenneTwister(123))
@@ -69,9 +70,10 @@ end
         # serial single-query loop driven by the same child-RNG sequence,
         # regardless of how many workers process the batch.
         seed_rng = MersenneTwister(99)
-        child_rngs = ManifoldANN.spawn_child_rngs(seed_rng, n_queries)
+        parent_seed = ManifoldANN.derive_child_seed(seed_rng)
         ref = [query(idx, data, view(queries, :, i), 5; ef_search = 25,
-                     rng = child_rngs[i]) for i in 1:n_queries]
+                     rng = ManifoldANN.query_child_rng(parent_seed, i))
+               for i in 1:n_queries]
         for i in 1:n_queries
             @test [n.id for n in a[i]] == [n.id for n in ref[i]]
             @test [n.dist for n in a[i]] == [n.dist for n in ref[i]]

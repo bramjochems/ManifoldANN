@@ -189,7 +189,7 @@ function _nndescent_batch_worker!(
     queries::AbstractMatrix{T},
     k::Integer,
     ef_search::Union{Nothing,Integer},
-    child_rngs::Vector{<:AbstractRNG},
+    parent_seed::UInt64,
     ::Type{S},
     beam_hint::Int,
 ) where {T<:LinearAlgebra.BlasFloat,S<:AbstractFloat}
@@ -197,7 +197,7 @@ function _nndescent_batch_worker!(
     for i in work
         results[i] = _query_pooled!(
             scratch, index, data, view(queries, :, i),
-            k, ef_search, child_rngs[i],
+            k, ef_search, query_child_rng(parent_seed, i),
         )
     end
     return nothing
@@ -216,9 +216,7 @@ function query(
     S = float(T)
     n_queries = size(queries, 2)
     n_queries == 0 && return Vector{Vector{Neighbor{S}}}()
-    # Spawn deterministic per-query child RNGs up front so threaded execution
-    # stays reproducible (each task gets its own RNG; no shared mutable state).
-    child_rngs = spawn_child_rngs(rng, n_queries)
+    parent_seed = derive_child_seed(rng)
     results = Vector{Vector{Neighbor{S}}}(undef, n_queries)
 
     actual_k = min(Int(k), index.n_points)
@@ -234,7 +232,8 @@ function query(
         scratch = NNDescentBatchScratch{S}(index.n_points, beam_hint)
         @inbounds for i in 1:n_queries
             results[i] = _query_pooled!(
-                scratch, index, data, view(queries, :, i), k, ef_search, child_rngs[i],
+                scratch, index, data, view(queries, :, i), k, ef_search,
+                query_child_rng(parent_seed, i),
             )
         end
         return results
@@ -250,7 +249,7 @@ function query(
     workers = Vector{Task}(undef, nworkers)
     for w in 1:nworkers
         workers[w] = Threads.@spawn _nndescent_batch_worker!(
-            results, work, index, data, queries, k, ef_search, child_rngs,
+            results, work, index, data, queries, k, ef_search, parent_seed,
             S, beam_hint,
         )
     end

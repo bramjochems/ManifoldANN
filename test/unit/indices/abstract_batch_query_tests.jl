@@ -67,8 +67,9 @@ using ManifoldANN
         # Use the same RNG-spawning the batch method does, so the serial
         # reference matches.
         seed_rng = MersenneTwister(42)
-        child_rngs = ManifoldANN.spawn_child_rngs(seed_rng, n_queries)
-        ref = [query(idx, data, view(queries, :, i), k; ef_search = 20, rng = child_rngs[i])
+        parent_seed = ManifoldANN.derive_child_seed(seed_rng)
+        ref = [query(idx, data, view(queries, :, i), k; ef_search = 20,
+                     rng = ManifoldANN.query_child_rng(parent_seed, i))
                for i in 1:n_queries]
 
         got = query(idx, data, queries, k; ef_search = 20, rng = MersenneTwister(42))
