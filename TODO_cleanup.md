@@ -33,6 +33,25 @@ silently breaks something.
   loops inflate the latter into meaningless six-digit numbers; the meaningful
   signal is "X testsets passed, 0 failed."
 
+- **`benchmarking/` vs `scripts/` are different things.** `benchmarking/` is
+  thesis-coupled experimentation infrastructure (downloaders, ann-benchmarks
+  competitor wrappers, multi-algorithm sweep configs). It exists to produce
+  thesis numbers/plots and will eventually migrate out of the package per
+  `CLAUDE.md`'s separation principle. `scripts/` is package-coupled tooling
+  (focused fair-compare benchmarks, perf regression checks, profiling) and
+  stays with the package — anything a future consumer of `ManifoldANN` would
+  find useful for understanding the package's behaviour. New work goes to
+  whichever it serves; don't conflate them.
+
+- **Thesis-grade head-to-head numbers come from focused scripts, not the
+  general harness.** `benchmarking/benchmark.py` is for breadth ("roughly
+  where do we sit across N algorithms × M datasets?"). Specific QPS / build
+  time claims that get cited in the thesis or in commit messages must come
+  from a focused fair-compare script in `scripts/` (e.g.
+  `scripts/hnsw_fair_compare.py`, `scripts/kdtree_fair_compare.jl`). The
+  general harness has known fairness issues — see "benchmark harness
+  pre-migration fixes" under Open work.
+
 ## Open work
 
 ### HNSW
@@ -125,30 +144,117 @@ silently breaks something.
   When this lands, move the primitives from `src/indices/nndescent/` to
   `src/utils/rptree.jl` so NN-Descent and `RPTreeIndex` share them.
 
-### Tooling
+### Benchmark harness pre-migration fixes (`benchmarking/`)
+
+Independent fairness audit (mid-session, this conversation) flagged the
+existing `benchmarking/benchmark.py` numbers as **not defensible** for
+quantitative thesis-grade head-to-head comparisons against C/C++ libraries.
+Recall numbers ARE defensible (consistent ground truth, consistent k, no
+off-by-one). Build-time and QPS comparisons against external libraries
+need fixing or re-running through focused scripts.
+
+Three critical issues — fix these before relying on any harness build/qps
+number. ManifoldANN-internal comparisons are mostly fair to each other
+*except* for the HNSW JIT gap.
+
+- **JIT not warmed for every Julia index type.**
+  `benchmarking/benchmarking/wrappers/manifoldann.py:39-72` warms
+  `BruteForceIndex` and `IVF-HNSW` only. `HNSWIndex`, `KDTreeIndex`,
+  `LSHIndex` (both hash families), `IVFFlatIndex`, and `NNDescentIndex` pay
+  full Julia JIT inside the timed `algo.fit()` region on first call.
+  Same issue in `julia_external.py:50-53` for `HNSW.jl` and
+  `NearestNeighborDescent.jl` (only `NearestNeighbors.KDTree` is warmed).
+  Fix shape: extend each wrapper's warmup block to call `build_index` +
+  `query_batch` for every index type the harness will exercise. Also the
+  warmup uses dim=10; rerun warmup with the actual dataset dim before
+  the first timed `fit` to cover dim-specialised code paths.
+
+- **Competitor thread counts uncontrolled.**
+  `wrappers/{hnswlib,faiss,annoy,pynndescent}.py` — no wrapper calls
+  `set_num_threads`, `omp_set_num_threads`, or sets `n_jobs` /
+  `NUMBA_NUM_THREADS`. hnswlib silently uses `min(cpus, 8)`, FAISS uses
+  all OMP cores, pynndescent uses all numba threads. Meanwhile
+  `benchmark.py:15-21` sets `JULIA_NUM_THREADS=cpu_count()` for the Julia
+  side. **Result: cross-library comparisons are systematically asymmetric
+  on threading.** Fix shape: a `--threads N` CLI flag that propagates to
+  every wrapper's library-specific thread setter, plus require
+  `JULIA_NUM_THREADS=N` to match.
+
+- **Data marshalling charged asymmetrically.** `manifoldann.py:101-112`,
+  `julia_external.py:66-74,185-193,274-282`. Every Julia wrapper does
+  `np.asfortranarray(X.T, dtype=np.float32) + _to_matrix(...)` inside
+  `fit()`. `wrappers/hnswlib.py:28-49` and `wrappers/faiss.py:26-57`
+  consume row-major numpy directly with no equivalent step. For high-dim
+  datasets this is tens to hundreds of ms charged to Julia only. Fix
+  shape: marshal Julia inputs once outside the timed region (as
+  `scripts/hnsw_fair_compare.py:189-196` already does), or symmetrically
+  charge a `np.ascontiguousarray(X, dtype=np.float32)` to every
+  competitor.
+
+Lower-priority harness fixes (group when above is done):
+
+- Query result conversion (Julia → 0-indexed Python ids) charged to Julia
+  only — inside the `query_batch` timed region. `manifoldann.py:78-86,134-156`.
+- pynndescent / numba JIT not warmed; first NNDescent call lands in
+  timed build. Same for HNSW.jl `add_to_graph!` (the wrapper explicitly
+  skips its warmup at `julia_external.py:57`).
+- Single-shot timing, no variance, no `gc.collect()` / `GC.gc()` between
+  algorithms — first algorithm pays cold-cache cost. `benchmark.py:344-367`.
+  Fix: 1 untimed warm rep + 3 timed reps, report median, force GC between.
+- No memory / allocation reporting — only wall time. Thesis claims about
+  index footprint not backed by harness output.
+- KDTree query is loop-of-singletons (`manifoldann.py:324-326` overrides
+  `query_batch` to a Python loop), paying N×juliacall-boundary overhead
+  vs SciPy's vectorised `cKDTree.query`. Algorithm-not-harness issue;
+  flag rather than fix.
+
+Two ann-benchmarks-style additions worth folding in once the harness is
+fair:
 
 - **Re-enable PyNNDescent in the benchmark runner.** Wrapper exists at
   `benchmarking/benchmarking/wrappers/pynndescent.py` but excluded from
-  `benchmarking/configs/algorithms.yaml` with a stale comment about Python <3.10.
-  Comment is wrong: a recent install on Python 3.13.5 venv (`uv pip install
-  pynndescent`) succeeded with `llvmlite==0.47.0`, `numba==0.65.1`,
-  `pynndescent==0.6.0`. Re-enable; drop the stale comment.
+  `benchmarking/configs/algorithms.yaml` with a stale comment about
+  Python <3.10. Comment is wrong: recent install on Python 3.13.5 venv
+  (`uv pip install pynndescent`) succeeded with `llvmlite==0.47.0`,
+  `numba==0.65.1`, `pynndescent==0.6.0`. Re-enable; drop the stale comment.
 
-- **Benchmark against NearestNeighbors.jl (KDTree at minimum, ideally
-  BallTree).** A wrapper for `NearestNeighbors.KDTree` already exists at
-  `benchmarking/benchmarking/wrappers/julia_external.py` and is registered, but
-  is not enabled in any config in `benchmarking/configs/*.yaml`. No BallTree
-  wrapper at all. Pairings worth adding:
-  - `MANN-KDTree` vs `NearestNeighbors-KDTree`: direct head-to-head on tree
-    construction + query.
-  - `MANN-BruteForce` vs `NearestNeighbors-BallTree`: BallTree should beat
-    KD-tree at d > 50; useful sanity check on whether we should add BallTree
-    as an index too.
-  - `MANN-NNDescent` vs `NearestNeighborDescent-jl` (already configured)
-    remains the meaningful NN-Descent pairing.
-  Won't cover all our indices (no BallTree on our side, no LSH or HNSW in
-  NearestNeighbors.jl), but a few well-chosen pairs would tell us where we
-  stand against the dominant Julia ANN library.
+- **Enable NearestNeighbors.jl in configs.** A wrapper for
+  `NearestNeighbors.KDTree` exists at
+  `benchmarking/benchmarking/wrappers/julia_external.py` and is registered,
+  but is not enabled in any config in `benchmarking/configs/*.yaml`.
+  No BallTree wrapper at all. The thesis got a focused one-off comparison
+  via `scripts/kdtree_fair_compare.jl` (NN.jl-KDTree is ~2-4× faster on
+  build, ~1.2-5× faster on query — informational, KDTree is reference-only
+  for this thesis), but a config-level wiring would make it part of the
+  routine harness output.
+
+### Repository hygiene
+
+- **`scripts/` directory cleanup.** Currently 43 files, mixed bag from
+  multiple thesis workstreams (composite-shortcut research, ORC/curvature,
+  geodesic, plus this session's perf scripts). Worth restructuring into
+  subdirectories by purpose so it's coherent for a future consumer of the
+  package. Suggested structure (defer concrete moves until the user can
+  triage which research scripts are still active):
+  - `scripts/perf/` — `hnsw_*`, `nndescent_*`, `kdtree_*`, `distance_micro.jl`
+    (this session's diagnostic + fair-compare suite)
+  - `scripts/research/` — composite-shortcut, ORC, geodesic experimental
+    scripts (move to thesis-code repo if/when `benchmarking/` migrates)
+  - `scripts/diagnostics/` — `diag_eff_eps.jl`, `diagnose_sinkhorn.jl`
+  - `scripts/archive/` — already exists; sweep stale items in here
+  - Top-level: `README.md`, `run_*.sh` orchestration scripts only
+  - Also: `scripts/__pycache__/` is currently tracked; should be in
+    `.gitignore`.
+
+- **`benchmarking/` migration to a sibling thesis-code repo** (per
+  `CLAUDE.md`'s separation principle: the package is the publishable
+  library, thesis-coupled experiment infrastructure lives separately).
+  This is a strategic move not blocking immediate work. Pre-requisite:
+  the harness fairness fixes above, so the migrated harness isn't
+  carrying known-broken numbers. After migration, the package's own
+  perf surface lives in `scripts/perf/` (focused fair-compare scripts);
+  the thesis-coupled multi-algorithm sweep harness lives in the sibling
+  repo.
 
 ### Areas not reviewed
 
