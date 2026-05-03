@@ -22,12 +22,14 @@ Balanced KD-tree built over a static dataset. Stores only structural metadata
 (split axes, thresholds, and point identifiers) so callers can supply any
 matrix with matching coordinates at query time.
 """
-mutable struct KDTreeIndex{T<:LinearAlgebra.BlasFloat} <: AbstractANNIndex
+mutable struct KDTreeIndex{T<:LinearAlgebra.BlasFloat,D} <: AbstractANNIndex
     nodes::Vector{KDTreeNode{T}}
     dimension::Int
     n_points::Int
     root::Int
+    distance::D
 end
 
+index_distance(index::KDTreeIndex) = index.distance
 configured_k(::KDTreeIndex) = nothing
 supports_mutation(::KDTreeIndex) = false

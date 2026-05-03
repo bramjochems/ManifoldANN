@@ -13,7 +13,8 @@ function build_index(
     ::Type{KDTreeIndex},
     data::AbstractMatrix{T};
     axis_selector::Symbol = :variance,
-) where {T<:LinearAlgebra.BlasFloat}
+    distance::D = default_distance,
+) where {T<:LinearAlgebra.BlasFloat,D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
     n > 0 || throw(ArgumentError("Dataset must contain at least one point"))
@@ -24,7 +25,7 @@ function build_index(
     nodes = Vector{KDTreeNode{T}}()
     sizehint!(nodes, n)
     root = _build_kdtree!(nodes, data, indices, 1, n, axis_selector, 1)
-    return KDTreeIndex{T}(nodes, d, n, root)
+    return KDTreeIndex{T,D}(nodes, d, n, root, distance)
 end
 
 function _build_kdtree!(
