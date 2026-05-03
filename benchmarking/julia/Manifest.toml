@@ -2,7 +2,7 @@
 
 julia_version = "1.12.1"
 manifest_format = "2.0"
-project_hash = "9adcb62035af5a4824ba162b9926ed5e8a5aab7f"
+project_hash = "bd366433fbbc176784923a3823afa8b28cee8330"
 
 [[deps.AMD]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse_jll"]
@@ -549,12 +549,6 @@ version = "0.5.16"
 deps = ["Distances", "HiGHS", "Hungarian", "JuMP", "JuliaFormatter", "LinearAlgebra", "OptimalTransport", "Random", "Statistics", "Tables", "Tulip"]
 path = "/home/bram/projects/mai/thesis/code/ManifoldANN"
 uuid = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
-version = "0.1.0"
-
-[[deps.ManifoldANNBenchmarks]]
-deps = ["Distances", "HDF5", "HNSW", "ManifoldANN", "NearestNeighborDescent", "NearestNeighbors", "YAML"]
-path = "."
-uuid = "8f3e4d10-1234-5678-9abc-def012345678"
 version = "0.1.0"
 
 [[deps.Markdown]]
