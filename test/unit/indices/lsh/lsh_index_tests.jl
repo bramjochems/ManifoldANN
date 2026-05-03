@@ -162,3 +162,25 @@ end
     @test !isempty(ids)
     @test ids[1] == 1
 end
+
+# Regression: build/query on Float32 data. Previously crashed because the
+# hash factory defaulted to Float64 projections, which then failed to dispatch
+# on hash_batch(::RandomHyperplaneHash{T}, ::AbstractMatrix{T}). The fix
+# auto-injects T = eltype(data) for the built-in factories.
+@testset "Float32 data: random hyperplane and binning" begin
+    rng = MersenneTwister(0xF32)
+    data = randn(rng, Float32, 16, 64)
+    q = randn(MersenneTwister(0xF33), Float32, 16)
+
+    rh = build_index(LSHIndex, data; n_tables = 4, hash_length = 8,
+                     rng = MersenneTwister(7), hash_factory = make_random_hyperplane_hash)
+    @test eltype(rh.tables[1].hash_function.projections) === Float32
+    rh_ids = neighbor_ids(query(rh, data, q, 5))
+    @test all(1 .<= rh_ids .<= 64)
+
+    bn = build_index(LSHIndex, data; n_tables = 4, hash_length = 6,
+                     rng = MersenneTwister(11), hash_factory = make_binning_hash,
+                     bin_width = 0.5f0)
+    bn_ids = neighbor_ids(query(bn, data, q, 5))
+    @test all(1 .<= bn_ids .<= 64)
+end

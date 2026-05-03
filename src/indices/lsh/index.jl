@@ -43,10 +43,18 @@ function build_index(
     tables = Vector{LSHTable}(undef, n_tables)
     table_rngs = spawn_child_rngs(rng, n_tables)
 
-    # Default the hash element type to match the data eltype so hash_batch
-    # dispatches without a Float32/Float64 mismatch. Caller can override via
-    # hash_kwargs (e.g. `T=Float64` to force higher-precision projections).
-    factory_kwargs = haskey(hash_kwargs, :T) ? hash_kwargs : (; hash_kwargs..., T = T)
+    # For the built-in hash factories, default the hash element type to match
+    # the data eltype so hash_batch dispatches without a Float32/Float64
+    # mismatch. Caller can override via hash_kwargs (e.g. `T=Float64` to
+    # force higher-precision projections). User-supplied factories get
+    # `hash_kwargs` verbatim — we don't know whether they accept `T`, and
+    # silently injecting it would narrow the extension point.
+    factory_kwargs = if hash_factory === make_random_hyperplane_hash ||
+                        hash_factory === make_binning_hash
+        haskey(hash_kwargs, :T) ? hash_kwargs : (; hash_kwargs..., T = T)
+    else
+        hash_kwargs
+    end
 
     # Threaded: each table is independent (own RNG, hash fn, Dict) and writes
     # only to its pre-allocated `tables[idx]` slot. Per-table seeds are derived
