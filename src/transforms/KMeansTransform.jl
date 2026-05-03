@@ -104,7 +104,7 @@ function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:A
     elseif t.init == :kmeans_plus_plus
         centroids = init_kmeans_plus_plus(X, t.k, t.distance)
     else
-        error("Unknown initialization strategy: $(t.init)")
+        throw(ArgumentError("Unknown initialization strategy: $(t.init)"))
     end
 
     # Run Lloyd's algorithm
@@ -143,7 +143,7 @@ Transform a query point by computing distances to all centroids.
 """
 function transform(t::KMeansTransform, x::AbstractVector)
     if isnothing(t.centroids)
-        error("KMeansTransform must be fitted before transforming")
+        throw(ArgumentError("KMeansTransform must be fitted before transforming"))
     end
 
     # Compute distances to all centroids using cached centroid norms when possible

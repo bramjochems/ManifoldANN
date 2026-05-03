@@ -65,26 +65,26 @@ function fit!(transform::PCATransform{T}, X::AbstractMatrix) where {T}
 end
 
 function transform(transform::PCATransform, x::AbstractVector)
-    transform.fitted || error("PCATransform must be fitted before transforming data")
+    transform.fitted || throw(ArgumentError("PCATransform must be fitted before transforming data"))
     centered = x - transform.mean
     projected = transform.projection' * centered
     TransformResult(projected, nothing)
 end
 
 function inverse_transform(transform::PCATransform, x_reduced::AbstractVector)
-    transform.fitted || error("PCATransform must be fitted before inverse transform")
+    transform.fitted || throw(ArgumentError("PCATransform must be fitted before inverse transform"))
     transform.mean + transform.projection * x_reduced
 end
 
 function explained_variance_ratio(transform::PCATransform)
-    transform.fitted || error("PCATransform must be fitted first")
+    transform.fitted || throw(ArgumentError("PCATransform must be fitted first"))
     total = sum(transform.explained_variance)
     total ≈ 0 ? fill(1.0 / length(transform.explained_variance), length(transform.explained_variance)) :
                 transform.explained_variance ./ total
 end
 
 function target_dimension(transform::PCATransform)
-    transform.fitted || error("PCATransform must be fitted first")
+    transform.fitted || throw(ArgumentError("PCATransform must be fitted first"))
     size(transform.projection, 2)
 end
 

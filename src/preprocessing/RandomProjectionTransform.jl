@@ -55,7 +55,7 @@ function fit!(transform::RandomProjectionTransform{T}, X::AbstractMatrix) where 
 end
 
 function transform(transform::RandomProjectionTransform, x::AbstractVector)
-    transform.fitted || error("RandomProjectionTransform must be fitted before transforming data")
+    transform.fitted || throw(ArgumentError("RandomProjectionTransform must be fitted before transforming data"))
     projected = transform.projection * x
     TransformResult(projected, nothing)
 end

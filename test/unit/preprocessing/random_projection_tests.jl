@@ -184,7 +184,7 @@ using Random
         # Transform before fitting
         rp = RandomProjectionTransform(target_dim=20)
         x = randn(rng, 50)
-        @test_throws ErrorException transform(rp, x)
+        @test_throws ArgumentError transform(rp, x)
     end
 
     @testset "Preserves data check" begin

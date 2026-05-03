@@ -130,7 +130,7 @@ using Random
         # Transform before fitting
         pca = PCATransform(target_dim=5)
         x = randn(rng, 10)
-        @test_throws ErrorException transform(pca, x)
+        @test_throws ArgumentError transform(pca, x)
     end
 
     @testset "Preserves data check" begin

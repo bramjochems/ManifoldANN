@@ -68,7 +68,7 @@ This method learns any parameters needed by the transform (e.g., cluster centroi
 quantization codebooks, projection matrices).
 """
 function fit!(::AbstractTransform, ::AbstractMatrix)
-    error("fit! not implemented for this transform type")
+    throw(ArgumentError("fit! not implemented for this transform type"))
 end
 
 """
@@ -81,5 +81,5 @@ Returns a `TransformResult` containing:
 - `assignment`: Routing information (or `nothing` if no bucketing)
 """
 function transform(::AbstractTransform, ::AbstractVector)
-    error("transform not implemented for this transform type")
+    throw(ArgumentError("transform not implemented for this transform type"))
 end
