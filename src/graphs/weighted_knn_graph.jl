@@ -276,7 +276,7 @@ function _fit_geometries(sharing::ShareSimilarTangents, method::AbstractLocalGeo
     # Vector{Union{Nothing,G}} for the remaining slots.
     g1 = fit_geometry(method, data, 1, graph[1]; graph=graph)
     G = typeof(g1)
-    geometries = Vector{Union{Nothing,G}}(nothing for _ in 1:n)
+    geometries = fill!(Vector{Union{Nothing,G}}(undef, n), nothing)
     geometries[1] = g1
     assigned_nodes = Int[1]
 
@@ -540,7 +540,7 @@ function _fit_geometries_with_candidates(sharing::ShareSimilarTangents, method::
     end
     g1 = fit_geometry(method, data, 1, candidate_indices_1; graph=graph)
     G = typeof(g1)
-    geometries = Vector{Union{Nothing,G}}(nothing for _ in 1:n)
+    geometries = fill!(Vector{Union{Nothing,G}}(undef, n), nothing)
     geometries[1] = g1
     assigned_nodes = Int[1]
 
