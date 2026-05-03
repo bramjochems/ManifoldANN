@@ -25,20 +25,28 @@ The design must cleanly separate:
 We will use a **recursive tree structure** where each node is a `TransformedIndex` that can contain other `TransformedIndex` nodes or terminal indices.
 
 ```julia
-struct TransformedIndex{T<:AbstractTransform, I<:AbstractANNIndex, C} <: AbstractANNIndex
+struct TransformedIndex{
+    T<:AbstractTransform,
+    I<:AbstractANNIndex,
+    C<:Union{Nothing, Vector{<:AbstractMatrix}},
+    M<:Union{Nothing, Vector{Vector{Int}}},
+} <: AbstractANNIndex
     transform::T
     routing_strategy::AbstractRoutingStrategy
-    indices::Vector{I}  # Children (may be TransformedIndex or terminal)
-    id_mappings::Union{Nothing, Vector{Vector{Int}}}
-    child_data::C        # Optional stored datasets when the transform changes representation
+    indices::Vector{I}      # Children (may be TransformedIndex or terminal)
+    id_mappings::M          # Vector{Vector{Int}} for bucketing transforms; Nothing otherwise
+    child_data::C           # Optional stored datasets when the transform changes representation
+    bucket_lookup::Union{Nothing, Vector{Int}}  # original bucket id → position in `indices`
 end
 
-struct MultiLevelIndex{T<:AbstractTransform, I<:AbstractANNIndex, C, D} <: AbstractANNIndex
-    root::TransformedIndex{T,I,C}
+struct MultiLevelIndex{T,I,C,M,D} <: AbstractANNIndex
+    root::TransformedIndex{T,I,C,M}
     merge_strategy::AbstractMergeStrategy
     distance::D
 end
 ```
+
+`C` and `M` are tracked as type parameters so the dispatch in `_resolve_child_data` and `_child_distance_type` can specialise per (storage, mapping) shape without runtime branches.
 
 **Rationale**: Recursive structure provides maximum flexibility and composability. Each level encapsulates its own transform and routing logic.
 
