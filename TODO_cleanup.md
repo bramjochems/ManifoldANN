@@ -5,548 +5,342 @@ Completed work lives in `git log` — this file is forward-looking only.
 
 ## Working principles
 
-These are invariants we've established the hard way. Violating them
-silently breaks something.
+Invariants we've established the hard way. Violating them silently breaks
+something.
 
 - **Thread-safety contract on `AbstractANNIndex`**: `query(::AbstractANNIndex, data, q, k)`
-  is concurrent-safe in every concrete implementation today, but it's a happy
-  coincidence rather than a documented invariant. New index types must preserve
-  it. The contract: `query` may be called concurrently on the same index;
-  `build_index` and `insert!` may not. Worth promoting to a docstring on
-  `AbstractANNIndex` and adding a generic regression test.
+  is concurrent-safe in every concrete implementation today, but it's a
+  happy coincidence rather than a documented invariant. New index types
+  must preserve it. The contract: `query` may be called concurrently on
+  the same index; `build_index` and `insert!` may not. Worth promoting to
+  a docstring on `AbstractANNIndex` and adding a generic regression test.
 
-- **Distance functions must be re-entrant.** The threaded build path and the
-  batch query path call `index.distance` concurrently from multiple workers.
-  Stateful distance functors (e.g. with internal cache) silently corrupt under
-  these paths. Documented on `HNSWIndex`; should be hoisted to the abstract
-  index type.
+- **Distance functions must be re-entrant.** The threaded build path and
+  the batch query path call `index.distance` concurrently from multiple
+  workers. Stateful distance functors (e.g. with internal cache) silently
+  corrupt under these paths. Documented on `HNSWIndex`; should be hoisted
+  to the abstract index type.
 
 - **Do not use `LoopVectorization.jl` (`@turbo` / `@avx`).** Maintenance-only
   since ~2024, fragile on Julia 1.10+. Stick to `@simd` + `SIMD.jl` +
   `VectorizationBase.jl` if hand-tuning is needed.
 
-- **Do not measure perf in the test suite.** `Pkg.test()` is the correctness
-  gate; perf goes in `scripts/*_bench.jl`. Conflating them makes CI flaky and
-  obscures regressions.
+- **Do not measure perf in the test suite.** `Pkg.test()` is the
+  correctness gate; perf goes in `scripts/*_bench.jl`. Conflating them
+  makes CI flaky and obscures regressions.
 
 - **Report testset count, not raw `@test` count.** Per-edge assertions in
-  loops inflate the latter into meaningless six-digit numbers; the meaningful
-  signal is "X testsets passed, 0 failed."
+  loops inflate the latter into meaningless six-digit numbers; the
+  meaningful signal is "X testsets passed, 0 failed."
 
-- **`benchmarking/` vs `scripts/` are different things.** `benchmarking/` is
-  thesis-coupled experimentation infrastructure (downloaders, ann-benchmarks
-  competitor wrappers, multi-algorithm sweep configs). It exists to produce
-  thesis numbers/plots and will eventually migrate out of the package per
-  `CLAUDE.md`'s separation principle. `scripts/` is package-coupled tooling
-  (focused fair-compare benchmarks, perf regression checks, profiling) and
-  stays with the package — anything a future consumer of `ManifoldANN` would
-  find useful for understanding the package's behaviour. New work goes to
-  whichever it serves; don't conflate them.
+- **`benchmarking/` vs `scripts/` are different things.** `benchmarking/`
+  is thesis-coupled experimentation infrastructure (downloaders,
+  ann-benchmarks competitor wrappers, multi-algorithm sweep configs). It
+  exists to produce thesis numbers/plots and will eventually migrate out
+  of the package per `CLAUDE.md`'s separation principle. `scripts/` is
+  package-coupled tooling (focused fair-compare benchmarks, perf
+  regression checks, profiling) and stays with the package — anything a
+  future consumer of `ManifoldANN` would find useful for understanding
+  the package's behaviour. New work goes to whichever it serves; don't
+  conflate them.
 
 - **Thesis-grade head-to-head numbers come from focused scripts, not the
   general harness.** `benchmarking/benchmark.py` is for breadth ("roughly
-  where do we sit across N algorithms × M datasets?"). Specific QPS / build
-  time claims that get cited in the thesis or in commit messages must come
-  from a focused fair-compare script in `scripts/` (e.g.
-  `scripts/hnsw_fair_compare.py`, `scripts/kdtree_fair_compare.jl`). The
-  general harness has known fairness issues — see "benchmark harness
-  pre-migration fixes" under Open work.
+  where do we sit across N algorithms × M datasets?"). Specific QPS /
+  build time claims that get cited in the thesis or in commit messages
+  must come from a focused fair-compare script in `scripts/` (e.g.
+  `scripts/hnsw_fair_compare.py`, `scripts/nndescent_jl_pareto.jl`,
+  `scripts/kdtree_fair_compare.jl`).
+
+- **Apples-to-apples library comparisons go on the recall-vs-qps Pareto
+  curve, not at fixed parameter values.** Different libraries' search
+  parameters (e.g. `ef_search` vs `max_candidates`) bound different data
+  structures and dial recall at different rates. Numerically-equal
+  parameter values can land at very different recall levels. Always
+  measure both libraries across a parameter sweep and compare qps at
+  matched recall. See `scripts/nndescent_jl_pareto.jl` for the pattern.
 
 ## Open work
 
 ### HNSW
 
-- **Fix stale `cur_max` snapshot in threaded build.** A thread that snapshots
-  `cur_max=2` at insertion start can have its connect loop skip layers 3..level
-  if another thread bumps `index.max_layer` past `level` mid-execution. Same
-  effect as serial HNSW would have produced for that node, so locally
-  HNSW-correct, but a small recall hit (~0.001 absolute, ~0.1% of inserts).
-  Approach: hold `index.global_lock` for the connect loop *only* when
-  `level > cur_max_at_snapshot`. A previous fix attempt collapsed recall to
-  ~0.5 from a bug I couldn't quickly debug — re-attempt carefully with the
-  stress + invariant tests as a guard rail.
+- **Lock-free adjacency + visited-buffer pool (review ROI before
+  committing).** Two pieces that together would close most of the
+  remaining threading gap to hnswlib (estimated multi-thread build
+  3.96s → ~2.0s, multi-thread query 16k → ~30-40k QPS at SIFT-128
+  n=50k). Slab adjacency: replace `Vector{Vector{Int}}` with
+  `Matrix{Int}` + atomic degree counters, eliminate per-node
+  `ReentrantLock`. Visited pool: lift `BatchQueryScratch`-style buffers
+  from per-batch to index-lifetime ownership, atomic-stack pool.
 
-- **Lock-free adjacency + visited-buffer pool (review ROI before committing).**
-  Two pieces that together would close most of the remaining threading gap to
-  hnswlib (estimated multi-thread build 3.96s → ~2.0s, multi-thread query
-  16k → ~30-40k QPS at SIFT-128 n=50k). Slab adjacency: replace
-  `Vector{Vector{Int}}` with `Matrix{Int}` + atomic degree counters, eliminate
-  per-node `ReentrantLock`. Visited pool: lift `BatchQueryScratch`-style
-  buffers from per-batch to index-lifetime ownership, atomic-stack pool.
+  **Goal/rationale:** the only remaining big lever for HNSW. Won't
+  reach hnswlib parity (C++ vs Julia constant factors cap us at ~1.4×
+  behind, not 1.0×) but closes most of the gap. Cost ~2-3 days.
+  Re-evaluate after thesis whether library publishability needs the
+  extra speed-up or whether "competitive but Julia-native" is
+  sufficient.
 
-  Cost ~2-3 days. Won't reach hnswlib parity (C++ vs Julia constant factors
-  cap us at ~1.4× behind, not 1.0×). Re-evaluate after thesis whether library
-  publishability needs the extra speed-up or whether "competitive but
-  Julia-native" is sufficient.
-
-- **Pool the `BestCandidatesHeap` backing buffer for build.** Per-call heap
-  allocation in `_search_layer` is the dominant remaining single-threaded
-  build alloc (~36 KB/call at ef_c=200). Same coupling tradeoff as
-  `visit_stamps` (build-only, single-threaded). Estimated 10-20% single-thread
-  build speedup. Smaller win than the threaded build work.
-
-- **HNSW traversal `maybe_push_candidate!` deviates from the paper.** Currently
-  pushes to `state.pending` only when also added to `best`. The standard HNSW
-  search adds *every* unvisited neighbor whose `dist < worst` to the candidate
-  frontier. Likely benign but worth aligning. `src/indices/hnsw/traversal.jl:117-127`.
+- **Pool the `BestCandidatesHeap` backing buffer for build.** Per-call
+  heap allocation in `_search_layer` is the dominant remaining
+  single-threaded build alloc (~36 KB/call at ef_c=200). Same coupling
+  tradeoff as `visit_stamps` (build-only, single-threaded). Estimated
+  10-20% single-thread build speedup. Smaller win than the threaded
+  build work above.
 
 ### NN-Descent
 
-- **DONE — Per-task scratch pooling for batch query.** Landed: `NNDescentBatchScratch`
-  + specialised `query(::NNDescentIndex, ::AbstractMatrix, ...)` mirroring
-  HNSW's `BatchQueryScratch`. Each worker owns one scratch reused across
-  all its queries (visited BitVector, heap backing buffer, entry-point
-  Set + Vector). Single-query API unchanged (still re-entrant with fresh
-  allocation per call). Measured at n=20000, d=32, k=20, ef_s=60, 5000 queries:
-  - -t 1: 2151 → 3599 qps (+67%); 277 → 35 KB/query (-87%).
-  - -t 4: 5378 → 11007 qps (+105%); 286 → 36 KB/query (-87%).
-  - Scaling -t 4 / -t 1: was 2.5×, now 3.06×.
-  Bench: `scripts/nndescent_batch_query_bench.jl`.
+- **Optional `bounded_candidates` / `max_candidates` knob for query.**
+  Investigation (see git log) showed MANN's qps gap to NND.jl at fixed
+  parameters is a recall/speed tradeoff, not a perf bug: MANN's
+  candidates queue is unbounded (delivering higher recall) while NND.jl
+  bounds at `max_candidates`. At matched recall MANN is 1.7-2.7× faster
+  across the range both can reach. Exposing a `bounded_candidates` mode
+  would let users opt into NND.jl-style faster-but-lower-recall query.
+  Default to current unbounded behaviour. Not load-bearing.
 
-  Same lever exists in principle for KDTree and LSH but at smaller
-  per-query allocation budgets — much smaller win there. Revisit only
-  if measurement shows GC pressure caps their scaling too.
-
-- **Adaptive `max_iterations`.** Currently hardcoded at 10; PyNNDescent uses
-  `max(5, round(log2(n)))`. Cheap fix, plausibly small recall improvement at
-  large n.
+- **Adaptive `max_iterations`.** Currently hardcoded at 10; PyNNDescent
+  uses `max(5, round(log2(n)))`. Cheap fix, plausibly small recall
+  improvement at large n.
 
 - **PyNNDescent as a quality oracle.** Head-to-head validation against
   PyNNDescent on identical inputs would catch creeping recall drops the
   current ≥ 0.90 / MRR ≥ 0.92 floor doesn't notice. Costs Python in the
-  validation loop; defer until the ecosystem question (below) is decided.
+  validation loop; defer until the ecosystem question (Distances.jl /
+  Manifolds.jl / NN.jl) is decided.
 
 ### LSH
 
-- **Tiny LSH follow-ups (consider later if worthwhile).** Surfaced by
-  brutal-critic on the dedup + `pack_bins` fixes; both are non-issues at
-  thesis-typical sizes, neither worth a dedicated session:
+- **Tiny follow-ups (consider later if worthwhile).** Both are non-issues
+  at thesis-typical sizes; neither warrants a dedicated session.
   - Replace `shuffle!` + `resize!` in `query` with reservoir sampling
-    when `candidate_cap << length(candidates)` — O(cap) instead of O(C).
-    Irrelevant at C up to a few thousand.
+    when `candidate_cap << length(candidates)` (O(cap) instead of O(C)).
   - `_collect_candidates` calls `sizehint!(seen::BitSet, expected)`,
-    which is misleading: BitSet storage scales with `max(id)`, not
-    element count, so the hint is a no-op for memory. Either drop the
-    line or revisit BitSet vs `Set{Int}` at large N (~1.25 MB/query at
-    N=10M).
+    misleading because BitSet storage scales with `max(id)` not element
+    count. Either drop the line or revisit BitSet vs `Set{Int}` at large
+    N (~1.25 MB/query at N=10M).
 
 ### KDTree
 
-Audit (mid-session, this conversation) compared MANN-KDTree against
-NearestNeighbors.jl-KDTree via `scripts/kdtree_fair_compare.jl`. Recall
-identical (1.0, both exact); we are 2.5-4× behind on build and 1.2-5× behind
-on query (gap shrinks at high d as distance cost dominates). Root cause is
-structural: our tree has no leaves — every node holds an anchor point and
-computes a distance during traversal — while NN.jl walks split metadata to
-a leaf bucket and scans contiguously. The items below are textbook
-KD-tree improvements (Bentley 1975, Friedman-Bentley-Finkel 1977); not
-novel research, just bringing the reference implementation up to a
-respectable baseline. The thesis contribution lives in the manifold-aware
-graph machinery, not in the KD-tree.
+KDTree is reference-only for the thesis (the contribution lives in the
+manifold-aware graph machinery, not the KD-tree). The first-pass
+quickselect / in-place partition / query alloc cleanup landed; remaining
+items below are textbook improvements (Friedman-Bentley-Finkel 1977) for
+bringing the reference up to a respectable baseline.
 
-**First pass (do these together; do NOT proceed to the next pass without
-measuring):**
+**Second pass (do AFTER measuring whether it's still worthwhile):**
 
-- **Quickselect for median partition.** Build currently uses
-  `sort!(indices, by = i -> data[axis, i])` per node — full O(n log n) sort
-  where O(n) quickselect / `partialsort!` would do. Single biggest build-side
-  win available; expected to close 40-60% of the build gap. One-line change
-  in `src/indices/kdtree/builder.jl`, then test with
-  `scripts/kdtree_fair_compare.jl`.
+- **Leaf-bucket layer (leafsize ~16-32).** Stop recursion at a
+  configurable bucket size; store the leaf as a `UnitRange` into the
+  `indices` permutation, scan the bucket linearly in the query. Closes
+  most of the remaining query gap at low/mid d (3-4× query speedup at
+  d=8 expected). ~80-120 LOC across `types.jl`/`builder.jl`/`query.jl`.
+  Additive — keep `KDTreeIndex` exported fields stable, internal layout
+  change only.
 
-- **In-place index partitioning.** Build currently slices
-  `Vector{Int}(indices[1:median_pos-1])` and `indices[median_pos+1:end]` per
-  internal node — O(n log n) allocation. Falls out naturally from
-  quickselect (which already partitions); pass `(lo, hi)` ranges into the
-  same `indices` buffer instead. Expected to take 20-30% off remaining build
-  cost AND reduce GC pressure that bleeds into query benchmarks.
+- **Reorder data for leaf-contiguous memory.** Build a permuted
+  `Matrix{T}` so leaf scans become sequential column reads instead of
+  random `data[:, indices[i]]` lookups. 1.3-1.6× query speedup *on top
+  of* the leaf-bucket change. ~30 LOC. **Only meaningful after the
+  leaf-bucket change** — without leaves there's nothing to reorder.
+  Make it opt-out so callers passing huge matrices can skip the copy.
 
-- **Query allocation cleanup.** Three small wins, all in
-  `src/indices/kdtree/query.jl`:
-  1. Drop the redundant `sort!(results, by = ...)` after `to_sorted_vector`
-     (the latter already sorts).
-  2. `to_sorted_vector` does `copy(heap.data)` then `sort!`; the heap is
-     discarded anyway, so `sort!(heap.data)` directly + return a wrapping
-     `Vector{Neighbor}` saves the copy.
-  3. Per-query `BoundedMaxHeap` heap-allocates its inner Vector. Accept an
-     optional pre-allocated buffer for batched query paths (we already have
-     batched queries elsewhere — same worker-pool pattern as HNSW's
-     `BatchQueryScratch`).
+**Lower-priority follow-ups:**
 
-  Drops per-query alloc 0.52 KB → ~0.15 KB; modest wallclock gain
-  (~10-20%) but tightens hot loops in batched workloads.
-
-**Second pass (do AFTER first pass lands and measures match audit
-predictions):**
-
-- **Leaf-bucket layer (leafsize ~16-32).** Stop recursion at a configurable
-  bucket size; store the leaf as a `UnitRange` into the `indices`
-  permutation, scan the bucket linearly in the query. Closes most of the
-  remaining query gap at low/mid d (3-4× query speedup at d=8 expected).
-  ~80-120 LOC across `types.jl`/`builder.jl`/`query.jl`. Additive — keep
-  `KDTreeIndex` exported fields stable, internal layout change only.
-
-- **Reorder data for leaf-contiguous memory.** Build a permuted `Matrix{T}`
-  so leaf scans become sequential column reads instead of random
-  `data[:, indices[i]]` lookups. 1.3-1.6× query speedup *on top of* the
-  leaf-bucket change. ~30 LOC. **Only meaningful after the leaf-bucket
-  change** — without leaves there's nothing to reorder. Make it opt-out so
-  callers passing huge matrices can skip the copy.
-
-**Lower-priority follow-ups (consider after measuring the above):**
-
-- **Specialise on metric type-parameter.** Recursion currently dispatches
-  through a `Function` argument (`distance::Function`), which can defeat
-  inlining. Specialising on a metric type (or just inlining
-  `default_distance` directly when it's the default) is the simpler fix and
-  is already idiomatic Julia. 5-15% query speedup at low d. ~10 LOC.
-
-- **Incremental rolling-bound distance during query.** Standard Friedman-
-  Bentley-Finkel 1977 trick: maintain the squared distance from `q` to the
-  active cell; when descending into the far child, update only the changed
-  axis's contribution. Tighter pruning than `abs(q_val - split_value)`.
-  1.2-1.4× query speedup expected at moderate d. ~40 LOC, gate on
-  `default_distance` (only correct for additive Minkowski-like metrics).
-  Probably not worth doing if the leaf-bucket change closes most of the
-  query gap.
+- **Incremental rolling-bound distance during query.** Standard
+  Friedman-Bentley-Finkel 1977 trick: maintain the squared distance from
+  `q` to the active cell; when descending into the far child, update
+  only the changed axis's contribution. Tighter pruning than
+  `abs(q_val - split_value)`. 1.2-1.4× query speedup expected at
+  moderate d. ~40 LOC, gate on `default_distance` (only correct for
+  additive Minkowski-like metrics). Probably not worth doing if the
+  leaf-bucket change closes most of the query gap.
 
 - **Hyperrectangle width tracking** as an *alternative* axis selector.
-  Instead of `_axis_with_max_spread` rescanning `indices` over `d` axes
-  per node, maintain `mins`/`maxes` down recursion and pick
-  `argmax(maxes - mins)`. Faster, but the resulting axis choice is *not*
-  identical to `:variance`'s output (it's the cell width, not the data
-  width). **Hesitant — do not adopt purely for performance.** The
-  `:variance` axis selector is a thesis-relevant degree of freedom (it
-  interacts with manifold-aware embeddings); changing the default
-  axis-selection strategy for a constant-factor speed win is the wrong
-  trade. If pursued, expose as a new `axis_selector = :bbox` and keep
-  `:variance` as default.
+  Maintain `mins`/`maxes` down recursion and pick `argmax(maxes - mins)`
+  instead of rescanning `indices` over `d` axes per node. Faster, but
+  the resulting axis choice is not identical to `:variance`'s output
+  (it's the cell width, not the data width). **Hesitant — do not adopt
+  purely for performance.** The `:variance` axis selector is a
+  thesis-relevant degree of freedom (it interacts with manifold-aware
+  embeddings); changing the default for a constant-factor speed win is
+  the wrong trade. If pursued, expose as a new `axis_selector = :bbox`
+  and keep `:variance` as default.
 
 **Anti-recommendations (do not do these):**
 
-- Implicit binary heap layout (`getleft(i)=2i, getright(i)=2i+1`) for the
-  node array. Saves one Int per node at the cost of significant
+- Implicit binary heap layout (`getleft(i)=2i, getright(i)=2i+1`) for
+  the node array. Saves one Int per node at the cost of significant
   bit-twiddling complexity.
-- `SVector`-based hyperrectangle plumbing — forces the entire pipeline to
-  be parametric on `D`, harder to read, more recompilation.
+- `SVector`-based hyperrectangle plumbing — forces the entire pipeline
+  to be parametric on `D`, harder to read, more recompilation.
 - Multiple coupled flags (`reorder` / `storedata` / `reorderbuffer`).
 - Threaded build — the gap is closeable single-threaded; threading
   obscures the algorithmic story we'd want to tell.
-- Metric-specific kernel branches (Chebyshev, etc.) — couples the tree to
-  metrics we don't ship.
+- Metric-specific kernel branches (Chebyshev, etc.) — couples the tree
+  to metrics we don't ship.
 
 ### Geodesic / graph
 
 - **`pushfirst!(path, current)` in `_reconstruct_path`.**
-  `src/geodesic/geodesic_model.jl:288`. O(n) per call → O(n²) reconstruction.
-  Use `push!` then `reverse!` once.
+  `src/geodesic/geodesic_model.jl:288`. O(n) per call → O(n²)
+  reconstruction. Use `push!` then `reverse!` once.
 
 - **`GreedySolver` complexity claim wrong.**
-  `src/graphs/refinement/solvers.jl:459` documents O(k² log k); actual is
-  O(k⁴) worst case. Either fix the algorithm (heap of edges) or fix the
-  docstring.
+  `src/graphs/refinement/solvers.jl:459` documents O(k² log k); actual
+  is O(k⁴) worst case. Either fix the algorithm (heap of edges) or fix
+  the docstring.
 
-- **`_fit_geometries(::ShareSimilarTangents)` boxing.** Both sharing variants
-  use `Vector{Any}` because they fill out of order with `nothing` placeholders.
-  Could tighten to `Vector{Union{Nothing, G}}` once `G` is known after the
-  first fit. Low-priority polish.
+- **`_fit_geometries(::ShareSimilarTangents)` boxing.** Both sharing
+  variants use `Vector{Any}` because they fill out of order with
+  `nothing` placeholders. Could tighten to `Vector{Union{Nothing, G}}`
+  once `G` is known after the first fit. Low-priority polish.
+
+### Latent type-narrowing in kmeans (multilevel-build path)
+
+`KMeansTransform.fit!`, `init_random`, `init_kmeans_plus_plus`,
+`pairwise_distances!`, and the kmeans `lloyd!` driver all type-restrict
+to `::Matrix{T}` rather than `::AbstractMatrix{T}`. The recently-landed
+`_materialize_partition` workaround copies SubArrays into a fresh
+`Matrix` at the partition boundary so this never bites in practice, and
+preserves BLAS dispatch in `pairwise_euclidean!` / `pairwise_sqeuclidean!`
+(`mul!` requires StridedArray for GEMM).
+
+**Goal/rationale:** the narrow signatures are intentional for BLAS
+dispatch but are easy to trip on if someone changes the partition path.
+Worth either (a) leaving as-is and documenting the contract, or (b)
+widening to `AbstractMatrix` and explicitly handling the strided/non-
+strided fork inside `pairwise_distances!`. Defer until there's a real
+need.
 
 ### New indices to consider
 
-- **`RPTreeIndex` as a standalone index.** RP-tree primitives already exist in
-  the codebase (`src/indices/nndescent/rptree_init.jl`: `build_rptree`,
-  `build_rptree_forest`, `leaf_members`) and are used as an opt-in init for
-  NN-Descent. Promoting them to a top-level `RPTreeIndex` would be cheap (~50
-  LOC of wrapping struct + `build_index` / `query` methods) and covers the
-  high-d regime where our KD-tree degrades (>~50 dims) — RP-trees pick random
-  hyperplanes and avoid the axis-aligned curse-of-dimensionality. Modest novel
+- **`RPTreeIndex` as a standalone index.** RP-tree primitives already
+  exist in the codebase (`src/indices/nndescent/rptree_init.jl`:
+  `build_rptree`, `build_rptree_forest`, `leaf_members`) and are used as
+  an opt-in init for NN-Descent. Promoting them to a top-level
+  `RPTreeIndex` would be cheap (~50 LOC of wrapping struct +
+  `build_index` / `query` methods) and covers the high-d regime where
+  KD-tree degrades (>~50 dims) — RP-trees pick random hyperplanes and
+  avoid the axis-aligned curse-of-dimensionality. Modest novel
   contribution in the Julia ecosystem: `NearestNeighbors.jl` ships
-  KDTree/BallTree/BruteTree but not RP-tree forest; the only Julia RP-tree
-  implementation today is buried inside `NearestNeighborDescent.jl`'s init.
-  When this lands, move the primitives from `src/indices/nndescent/` to
-  `src/utils/rptree.jl` so NN-Descent and `RPTreeIndex` share them.
+  KDTree/BallTree/BruteTree but not RP-tree forest; the only Julia
+  RP-tree implementation today is buried inside
+  `NearestNeighborDescent.jl`'s init. When this lands, move the
+  primitives from `src/indices/nndescent/` to `src/utils/rptree.jl` so
+  NN-Descent and `RPTreeIndex` share them.
 
-### Benchmark harness pre-migration fixes (`benchmarking/`)
+### Benchmark harness fairness (`benchmarking/`)
 
-Independent fairness audit (mid-session, this conversation) flagged the
-existing `benchmarking/benchmark.py` numbers as **not defensible** for
-quantitative thesis-grade head-to-head comparisons against C/C++ libraries.
-Recall numbers ARE defensible (consistent ground truth, consistent k, no
-off-by-one). Build-time and QPS comparisons against external libraries
-need fixing or re-running through focused scripts.
-
-**STATUS:** the three critical issues below were fixed in commit `d19aaad`
-("benchmarking: fix three fairness issues in the harness"): per-dim
-warmup, symmetric data marshalling via `prepare_data`, and a `--threads N`
-CLI flag with a JULIA_NUM_THREADS-mismatch warning. A FOURTH fix landed
-in `f9765dc`: native batch query (`query_batch`) on every wrapper that
-has one (HNSWlib/FAISS/PyNNDescent natively; HNSW.jl/NND.jl/NN.jl-KDTree
-via Julia native batch APIs), plus an 8-query warmup batch run via
-`prepare_queries → query_batch` before the timed query so each wrapper
-warms at the actual batch shape. Annoy intentionally not given
-`query_batch` — no native batch API; loop-of-singletons matches its
-real-world usage.
-
-After all four fixes, the same-algorithm head-to-heads on Fashion-MNIST
-(n=5000, threads=4, post `f9765dc`) match what direct-Julia spot-checks
-show outside the harness:
-  - HNSW: MANN 30,530 qps vs HNSWlib 35,838 qps (~0.85× behind C++,
-    matches `scripts/hnsw_fair_compare.py`).
-  - NN-Descent: MANN 5500 qps vs NND.jl 12,000 qps multi-thread, but
-    MANN 6700 qps vs NND.jl 3200 qps single-thread — i.e., we win
-    serial, lose because NND.jl threads its batch and we (currently)
-    don't (item under HNSW/NN-Descent open work).
-  - HNSW.jl 7,498 qps — much lower than MANN-HNSW's 30,530 because
-    HNSW.jl is unmaintained / less tuned, NOT a harness artefact.
-
-Recall numbers were always defensible and remain so. Original audit
-text retained below for reference; the **lower-priority** items further
-down are still open.
-
-- **[FIXED] JIT not warmed for every Julia index type.**
-  `benchmarking/benchmarking/wrappers/manifoldann.py:39-72` warms
-  `BruteForceIndex` and `IVF-HNSW` only. `HNSWIndex`, `KDTreeIndex`,
-  `LSHIndex` (both hash families), `IVFFlatIndex`, and `NNDescentIndex` pay
-  full Julia JIT inside the timed `algo.fit()` region on first call.
-  Same issue in `julia_external.py:50-53` for `HNSW.jl` and
-  `NearestNeighborDescent.jl` (only `NearestNeighbors.KDTree` is warmed).
-  Fix shape: extend each wrapper's warmup block to call `build_index` +
-  `query_batch` for every index type the harness will exercise. Also the
-  warmup uses dim=10; rerun warmup with the actual dataset dim before
-  the first timed `fit` to cover dim-specialised code paths.
-
-- **[FIXED] Competitor thread counts uncontrolled.**
-  `wrappers/{hnswlib,faiss,annoy,pynndescent}.py` — no wrapper calls
-  `set_num_threads`, `omp_set_num_threads`, or sets `n_jobs` /
-  `NUMBA_NUM_THREADS`. hnswlib silently uses `min(cpus, 8)`, FAISS uses
-  all OMP cores, pynndescent uses all numba threads. Meanwhile
-  `benchmark.py:15-21` sets `JULIA_NUM_THREADS=cpu_count()` for the Julia
-  side. **Result: cross-library comparisons are systematically asymmetric
-  on threading.** Fix shape: a `--threads N` CLI flag that propagates to
-  every wrapper's library-specific thread setter, plus require
-  `JULIA_NUM_THREADS=N` to match.
-
-- **[FIXED] Data marshalling charged asymmetrically.** `manifoldann.py:101-112`,
-  `julia_external.py:66-74,185-193,274-282`. Every Julia wrapper does
-  `np.asfortranarray(X.T, dtype=np.float32) + _to_matrix(...)` inside
-  `fit()`. `wrappers/hnswlib.py:28-49` and `wrappers/faiss.py:26-57`
-  consume row-major numpy directly with no equivalent step. For high-dim
-  datasets this is tens to hundreds of ms charged to Julia only. Fix
-  shape: marshal Julia inputs once outside the timed region (as
-  `scripts/hnsw_fair_compare.py:189-196` already does), or symmetrically
-  charge a `np.ascontiguousarray(X, dtype=np.float32)` to every
-  competitor.
-
-- **[FIXED in `f9765dc`] Asymmetric query batching across wrappers.**
-  Only ManifoldANN and SciPy implemented `query_batch`. HNSWlib, FAISS,
-  PyNNDescent and all three `julia_external` wrappers fell through to a
-  Python `for q in test: query(q)` loop in `benchmark.py`, paying
-  per-query boundary overhead while ManifoldANN got one batched call
-  with internal threading. Each library has a native batch API
-  (`hnswlib.knn_query(matrix, k)`, `faiss.search(matrix, k)`,
-  `NearestNeighbors.knn(tree, matrix, k)`,
-  `HNSW.knn_search(hnsw, vec_of_vecs, K)`, `NND.search(graph, matrix, k)`)
-  — wired up symmetrically. Plus added an 8-query warmup batch in
-  `benchmark.py` so the first timed call doesn't pay JIT/cache setup
-  for any library. Annoy intentionally not given `query_batch` — no
-  native batch API. Smoke test: HNSWlib 17,412→35,838 qps;
-  FAISS-IVF 22,767→37,697; HNSW.jl 1,215→7,498; NND.jl 226→19,193.
-  Recall unchanged.
-
-#### High-priority open harness items (fairness still has gaps)
+Cross-library numbers from the general harness are now defensible after
+the JIT-warmup, thread-control, data-marshalling, and native-batch-query
+fixes (see git log for `d19aaad` and `f9765dc`). Two fairness gaps
+remain:
 
 - **Single-shot timing produces unstable per-algorithm QPS for noisy
-  query variants.** Investigation (mid-session, this conversation) on a
-  reported "MANN-NN-Descent pruned-deferred 1468 qps deflation" found
-  the gap was **not** a structural harness penalty but rather single-
-  sample variance: pruned-deferred's sparser+asymmetric graph produces
-  highly heterogeneous per-query work, and at small batch sizes (200
-  queries × 4 threads ≈ 50 queries/thread, ~30-80 ms timed window) the
-  between-query variance dominates. Reproduction at the same config
-  spans ~2500-13500 qps across runs — full-continuous/full-deferred are
-  stable to within ~5% because they have denser, more uniform graphs.
-  Single-shot timing means a single low draw can land in a thesis table.
-
-  **Fix shape**: `--reps N` CLI flag (default 1, i.e. preserves current
-  behaviour for development sweeps). For thesis-grade runs, `--reps 3`
-  or `--reps 5` with median + IQR reporting. Force `gc.collect()` and
-  `jl.GC.gc()` between reps and between algorithms to reduce
-  cold-cache asymmetry between the first algorithm and subsequent ones.
-  Cost: at default `--reps 1` no change; at `--reps 3` runtime
-  trebles. Acceptable for thesis-table runs (Fashion-MNIST n=5k goes
-  ~30s → 90s, SIFT n=1M ~30 min → 90 min — the SIFT case is when you'd
-  flip the flag deliberately, not by default).
+  query variants.** At small batch sizes, between-query variance
+  dominates the timed window; reproductions on pruned-deferred NN-Descent
+  span ~2500-13500 qps across runs. **Fix shape:** `--reps N` CLI flag
+  (default 1, preserves current behaviour for development sweeps);
+  thesis-grade runs use `--reps 3` or `--reps 5` with median + IQR
+  reporting. Force `gc.collect()` and `jl.GC.gc()` between reps and
+  between algorithms.
 
 - **Cross-library parameter sets are not automatically apples-to-apples.**
   Each algorithm in `benchmarking/configs/*.yaml` gets its own params
-  block (`MANN-NNDescent: k=32, max_iterations=5, sample_rate=0.5,
-  convergence_threshold=0.01, ef_search=64`; `NearestNeighborDescent-jl:
-  k=32, max_iterations=5, sample_rate=0.5, precision=0.01, max_candidates=64`).
-  Some parameters mean the same thing across libraries (`k`,
-  `max_iterations`, `sample_rate`); others look similar but are slightly
-  different (`convergence_threshold` vs `precision` — both delta-style
-  but different defaults; `ef_search` for our search beam vs
-  `max_candidates` for NND.jl's; HNSW `M`/`ef_construction` vs FAISS
-  `nlist`/`nprobe` are entirely different algorithm controls). The
-  harness has no automated check that parameter sets actually correspond
-  for cross-library pairs, so a config-author error silently produces an
-  unfair comparison. Same concern for IVF (MANN-IVF-Flat vs FAISS-IVF —
-  `nlist`, `nprobe` should match). Fix shape: a "comparable groups" YAML
-  section that names which configs are meant to be cross-library
-  apples-to-apples and runs a check that the shared parameters match;
-  or a comment block in each config explaining the equivalence.
+  block; some parameters mean the same thing across libraries (`k`,
+  `max_iterations`), others look similar but dial recall at different
+  rates (`ef_search` vs `max_candidates` — see "Apples-to-apples" in
+  Working principles). The harness has no automated check that parameter
+  sets correspond for cross-library pairs. **Fix shape:** a "comparable
+  groups" YAML section that names which configs are meant to be
+  cross-library apples-to-apples, plus either a check that shared
+  parameters match or a comment block in each config explaining the
+  equivalence.
 
-#### Lower-priority open harness items (group when above is done):
+**Lower-priority:**
 
-- Query result conversion (Julia → 0-indexed Python ids) charged to Julia
-  only — inside the `query_batch` timed region. `manifoldann.py:78-86,134-156`.
-- pynndescent build (numba JIT) not warmed at the actual config —
-  `f9765dc`'s 8-query warmup helps the query path, not the BUILD path.
-  First `NNDescent(...)` call still pays numba JIT inside the timed
-  `fit()`. Same shape as the original Julia-build JIT issue, applied
-  to PyNNDescent. Currently moot (PyNNDescent excluded from configs);
-  becomes relevant once enabled.
-- No memory / allocation reporting — only wall time. Thesis claims about
-  index footprint not backed by harness output.
-- KDTree query was loop-of-singletons (`manifoldann.py:324-326` overrides
-  `query_batch` to a Python loop), paying N×juliacall-boundary overhead.
-  Will be partially addressed by the AbstractANNIndex generic batch
-  query method (in flight in another agent task) — KDTree gets threaded
-  batch query for free via the Julia-side abstract dispatch, eliminating
-  the per-query Python boundary crossing. The remaining gap to SciPy's
-  vectorised `cKDTree.query` is a Julia-side algorithm question (no
-  per-element loop avoidable without restructuring the per-query state),
-  not a harness issue.
+- Query result conversion (Julia → 0-indexed Python ids) charged to
+  Julia only — inside the `query_batch` timed region.
+  `manifoldann.py:78-86,134-156`.
+- pynndescent build (numba JIT) not warmed at the actual config — the
+  8-query warmup helps the query path, not the BUILD path. First
+  `NNDescent(...)` call still pays numba JIT inside the timed `fit()`.
+  Currently moot (PyNNDescent excluded from configs); becomes relevant
+  once enabled.
+- No memory / allocation reporting — only wall time. Thesis claims
+  about index footprint are not backed by harness output.
+- KDTree query falls through to a Python loop in
+  `manifoldann.py:324-326`. Now partially addressed by the
+  AbstractANNIndex generic batch query (KDTree gets threaded batch via
+  Julia-side dispatch). Remaining gap to SciPy's vectorised
+  `cKDTree.query` is a Julia-side algorithm question, not a harness
+  issue.
 
-Two ann-benchmarks-style additions worth folding in once the harness is
-fair:
+**Two ann-benchmarks-style additions worth folding in:**
 
 - **Re-enable PyNNDescent in the benchmark runner.** Wrapper exists at
   `benchmarking/benchmarking/wrappers/pynndescent.py` but excluded from
   `benchmarking/configs/algorithms.yaml` with a stale comment about
-  Python <3.10. Comment is wrong: recent install on Python 3.13.5 venv
-  (`uv pip install pynndescent`) succeeded with `llvmlite==0.47.0`,
-  `numba==0.65.1`, `pynndescent==0.6.0`. Re-enable; drop the stale comment.
+  Python <3.10. Recent install on Python 3.13.5 succeeded; drop the
+  comment and re-enable.
 
 - **Enable NearestNeighbors.jl in configs.** A wrapper for
-  `NearestNeighbors.KDTree` exists at
-  `benchmarking/benchmarking/wrappers/julia_external.py` and is registered,
-  but is not enabled in any config in `benchmarking/configs/*.yaml`.
-  No BallTree wrapper at all. The thesis got a focused one-off comparison
-  via `scripts/kdtree_fair_compare.jl` (NN.jl-KDTree is ~2-4× faster on
-  build, ~1.2-5× faster on query — informational, KDTree is reference-only
-  for this thesis), but a config-level wiring would make it part of the
-  routine harness output.
+  `NearestNeighbors.KDTree` exists at `julia_external.py` and is
+  registered, but not enabled in any config. No BallTree wrapper at all.
 
 ### Repository hygiene
 
-- **`scripts/` directory cleanup.** Currently 43 files, mixed bag from
+- **`scripts/` directory cleanup.** Currently 50+ files, mixed bag from
   multiple thesis workstreams (composite-shortcut research, ORC/curvature,
-  geodesic, plus this session's perf scripts). Worth restructuring into
-  subdirectories by purpose so it's coherent for a future consumer of the
-  package. Suggested structure (defer concrete moves until the user can
-  triage which research scripts are still active):
-  - `scripts/perf/` — `hnsw_*`, `nndescent_*`, `kdtree_*`, `distance_micro.jl`
-    (this session's diagnostic + fair-compare suite)
+  geodesic, perf scripts). Worth restructuring into subdirectories by
+  purpose — defer concrete moves until the user can triage which
+  research scripts are still active. Suggested structure:
+  - `scripts/perf/` — `hnsw_*`, `nndescent_*`, `kdtree_*`, `distance_*`
   - `scripts/research/` — composite-shortcut, ORC, geodesic experimental
     scripts (move to thesis-code repo if/when `benchmarking/` migrates)
   - `scripts/diagnostics/` — `diag_eff_eps.jl`, `diagnose_sinkhorn.jl`
   - `scripts/archive/` — already exists; sweep stale items in here
   - Top-level: `README.md`, `run_*.sh` orchestration scripts only
-  - Also: `scripts/__pycache__/` is currently tracked; should be in
-    `.gitignore`.
+  - `scripts/__pycache__/` should be in `.gitignore`.
 
 - **`benchmarking/` migration to a sibling thesis-code repo** (per
-  `CLAUDE.md`'s separation principle: the package is the publishable
-  library, thesis-coupled experiment infrastructure lives separately).
-  This is a strategic move not blocking immediate work. Pre-requisite:
-  the harness fairness fixes above, so the migrated harness isn't
-  carrying known-broken numbers. After migration, the package's own
-  perf surface lives in `scripts/perf/` (focused fair-compare scripts);
-  the thesis-coupled multi-algorithm sweep harness lives in the sibling
+  `CLAUDE.md`'s separation principle). Strategic move not blocking
+  immediate work. Pre-requisite: harness fairness fixes above. After
+  migration, the package's perf surface lives in `scripts/perf/`; the
+  thesis-coupled multi-algorithm sweep harness lives in the sibling
   repo.
 
-### Areas not reviewed
+### Architecture / idiomatic-Julia review backlog
 
-The independent code review skipped: `src/indices/multilevel/*` (IVF-HNSW),
-`src/transforms/kmeans/*`, `src/preprocessing/*`,
-`src/geodesic/refinement.jl`, `src/geometry/neighborhood.jl`,
-`src/geometry/criteria.jl`, ORC `EdgeNeighborhoodView` construction
-(`graphs/refinement/{types,filtering,effective_epsilon_policy}.jl`). Worth a
-second pass before claiming the package has been comprehensively reviewed.
+Items surfaced by the read-only architecture review. Mechanical cleanups,
+none gating.
 
-### Architecture / idiomatic-Julia review findings
-
-Items surfaced by a read-only architecture review (mid-session). None are
-gating; most are mechanical cleanups for a future housekeeping pass.
-
-- **Two test files orphaned outside `test/unit/`.**
-  `test/indices/multilevel/test_deepcopy_fix.jl` and `test_ivf_smoke.jl` are
-  not picked up by `runtests.jl` (which only walks `test/unit/`). Either
-  silent test gap or stale code. Move into `test/unit/indices/multilevel/`
-  or delete.
-
-- **`NodeNeighborhood.geometry::Union{Nothing,Any}`.**
-  `src/graphs/refinement/types.jl:10`. Type-erased — every access is dynamic
-  dispatch. Could be parametrised on the struct (`Union{Nothing,G}`). Listed
-  separately under "Geodesic / graph" already as `_fit_geometries` boxing.
-
-- **`benchmarking/julia/src/ManifoldANNBenchmarks.jl` is a 6-line stub.**
-  Whole `Project.toml` + `Manifest.toml` for a stub module. Either flesh out
-  or delete; it adds confusion.
-
-- **Doc bloat.** Multilevel docstrings duplicate the same IVF example 3-4×
-  across `multilevel/{multilevel_index,multilevel,transformed,routing}.jl`.
+- **Doc bloat.** Multilevel docstrings duplicate the same IVF example
+  3-4× across `multilevel/{multilevel_index,multilevel,transformed,routing}.jl`.
   Export list in `src/ManifoldANN.jl` is ~185 names with ~20-30
-  internal-only.
+  internal-only. Worth a focused doc/exports pass.
 
 - **Submodule-style imports without submodules.**
   `src/indices/multilevel/multilevel_index.jl:47-52` and friends use
-  `using ...ManifoldANN: ...` (3 dots). Works only because Julia tolerates
-  the extra dot; if a real submodule is ever introduced, these silently
-  change meaning. Cosmetic but gnarly.
+  `using ...ManifoldANN: ...` (3 dots). Works only because Julia
+  tolerates the extra dot; if a real submodule is ever introduced, these
+  silently change meaning. Cosmetic but gnarly.
 
-- **PCATransform / KMeansTransform use `error("...")` instead of `ArgumentError`**
-  at `PCATransform.jl:68,75,80,87` and `Transform.jl`. Idiomatic-Julia
-  cleanup. Low priority.
+- **TODO_cleanup.md → durable principles split.** This file's "Working
+  principles" and "Anti-patterns" sections are durable invariants; the
+  rest is forward-looking. Reviewer's recommendation: move the durable
+  parts to `AGENTS.md` or `docs/architecture.md`, keep this file purely
+  forward-looking. Not done yet.
 
-- **TODO_cleanup.md restructure (this file).** ~559 lines, conflates working
-  principles, open work, anti-patterns, and (occasionally) finished work.
-  Reviewer's specific recommendation: move durable principles + anti-patterns
-  to `AGENTS.md` or `docs/architecture.md`; keep this file purely
-  forward-looking.
+### Areas not reviewed
 
-### NN-Descent vs NND.jl: matched-recall comparison
-
-`ef_search` (MANN) and `max_candidates` (NND.jl) bound different data
-structures: `ef_search` bounds MANN's `best` result list while the
-candidates queue stays unbounded; `max_candidates` bounds NND.jl's
-candidates heap at push time. Numerically-equal values dial recall at
-different rates — not apples-to-apples.
-
-The honest comparison is the recall-vs-qps Pareto curve. Measured
-mid-session at n=20000, d=32, k=20, -t 4 via
-`scripts/nndescent_jl_pareto.jl`:
-
-| recall@20 | MANN qps | NND.jl qps | ratio |
-|-----------|----------|------------|-------|
-| 0.80      | 24,181   | 13,983     | 1.73× |
-| 0.85      | 19,619   | 9,993      | 1.96× |
-| 0.90      | 15,458   | 6,517      | 2.37× |
-| 0.92      | 13,755   | 5,172      | 2.66× |
-| 0.95      | 11,172   | (off-curve)| —     |
-
-NND.jl tops out around 0.94 recall on this config (even at
-`max_candidates=300`); MANN hits 0.999 at the same value. At every
-matched-recall level both can reach, MANN is 1.7-2.7× faster. Build is
-~3.6-4.2× faster than NND.jl independent of search settings (the 1.6×
-number that appeared in the Pareto run was machine-state noise — clean
-3-trial re-measure: MANN 0.86-0.95s, NND.jl 3.44-3.60s).
-
-**Optional follow-up:** expose a `bounded_candidates`/`max_candidates`
-knob on MANN mirroring NND.jl's behaviour, for users who want a faster
-lower-recall mode. Default to current unbounded behaviour to preserve
-recall. Not load-bearing — there is no qps deficit to fix.
+The independent code review skipped: `src/indices/multilevel/*`
+(IVF-HNSW), `src/transforms/kmeans/*`, `src/preprocessing/*`,
+`src/geodesic/refinement.jl`, `src/geometry/neighborhood.jl`,
+`src/geometry/criteria.jl`, ORC `EdgeNeighborhoodView` construction
+(`graphs/refinement/{types,filtering,effective_epsilon_policy}.jl`).
+Worth a second pass before claiming the package has been
+comprehensively reviewed.
 
 ## Strategic decisions outstanding
 
@@ -555,78 +349,104 @@ recall. Not load-bearing — there is no qps deficit to fix.
 Three workstreams point in the same direction and should be decided
 together, not as discrete fixes:
 
-- **Distances.jl as the metric provider.** Replace `default_distance` etc.
-  with thin aliases over `Euclidean()` / `SqEuclidean()` / etc. Wire
-  `Distances.pairwise!` into bruteforce builder/query and k-means Lloyd
-  kernels — that's where the BLAS3 win materialises (cross-term identity
-  dispatches to GEMM). Per-call `evaluate(metric, x, y)` is **no** SIMD win
-  over our current `@simd` kernels — only bulk pairwise/colwise pays. Half a
-  day for the alias swap; 2-3 days for `pairwise!` integration with
-  benchmarks. Risk: BLAS-backed pairwise can produce small negatives from
-  cancellation; bit-for-bit results may differ from `@simd` reduction and
-  could perturb tie-breaking in unit tests.
+- **Distances.jl as the metric provider.** Replace `default_distance`
+  etc. with thin aliases over `Euclidean()` / `SqEuclidean()` / etc.
+  Wire `Distances.pairwise!` into bruteforce builder/query and k-means
+  Lloyd kernels — that's where the BLAS3 win materialises (cross-term
+  identity dispatches to GEMM). Per-call `evaluate(metric, x, y)` is
+  **no** SIMD win over our current `@simd` kernels — only bulk
+  pairwise/colwise pays. Half a day for the alias swap; 2-3 days for
+  `pairwise!` integration with benchmarks. Risk: BLAS-backed pairwise
+  can produce small negatives from cancellation; bit-for-bit results
+  may differ from `@simd` reduction and could perturb tie-breaking in
+  unit tests.
 
-- **Manifolds.jl as the manifold/sampler provider.** Wire as a sampler +
-  ground-truth-distance backend. Adapter: `sample_manifold(M, n) → (ambient,
-  intrinsic)`, ~30 LOC per manifold, built on `rand(M)` / `embed(M, p) |>
-  vec` / `distance(M, p, q)`. Concrete manifolds worth adding for the
-  experimental story: $S^2$, $H^2$, $\mathrm{Gr}(4,2)$, SPD $P(3)$
-  (vech-flattened), $SO(3)$. Friction: typed-point representations vary
-  (SPD is `Symmetric{Matrix}`, Grassmann is `Matrix`, etc.) — the
-  ambientize layer must flatten via `embed(M,p) |> vec`. EmbeddedTorus has
-  no closed-form geodesic in Manifolds.jl either; the existing torus would
-  still need grid-Dijkstra. Local PCA tangent estimation degrades when
-  ambient dim ≫ intrinsic dim or when the true tangent space is an affine
+- **Manifolds.jl as the manifold/sampler provider.** Wire as a sampler
+  + ground-truth-distance backend. Adapter: `sample_manifold(M, n) →
+  (ambient, intrinsic)`, ~30 LOC per manifold, built on `rand(M)` /
+  `embed(M, p) |> vec` / `distance(M, p, q)`. Concrete manifolds worth
+  adding for the experimental story: $S^2$, $H^2$, $\mathrm{Gr}(4,2)$,
+  SPD $P(3)$ (vech-flattened), $SO(3)$. Friction: typed-point
+  representations vary (SPD is `Symmetric{Matrix}`, Grassmann is
+  `Matrix`, etc.) — the ambientize layer must flatten via
+  `embed(M,p) |> vec`. EmbeddedTorus has no closed-form geodesic in
+  Manifolds.jl either; the existing torus would still need
+  grid-Dijkstra. Local PCA tangent estimation degrades when ambient
+  dim ≫ intrinsic dim or when the true tangent space is an affine
   subspace of a non-linear variety (SPD): the Manifolds.jl-exact-tangent
   vs local-PCA comparison would actually strengthen the empirical
   narrative. Dependency cost: Manifolds.jl + ManifoldsBase.jl +
   RecursiveArrayTools + StaticArrays + Distributions + ManifoldDiff
   (~3-5s load time). Effort: 1-2 weeks.
 
-- **NearestNeighbors.jl as an alternative ANN backend.** Mature, threaded,
-  gives us BallTree (useful for higher-d regimes where KD-tree degrades).
-  Replacing our KD-tree for parity is not worth it; adding a
-  `NearestNeighborsBallTree` index wrapper would be cheap and additive.
+- **NearestNeighbors.jl as an alternative ANN backend.** Mature,
+  threaded, gives us BallTree (useful for higher-d regimes where
+  KD-tree degrades). Replacing our KD-tree for parity is not worth it;
+  adding a `NearestNeighborsBallTree` index wrapper would be cheap and
+  additive.
 
-The thesis benefits from the current self-contained stance (clear scope,
-fewer moving parts). A published library benefits from ecosystem-native
-(less code to maintain, broader compatibility, easier for others to extend).
-**Decide direction first**, then sequence the three as one coherent effort.
+The thesis benefits from the current self-contained stance (clear
+scope, fewer moving parts). A published library benefits from
+ecosystem-native (less code to maintain, broader compatibility, easier
+for others to extend). **Decide direction first**, then sequence the
+three as one coherent effort.
 
 ## Anti-patterns (don't re-explore these)
 
 One-liners pointing at full context in commit history.
 
-- **NN-Descent dict-based dedup variant**: 18-35% slower than baseline at
-  k∈{15,30,50}. Set/hash overhead exceeds the cheap O(k) scan at typical k.
-  See `d9bab8a` for the simpler simplification that did land.
+- **NN-Descent dict-based dedup variant**: 18-35% slower than baseline
+  at k∈{15,30,50}. Set/hash overhead exceeds the cheap O(k) scan at
+  typical k. See `d9bab8a` for the simpler simplification that did land.
 
-- **NN-Descent `_update_neighbor_dist!` "asymptotic fix"**: the catastrophic
-  branch is unreachable on deterministic distances (same `(a,b)` always
-  yields the same distance, so `dist < existing.dist` never fires). The
-  perf TODO that flagged it was based on an unreachable path. See `d9bab8a`.
+- **NN-Descent `_update_neighbor_dist!` "asymptotic fix"**: the
+  catastrophic branch is unreachable on deterministic distances (same
+  `(a,b)` always yields the same distance, so `dist < existing.dist`
+  never fires). The perf TODO that flagged it was based on an
+  unreachable path. See `d9bab8a`.
 
-- **RP-tree initialization for NN-Descent**: did NOT close the build gap.
-  All three implementation variants tested were 1.6-10× *slower* than random
-  init. Reason: with bidirectional random init, NN-Descent converges in 1-2
-  iterations on this codebase's `convergence_threshold=0.001` default — no
-  iterations to save. Did improve recall (n=5000 d=32 k=15: 0.92 → 0.96,
-  +3.6pp). Retained as opt-in via `init=:rptree`. See `05b91d3`.
+- **RP-tree initialization for NN-Descent**: did NOT close the build
+  gap. All three implementation variants tested were 1.6-10× *slower*
+  than random init. Reason: with bidirectional random init, NN-Descent
+  converges in 1-2 iterations on this codebase's
+  `convergence_threshold=0.001` default — no iterations to save. Did
+  improve recall (n=5000 d=32 k=15: 0.92 → 0.96, +3.6pp). Retained as
+  opt-in via `init=:rptree`. See `05b91d3`.
 
-- **Threading rework via `@sync` + `@spawn` over chunked ranges**: tried as
-  a fix for "30% idle" profile result, ended 6-9% slower. The "idle" was
-  task-switching, not thread starvation. Per-task alloc + spawn/sync cost
-  exceeded the load-imbalance savings at our work granularity.
+- **Threading rework via `@sync` + `@spawn` over chunked ranges**:
+  tried as a fix for "30% idle" profile result, ended 6-9% slower. The
+  "idle" was task-switching, not thread starvation. Per-task alloc +
+  spawn/sync cost exceeded the load-imbalance savings at our work
+  granularity.
 
-- **Edge-weight threading deferred deliberately**: edge weights are ~10% of
-  graph build time (PCA fit dominates), so Amdahl caps the win at ~10%, AND
-  `compute_edge_weight` is a public extension point — silently threading
-  the outer loop would impose an undocumented thread-safety contract on
-  third-party `AbstractEdgeWeight` / `AbstractLocalGeometry` implementations.
-  Revisit only after formalising the thread-safety contract for those
-  extension points. If pursued, expose as opt-in.
+- **Edge-weight threading deferred deliberately**: edge weights are
+  ~10% of graph build time (PCA fit dominates), so Amdahl caps the win
+  at ~10%, AND `compute_edge_weight` is a public extension point —
+  silently threading the outer loop would impose an undocumented
+  thread-safety contract on third-party `AbstractEdgeWeight` /
+  `AbstractLocalGeometry` implementations. Revisit only after
+  formalising the thread-safety contract for those extension points.
+  If pursued, expose as opt-in.
 
-- **`ShareSimilarTangents` threading**: semantically serial. Each iteration's
-  share/fit decision depends on which earlier nodes were fitted vs shared.
-  Threading would lose the sharing structure or produce schedule-dependent
-  outputs. Leave serial by design.
+- **`ShareSimilarTangents` threading**: semantically serial. Each
+  iteration's share/fit decision depends on which earlier nodes were
+  fitted vs shared. Threading would lose the sharing structure or
+  produce schedule-dependent outputs. Leave serial by design.
+
+- **NN-Descent batch-query data_cache experiment** (mid-session,
+  reverted): hypothesis was that materializing data into
+  `Vector{Vector{T}}` at the end of `build_index` would speed up query
+  inner loops by avoiding per-call SubArray construction. Microbench
+  showed 3.76× faster per distance call; full integrated query path
+  showed -37% to -50% qps regression. The refactor (untyped `columns`
+  helper passed through hot loop) defeated specialization more than the
+  layout change saved. Trust integrated benches over microbenches in
+  this codebase.
+
+- **Type-parameterise KDTree's `distance::Function`**: the change is
+  idiomatic and landed (matches every other index), but the audit's
+  predicted 5-25% query speedup did not materialise. The compiler
+  already devirtualises via single-call-site specialisation on the
+  default. Same applies to multilevel `::Function` kwargs (also
+  landed). The cleanup is worth doing for consistency, not for measured
+  perf.
