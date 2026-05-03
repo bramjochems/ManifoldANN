@@ -373,6 +373,12 @@ def _quartiles(values):
 def _verify_thread_counts(threads: int):
     """Log effective thread counts for each library at run time so a
     silent oversubscription doesn't quietly skew cross-library numbers.
+
+    Pins FAISS OMP threads and Julia BLAS threads to `threads` *before*
+    probing — otherwise the banner reports the startup defaults
+    (typically `nproc`) rather than what each algorithm will actually
+    run with after `algo.set_num_threads(threads)` lands. Per-algorithm
+    pinning still happens later; this just makes the banner honest.
     """
     print("\n--- Effective thread counts (runtime check) ---")
     # Julia
@@ -381,18 +387,30 @@ def _verify_thread_counts(threads: int):
         jl_threads = int(_jl.seval("Threads.nthreads()"))
         print(f"  Julia Threads.nthreads()          = {jl_threads}")
         try:
-            blas_threads = int(_jl.seval("using LinearAlgebra; BLAS.get_num_threads()"))
-            print(f"  Julia BLAS.get_num_threads()      = {blas_threads}")
+            # Pin BLAS up-front so the banner reflects measurement reality.
+            _jl.seval(f"using LinearAlgebra; BLAS.set_num_threads({int(threads)})")
+            blas_threads = int(_jl.seval("BLAS.get_num_threads()"))
+            print(f"  Julia BLAS.get_num_threads()      = {blas_threads}"
+                  + ("" if blas_threads == threads
+                     else f"  ⚠️  != --threads={threads}"))
         except Exception:
             pass
         if jl_threads != threads:
-            print(f"  ⚠️  Julia thread count != --threads={threads}")
+            print(f"  ⚠️  Julia thread count != --threads={threads} "
+                  f"(JULIA_NUM_THREADS is fixed at process start)")
     except Exception as exc:
         print(f"  juliacall threading probe failed: {exc}")
-    # FAISS
+    # FAISS — pin up-front so the banner matches measurement reality.
     try:
         import faiss
-        print(f"  faiss.omp_get_max_threads()       = {faiss.omp_get_max_threads()}")
+        try:
+            faiss.omp_set_num_threads(int(threads))
+        except Exception:
+            pass
+        faiss_t = faiss.omp_get_max_threads()
+        print(f"  faiss.omp_get_max_threads()       = {faiss_t}"
+              + ("" if faiss_t == threads
+                 else f"  ⚠️  != --threads={threads}"))
     except Exception:
         pass
     # OpenMP / OMP_NUM_THREADS
