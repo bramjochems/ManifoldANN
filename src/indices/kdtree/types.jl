@@ -61,15 +61,21 @@ supports_mutation(::KDTreeIndex) = false
 # results. The build gate accepts the in-tree default helpers and the
 # Distances.jl metrics that satisfy the property; everything else errors out
 # at construction with a pointer to HNSW/LSH.
-@inline _kdtree_safe_metric(::typeof(default_distance)) = true
-@inline _kdtree_safe_metric(::typeof(default_squared_distance)) = true
+#
+# NOTE: SqEuclidean and WeightedSqEuclidean are deliberately NOT on the safe
+# list. The pruning bound compares the linear `axis_distance = abs(q_val -
+# split_value)` against `worst`. For squared metrics `worst` is in squared
+# units, so the units don't match — the comparison wrongly prunes when
+# `worst < 1`. Fixing the query path to compare in matched units is a real
+# refactor; for now we just exclude squared metrics. Users who want squared-
+# distance semantics should pass `Euclidean()` (the algorithm's relative
+# ordering of neighbors is preserved; only the returned distance values
+# differ by a `sqrt`).
 @inline _kdtree_safe_metric(::Distances.Euclidean) = true
-@inline _kdtree_safe_metric(::Distances.SqEuclidean) = true
 @inline _kdtree_safe_metric(::Distances.Cityblock) = true
 @inline _kdtree_safe_metric(::Distances.Chebyshev) = true
 @inline _kdtree_safe_metric(::Distances.Minkowski) = true
 @inline _kdtree_safe_metric(::Distances.WeightedEuclidean) = true
-@inline _kdtree_safe_metric(::Distances.WeightedSqEuclidean) = true
 @inline _kdtree_safe_metric(::Distances.WeightedCityblock) = true
 @inline _kdtree_safe_metric(::Distances.WeightedMinkowski) = true
 @inline _kdtree_safe_metric(_) = false
