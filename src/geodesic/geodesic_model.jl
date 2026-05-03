@@ -299,9 +299,10 @@ function _reconstruct_path(prev::Vector{Int}, source::Int, target::Int)
     end
 
     while current != -1
-        pushfirst!(path, current)
+        push!(path, current)
         current = current == source ? -1 : prev[current]
     end
+    reverse!(path)
 
     return path
 end

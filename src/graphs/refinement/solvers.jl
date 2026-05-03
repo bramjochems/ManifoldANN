@@ -457,7 +457,10 @@ end
 Greedy approximate OT solver for fast curvature estimation.
 
 Iteratively transports mass along lowest-cost edges. Not optimal but fast.
-Complexity: O(k² log k)
+Complexity: O(k³) — each iteration scans all k×k pairs to find the
+minimum-cost edge, and depletes at least one mass entry per iteration
+(O(k) iterations). A heap of edges would lower this to O(k² log k);
+not pursued — k is small in practice.
 
 Use when:
 - Speed is critical over accuracy

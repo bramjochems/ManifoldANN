@@ -269,32 +269,33 @@ end
 function _fit_geometries(sharing::ShareSimilarTangents, method::AbstractLocalGeometryMethod,
                           graph::KNNGraph, data::AbstractMatrix{T}) where T
     n = length(graph)
-    geometries_any = Any[nothing for _ in 1:n]
-    # Track nodes with assigned geometry (fitted or shared) - all can be donors
-    assigned_nodes = Int[]
+    n == 0 && return AbstractLocalGeometry[]
 
-    for i in 1:n
+    # Node 1 has no donors so it's always fitted; use it to infer the
+    # concrete geometry type and switch to a type-stable
+    # Vector{Union{Nothing,G}} for the remaining slots.
+    g1 = fit_geometry(method, data, 1, graph[1]; graph=graph)
+    G = typeof(g1)
+    geometries = Vector{Union{Nothing,G}}(nothing for _ in 1:n)
+    geometries[1] = g1
+    assigned_nodes = Int[1]
+
+    for i in 2:n
         neighbor_indices = graph[i]
 
-        # Check if we can reuse a neighbor's tangent plane
-        shared_geom = _find_shareable_geometry(sharing, geometries_any, assigned_nodes,
+        shared_geom = _find_shareable_geometry(sharing, geometries, assigned_nodes,
                                                  graph, data, i, method)
 
         if shared_geom !== nothing
-            # Reuse existing geometry basis but with correct center for this node
             node_center = @view data[:, i]
-            geometries_any[i] = recenter(shared_geom, node_center)
+            geometries[i] = recenter(shared_geom, node_center)
         else
-            # Fit new geometry - pass graph for expanding strategies
-            geom = fit_geometry(method, data, i, neighbor_indices; graph=graph)
-            geometries_any[i] = geom
+            geometries[i] = fit_geometry(method, data, i, neighbor_indices; graph=graph)
         end
-        # Node can now act as donor for subsequent nodes (whether fitted or shared)
         push!(assigned_nodes, i)
     end
 
-    G = typeof(geometries_any[1])
-    Vector{G}(geometries_any)
+    return Vector{G}(geometries)
 end
 
 """
@@ -302,10 +303,11 @@ end
 
 Find an existing geometry that can be shared with the given node, or return nothing.
 """
-function _find_shareable_geometry(sharing::ShareSimilarTangents, geometries::Vector{Any},
+function _find_shareable_geometry(sharing::ShareSimilarTangents,
+                                   geometries::Vector{Union{Nothing,G}},
                                    assigned_nodes::Vector{Int}, graph::KNNGraph,
                                    data::AbstractMatrix, node_idx::Int,
-                                   method::AbstractLocalGeometryMethod)
+                                   method::AbstractLocalGeometryMethod) where G
     isempty(assigned_nodes) && return nothing
 
     # Get neighbors within max_graph_distance
@@ -526,12 +528,23 @@ function _fit_geometries_with_candidates(sharing::ShareSimilarTangents, method::
                                           graph::KNNGraph, index::AbstractANNIndex,
                                           data::AbstractMatrix{T}, candidate_k::Integer) where T
     n = length(graph)
-    geometries_any = Any[nothing for _ in 1:n]
-    # Track nodes with assigned geometry (fitted or shared) - all can be donors
-    assigned_nodes = Int[]
+    n == 0 && return AbstractLocalGeometry[]
 
-    for i in 1:n
-        # Get candidates
+    # Node 1 has no donors so it's always fitted; use it to infer G and
+    # switch to a type-stable Vector{Union{Nothing,G}}.
+    center_1 = @view data[:, 1]
+    candidates_1 = query(index, data, center_1, candidate_k + 1)
+    candidate_indices_1 = [c.id for c in candidates_1 if c.id != 1]
+    if length(candidate_indices_1) > candidate_k
+        candidate_indices_1 = candidate_indices_1[1:candidate_k]
+    end
+    g1 = fit_geometry(method, data, 1, candidate_indices_1; graph=graph)
+    G = typeof(g1)
+    geometries = Vector{Union{Nothing,G}}(nothing for _ in 1:n)
+    geometries[1] = g1
+    assigned_nodes = Int[1]
+
+    for i in 2:n
         center_point = @view data[:, i]
         candidates = query(index, data, center_point, candidate_k + 1)
         candidate_indices = [c.id for c in candidates if c.id != i]
@@ -539,32 +552,27 @@ function _fit_geometries_with_candidates(sharing::ShareSimilarTangents, method::
             candidate_indices = candidate_indices[1:candidate_k]
         end
 
-        # Check if we can reuse a neighbor's tangent plane
-        shared_geom = _find_shareable_geometry_candidates(sharing, geometries_any, assigned_nodes,
+        shared_geom = _find_shareable_geometry_candidates(sharing, geometries, assigned_nodes,
                                                            graph, data, i, candidate_indices, method)
 
         if shared_geom !== nothing
-            # Reuse existing geometry basis but with correct center for this node
             node_center = @view data[:, i]
-            geometries_any[i] = recenter(shared_geom, node_center)
+            geometries[i] = recenter(shared_geom, node_center)
         else
-            # Pass graph for expanding strategies
-            geom = fit_geometry(method, data, i, candidate_indices; graph=graph)
-            geometries_any[i] = geom
+            geometries[i] = fit_geometry(method, data, i, candidate_indices; graph=graph)
         end
-        # Node can now act as donor for subsequent nodes (whether fitted or shared)
         push!(assigned_nodes, i)
     end
 
-    G = typeof(geometries_any[1])
-    Vector{G}(geometries_any)
+    return Vector{G}(geometries)
 end
 
-function _find_shareable_geometry_candidates(sharing::ShareSimilarTangents, geometries::Vector{Any},
+function _find_shareable_geometry_candidates(sharing::ShareSimilarTangents,
+                                              geometries::Vector{Union{Nothing,G}},
                                               assigned_nodes::Vector{Int}, graph::KNNGraph,
                                               data::AbstractMatrix, node_idx::Int,
                                               candidate_indices::Vector{Int},
-                                              method::AbstractLocalGeometryMethod)
+                                              method::AbstractLocalGeometryMethod) where G
     isempty(assigned_nodes) && return nothing
 
     candidates = _get_nearby_assigned_nodes(graph, assigned_nodes, node_idx, sharing.max_graph_distance)

@@ -17,7 +17,7 @@ Available OT solvers for curvature computation:
 2. **SinkhornSolver**: O(k² × iter) approximate OT for any distribution (OptimalTransport.jl)
 3. **NetworkSimplexSolver**: O(k² log k) exact OT for any distribution (OptimalTransport.jl)
 4. **LPReferenceSolver**: O(k³) reference implementation (HiGHS)
-5. **GreedySolver**: O(k² log k) fast approximate OT
+5. **GreedySolver**: O(k³) fast approximate OT (could be O(k² log k) with a heap; not pursued — k small in practice)
 6. **GenericOTSolver**: Convenience wrapper (maps to specific solvers)
 
 # Example
