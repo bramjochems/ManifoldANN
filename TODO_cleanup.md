@@ -529,27 +529,35 @@ gating; most are mechanical cleanups for a future housekeeping pass.
   to `AGENTS.md` or `docs/architecture.md`; keep this file purely
   forward-looking.
 
-### NN-Descent: bounded-candidates / recall-speed knob
+### NN-Descent vs NND.jl: matched-recall comparison
 
-Profile (mid-session) revealed MANN does **6.2× more distance evaluations
-per query than NND.jl** at `ef_search=60` / `max_candidates=60` —
-**because MANN's candidates queue is unbounded**. NND.jl bounds its
-candidates heap at `max_candidates`, prunes aggressively at push time, and
-terminates early. Result at n=20000 d=32 k=20: MANN recall@20 = 0.929,
-NND.jl recall@20 = 0.770 — MANN delivers 16 pp higher recall while NND.jl
-trades recall for speed.
+`ef_search` (MANN) and `max_candidates` (NND.jl) bound different data
+structures: `ef_search` bounds MANN's `best` result list while the
+candidates queue stays unbounded; `max_candidates` bounds NND.jl's
+candidates heap at push time. Numerically-equal values dial recall at
+different rates — not apples-to-apples.
 
-**Status:** the gap is not a bug — it's a deliberate (but unparametrised)
-recall/speed tradeoff. Worth exposing as a swappable knob: a
-`bounded_candidates::Bool` or `max_candidates::Int` parameter that, when
-set, prunes the candidates frontier the way NND.jl does. Default to current
-unbounded behaviour to preserve recall. Users who want NND.jl-class qps can
-opt in and accept the recall hit.
+The honest comparison is the recall-vs-qps Pareto curve. Measured
+mid-session at n=20000, d=32, k=20, -t 4 via
+`scripts/nndescent_jl_pareto.jl`:
 
-For thesis-grade comparisons: **the apples-to-apples comparison is at
-matched recall**, not matched parameters. Either lower MANN's `ef_search`
-to hit 0.77 recall or raise NND.jl's `max_candidates` to hit 0.93. Until
-that comparison is run, the "MANN slower at -t 1" framing is misleading.
+| recall@20 | MANN qps | NND.jl qps | ratio |
+|-----------|----------|------------|-------|
+| 0.80      | 24,181   | 13,983     | 1.73× |
+| 0.85      | 19,619   | 9,993      | 1.96× |
+| 0.90      | 15,458   | 6,517      | 2.37× |
+| 0.92      | 13,755   | 5,172      | 2.66× |
+| 0.95      | 11,172   | (off-curve)| —     |
+
+NND.jl tops out around 0.94 recall on this config (even at
+`max_candidates=300`); MANN hits 0.999 at the same value. At every
+matched-recall level both can reach, MANN is 1.7-2.7× faster. Build is
+~1.6× faster than NND.jl independent of search settings.
+
+**Optional follow-up:** expose a `bounded_candidates`/`max_candidates`
+knob on MANN mirroring NND.jl's behaviour, for users who want a faster
+lower-recall mode. Default to current unbounded behaviour to preserve
+recall. Not load-bearing — there is no qps deficit to fix.
 
 ## Strategic decisions outstanding
 
