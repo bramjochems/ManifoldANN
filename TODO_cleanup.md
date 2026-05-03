@@ -92,6 +92,34 @@ silently breaks something.
 
 ### NN-Descent
 
+- **Per-task scratch pooling for batch query.** This is the single most
+  consequential remaining package-side perf gap. After the generic
+  threaded matrix-input batch query landed (`906d72a`/`c9de76b`),
+  NN-Descent threading at -t 4 only scales 1.4-1.7× over -t 1 — capped by
+  per-query allocation in the single-query path:
+  `falses(index.n_points)` BitVector, `Set{Int}` inside
+  `_pick_entry_points`, fresh `NeighborMinHeap` and results-buffer
+  Vectors. At ~5 KB allocated per query × 4 threads × hundreds of
+  queries, GC stop-the-world events serialise the threads.
+
+  Same shape of fix as HNSW's `BatchQueryScratch` (commit `3f0e434`):
+  introduce an `NNDescentBatchScratch` per worker holding a reusable
+  visited buffer + heap data + entry-point Set + RNG, threaded through
+  a more-specific `query(::NNDescentIndex, ::AbstractMatrix, ...)`
+  method that overrides the generic. Single-query API stays re-entrant
+  (allocates fresh per call), batch path amortises across all queries
+  one worker processes.
+
+  **Estimated impact**: closes the ~1.3× gap to NND.jl at -t 4
+  (~9400 → ~20000 qps, decisively ahead instead of slightly behind).
+  Single-thread query unchanged. ~80 LOC of plumbing per `BatchQueryScratch`
+  template; well-trodden pattern. Probably a half-day with tests.
+
+  Same lever exists in principle for KDTree and LSH but at smaller
+  per-query allocation budgets — much smaller win there. Pursue
+  NN-Descent first; revisit others only if measurement shows GC
+  pressure caps their scaling too.
+
 - **Adaptive `max_iterations`.** Currently hardcoded at 10; PyNNDescent uses
   `max(5, round(log2(n)))`. Cheap fix, plausibly small recall improvement at
   large n.
