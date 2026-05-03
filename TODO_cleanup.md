@@ -338,6 +338,28 @@ down are still open.
 
 #### High-priority open harness items (fairness still has gaps)
 
+- **Single-shot timing produces unstable per-algorithm QPS for noisy
+  query variants.** Investigation (mid-session, this conversation) on a
+  reported "MANN-NN-Descent pruned-deferred 1468 qps deflation" found
+  the gap was **not** a structural harness penalty but rather single-
+  sample variance: pruned-deferred's sparser+asymmetric graph produces
+  highly heterogeneous per-query work, and at small batch sizes (200
+  queries × 4 threads ≈ 50 queries/thread, ~30-80 ms timed window) the
+  between-query variance dominates. Reproduction at the same config
+  spans ~2500-13500 qps across runs — full-continuous/full-deferred are
+  stable to within ~5% because they have denser, more uniform graphs.
+  Single-shot timing means a single low draw can land in a thesis table.
+
+  **Fix shape**: `--reps N` CLI flag (default 1, i.e. preserves current
+  behaviour for development sweeps). For thesis-grade runs, `--reps 3`
+  or `--reps 5` with median + IQR reporting. Force `gc.collect()` and
+  `jl.GC.gc()` between reps and between algorithms to reduce
+  cold-cache asymmetry between the first algorithm and subsequent ones.
+  Cost: at default `--reps 1` no change; at `--reps 3` runtime
+  trebles. Acceptable for thesis-table runs (Fashion-MNIST n=5k goes
+  ~30s → 90s, SIFT n=1M ~30 min → 90 min — the SIFT case is when you'd
+  flip the flag deliberately, not by default).
+
 - **Cross-library parameter sets are not automatically apples-to-apples.**
   Each algorithm in `benchmarking/configs/*.yaml` gets its own params
   block (`MANN-NNDescent: k=32, max_iterations=5, sample_rate=0.5,
@@ -367,15 +389,6 @@ down are still open.
   `fit()`. Same shape as the original Julia-build JIT issue, applied
   to PyNNDescent. Currently moot (PyNNDescent excluded from configs);
   becomes relevant once enabled.
-- HNSW.jl `add_to_graph!` warmup explicitly skipped at
-  `julia_external.py:57` ("we skip its warmup"). The `d19aaad` per-(kind,
-  dim) warmup hopefully covers it now via the `_warmup` method that
-  HNSW.jl's wrapper class exposes; verify by reading the wrapper to
-  confirm `_warmup` actually calls `add_to_graph!`. If it doesn't,
-  HNSW.jl pays JIT in the timed build.
-- Single-shot timing, no variance, no `gc.collect()` / `GC.gc()` between
-  algorithms — first algorithm pays cold-cache cost. `benchmark.py:344-367`.
-  Fix: 1 untimed warm rep + 3 timed reps, report median, force GC between.
 - No memory / allocation reporting — only wall time. Thesis claims about
   index footprint not backed by harness output.
 - KDTree query was loop-of-singletons (`manifoldann.py:324-326` overrides
