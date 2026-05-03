@@ -113,6 +113,111 @@ silently breaks something.
   on the inner LSH hash path. `src/indices/lsh/hash_functions.jl:52`. Fold a
   simple FNV/xxhash over the Int projections directly.
 
+### KDTree
+
+Audit (mid-session, this conversation) compared MANN-KDTree against
+NearestNeighbors.jl-KDTree via `scripts/kdtree_fair_compare.jl`. Recall
+identical (1.0, both exact); we are 2.5-4× behind on build and 1.2-5× behind
+on query (gap shrinks at high d as distance cost dominates). Root cause is
+structural: our tree has no leaves — every node holds an anchor point and
+computes a distance during traversal — while NN.jl walks split metadata to
+a leaf bucket and scans contiguously. The items below are textbook
+KD-tree improvements (Bentley 1975, Friedman-Bentley-Finkel 1977); not
+novel research, just bringing the reference implementation up to a
+respectable baseline. The thesis contribution lives in the manifold-aware
+graph machinery, not in the KD-tree.
+
+**First pass (do these together; do NOT proceed to the next pass without
+measuring):**
+
+- **Quickselect for median partition.** Build currently uses
+  `sort!(indices, by = i -> data[axis, i])` per node — full O(n log n) sort
+  where O(n) quickselect / `partialsort!` would do. Single biggest build-side
+  win available; expected to close 40-60% of the build gap. One-line change
+  in `src/indices/kdtree/builder.jl`, then test with
+  `scripts/kdtree_fair_compare.jl`.
+
+- **In-place index partitioning.** Build currently slices
+  `Vector{Int}(indices[1:median_pos-1])` and `indices[median_pos+1:end]` per
+  internal node — O(n log n) allocation. Falls out naturally from
+  quickselect (which already partitions); pass `(lo, hi)` ranges into the
+  same `indices` buffer instead. Expected to take 20-30% off remaining build
+  cost AND reduce GC pressure that bleeds into query benchmarks.
+
+- **Query allocation cleanup.** Three small wins, all in
+  `src/indices/kdtree/query.jl`:
+  1. Drop the redundant `sort!(results, by = ...)` after `to_sorted_vector`
+     (the latter already sorts).
+  2. `to_sorted_vector` does `copy(heap.data)` then `sort!`; the heap is
+     discarded anyway, so `sort!(heap.data)` directly + return a wrapping
+     `Vector{Neighbor}` saves the copy.
+  3. Per-query `BoundedMaxHeap` heap-allocates its inner Vector. Accept an
+     optional pre-allocated buffer for batched query paths (we already have
+     batched queries elsewhere — same worker-pool pattern as HNSW's
+     `BatchQueryScratch`).
+
+  Drops per-query alloc 0.52 KB → ~0.15 KB; modest wallclock gain
+  (~10-20%) but tightens hot loops in batched workloads.
+
+**Second pass (do AFTER first pass lands and measures match audit
+predictions):**
+
+- **Leaf-bucket layer (leafsize ~16-32).** Stop recursion at a configurable
+  bucket size; store the leaf as a `UnitRange` into the `indices`
+  permutation, scan the bucket linearly in the query. Closes most of the
+  remaining query gap at low/mid d (3-4× query speedup at d=8 expected).
+  ~80-120 LOC across `types.jl`/`builder.jl`/`query.jl`. Additive — keep
+  `KDTreeIndex` exported fields stable, internal layout change only.
+
+- **Reorder data for leaf-contiguous memory.** Build a permuted `Matrix{T}`
+  so leaf scans become sequential column reads instead of random
+  `data[:, indices[i]]` lookups. 1.3-1.6× query speedup *on top of* the
+  leaf-bucket change. ~30 LOC. **Only meaningful after the leaf-bucket
+  change** — without leaves there's nothing to reorder. Make it opt-out so
+  callers passing huge matrices can skip the copy.
+
+**Lower-priority follow-ups (consider after measuring the above):**
+
+- **Specialise on metric type-parameter.** Recursion currently dispatches
+  through a `Function` argument (`distance::Function`), which can defeat
+  inlining. Specialising on a metric type (or just inlining
+  `default_distance` directly when it's the default) is the simpler fix and
+  is already idiomatic Julia. 5-15% query speedup at low d. ~10 LOC.
+
+- **Incremental rolling-bound distance during query.** Standard Friedman-
+  Bentley-Finkel 1977 trick: maintain the squared distance from `q` to the
+  active cell; when descending into the far child, update only the changed
+  axis's contribution. Tighter pruning than `abs(q_val - split_value)`.
+  1.2-1.4× query speedup expected at moderate d. ~40 LOC, gate on
+  `default_distance` (only correct for additive Minkowski-like metrics).
+  Probably not worth doing if the leaf-bucket change closes most of the
+  query gap.
+
+- **Hyperrectangle width tracking** as an *alternative* axis selector.
+  Instead of `_axis_with_max_spread` rescanning `indices` over `d` axes
+  per node, maintain `mins`/`maxes` down recursion and pick
+  `argmax(maxes - mins)`. Faster, but the resulting axis choice is *not*
+  identical to `:variance`'s output (it's the cell width, not the data
+  width). **Hesitant — do not adopt purely for performance.** The
+  `:variance` axis selector is a thesis-relevant degree of freedom (it
+  interacts with manifold-aware embeddings); changing the default
+  axis-selection strategy for a constant-factor speed win is the wrong
+  trade. If pursued, expose as a new `axis_selector = :bbox` and keep
+  `:variance` as default.
+
+**Anti-recommendations (do not do these):**
+
+- Implicit binary heap layout (`getleft(i)=2i, getright(i)=2i+1`) for the
+  node array. Saves one Int per node at the cost of significant
+  bit-twiddling complexity.
+- `SVector`-based hyperrectangle plumbing — forces the entire pipeline to
+  be parametric on `D`, harder to read, more recompilation.
+- Multiple coupled flags (`reorder` / `storedata` / `reorderbuffer`).
+- Threaded build — the gap is closeable single-threaded; threading
+  obscures the algorithmic story we'd want to tell.
+- Metric-specific kernel branches (Chebyshev, etc.) — couples the tree to
+  metrics we don't ship.
+
 ### Geodesic / graph
 
 - **`pushfirst!(path, current)` in `_reconstruct_path`.**
