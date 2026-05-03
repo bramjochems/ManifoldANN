@@ -18,6 +18,7 @@ function build_index(
     traversal_policy::Union{AbstractTraversalPolicy,Nothing} = nothing,
     rng::AbstractRNG = Random.default_rng(),
     distance::D = default_distance,
+    threaded::Union{Bool,Nothing} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat, D}
     d, n = size(data)
     d > 0 || throw(ArgumentError("Dataset must have at least one dimension"))
@@ -45,11 +46,21 @@ function build_index(
         distance,
         UInt32[],
         UInt32(0),
+        ReentrantLock[],
+        ReentrantLock(),
     )
 
-    for col in 1:n
-        point = @view data[:, col]
-        insert!(index, data, point; point_id = col, rng = rng)
+    if threaded === nothing
+        threaded = Threads.nthreads() > 1
+    end
+
+    if threaded
+        _build_index_threaded!(index, data, n, rng)
+    else
+        for col in 1:n
+            point = @view data[:, col]
+            insert!(index, data, point; point_id = col, rng = rng)
+        end
     end
     return index
 end

@@ -65,11 +65,19 @@ mutable struct HNSWIndex{T<:LinearAlgebra.BlasFloat,LP,NP,TP,D} <: AbstractANNIn
     # and a buffer-zeroing bug becomes a 4-billion-call invariant).
     #
     # COUPLING: this buffer is index-state, used ONLY by the single-threaded
-    # build path via `_acquire_build_visited!`. Concurrent build (or
-    # concurrent insert!) is unsupported. Thread-safe builds will need to
-    # move this state from the index into a per-task structure.
+    # build path via `_acquire_build_visited!`. Concurrent build uses
+    # per-thread StampVisited instead (see `_build_index_threaded!`).
     visit_stamps::Vector{UInt32}
     visit_generation::UInt32
+    # Per-node lock used by the threaded build path. `length(node_locks) == 0`
+    # signals the single-threaded path (no locking overhead). When threaded,
+    # locks are acquired during adjacency reads (briefly, to copy into a
+    # thread-local scratch) and writes (during _connect_new_node!).
+    node_locks::Vector{ReentrantLock}
+    # Global lock for entry_point / max_layer / layers expansion in threaded
+    # builds. Rare contention (~log n events). Held only at the start/end of
+    # an insertion when level > current max_layer.
+    global_lock::ReentrantLock
 end
 
 index_distance(index::HNSWIndex) = index.distance
