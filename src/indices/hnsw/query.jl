@@ -214,8 +214,7 @@ function query(
     k::Integer;
     ef_search::Union{Nothing,Int} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat}
-    size(queries, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected queries with $(index.dimension) rows"))
+    validate_index_query_matrix(index, queries)
 
     S = float(T)
     n_queries = size(queries, 2)

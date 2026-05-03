@@ -49,7 +49,7 @@ function query(
     q::AbstractVector{T},
     k::Integer;
 ) where {T}
-    _validate_dimensions(index, data, q)
+    validate_index_dimensions(index, data, q)
     S = float(T)
     n_points = size(data, 2)
     k = min(k, n_points)
@@ -135,19 +135,6 @@ normalized vectors, which is useful for priority queue comparisons.
     cosine_sim = dot_product / sqrt(x_norm_sq * y_norm_sq)
     cosine_sim = clamp(cosine_sim, -one(T), one(T))
     return convert(T, 2) * (one(T) - cosine_sim)
-end
-
-function _validate_dimensions(index::BruteForceIndex, data, q)
-    size(data, 1) == index.dimension ||
-        throw(DimensionMismatch("Expected point dimension $(index.dimension)"))
-    length(q) == index.dimension ||
-        throw(DimensionMismatch("Expected query dimension $(index.dimension)"))
-    size(data, 2) >= index.n_points || throw(
-        ArgumentError(
-            "Data contains $(size(data, 2)) points but index tracks $(index.n_points)",
-        ),
-    )
-    return nothing
 end
 
 supports_mutation(::BruteForceIndex) = true

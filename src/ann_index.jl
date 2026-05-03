@@ -79,7 +79,8 @@ function query(
     # (otherwise a `dim=999, n_queries=0` query against a `dim=8` index
     # would silently return `[]` instead of throwing). Matches the per-index
     # behaviour for non-empty batches via validate_index_dimensions on the
-    # single-query path.
+    # single-query path. Compares against `data` directly because not every
+    # AbstractANNIndex carries a `dimension` field (e.g. MultiLevelIndex).
     size(queries, 1) == size(data, 1) ||
         throw(DimensionMismatch("Expected queries with $(size(data, 1)) rows, got $(size(queries, 1))"))
 

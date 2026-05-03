@@ -17,3 +17,19 @@ function validate_index_dimensions(index, data, q)
     )
     return nothing
 end
+
+"""
+    validate_index_query_matrix(index, queries)
+
+Matrix-input variant of [`validate_index_dimensions`](@ref): verifies that the
+column dimension of `queries` matches `index.dimension`. Used by batch query
+paths where each query is a column of the supplied matrix.
+"""
+function validate_index_query_matrix(index, queries)
+    size(queries, 1) == index.dimension || throw(
+        DimensionMismatch(
+            "Expected queries with $(index.dimension) rows, got $(size(queries, 1))",
+        ),
+    )
+    return nothing
+end
