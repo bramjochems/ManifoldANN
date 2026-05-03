@@ -63,12 +63,20 @@ import time
 import argparse
 import json
 import csv
+import gc
 import shutil
 import subprocess
+import statistics
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+try:
+    import psutil
+    _PROC = psutil.Process()
+except ImportError:
+    psutil = None
+    _PROC = None
 
 # Add benchmarking package to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -259,35 +267,209 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
 
-        # Write header
-        writer.writerow(["algorithm", "qps", f"recall@{k}", "build_time", "status", "error"])
+        # Header (legacy first 5 cols preserved for back-compat with
+        # existing single-rep consumers; new IQR / memory cols appended).
+        writer.writerow([
+            "algorithm", "qps", f"recall@{k}", "build_time", "status", "error",
+            "reps",
+            "qps_q25", "qps_q75",
+            "recall_q25", "recall_q75",
+            "build_rss_delta_mb", "query_rss_delta_mb_max", "index_mb",
+        ])
 
-        # Write successful results
         for r in results:
+            def _mb(b):
+                return f"{b / 1e6:.1f}" if b else ""
             writer.writerow([
                 r["name"],
                 f"{r['qps']:.2f}",
                 f"{r['recall']:.4f}",
                 f"{r['build_time']:.2f}",
-                "success",
-                ""
+                "success", "",
+                r.get("reps", 1),
+                f"{r.get('qps_q25', r['qps']):.2f}",
+                f"{r.get('qps_q75', r['qps']):.2f}",
+                f"{r.get('recall_q25', r['recall']):.4f}",
+                f"{r.get('recall_q75', r['recall']):.4f}",
+                _mb(r.get("build_rss_delta_bytes")),
+                _mb(r.get("query_rss_delta_bytes_max")),
+                _mb(r.get("index_bytes")),
             ])
 
-        # Write failed algorithms
         for failed in failed_algorithms:
             writer.writerow([
-                failed["name"],
-                "N/A",
-                "N/A",
-                "N/A",
-                "failed",
-                failed.get("error", "Unknown error")
+                failed["name"], "N/A", "N/A", "N/A",
+                "failed", failed.get("error", "Unknown error"),
+                "", "", "", "", "", "", "", "",
             ])
 
     print(f"✓ Saved results to {csv_path}")
 
 
-def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False, threads: int = None):
+def save_results_json(output_dir: Path, results: list, failed_algorithms: list, k: int, reps: int):
+    """Save full per-rep results to JSON for downstream analysis."""
+    json_path = output_dir / "results.json"
+    with open(json_path, "w") as f:
+        json.dump({
+            "k": k,
+            "reps": reps,
+            "results": results,
+            "failed": failed_algorithms,
+        }, f, indent=2, default=str)
+    print(f"✓ Saved results JSON to {json_path}")
+
+
+def _full_gc():
+    """Force a full GC across both Python and Julia.
+
+    Called between reps and between algorithms so a GC pause inside a
+    timed window doesn't get charged to whichever algorithm was running.
+    Julia's `GC.gc(true)` runs a *full* collection (incremental by
+    default).
+    """
+    gc.collect()
+    try:
+        from juliacall import Main as _jl
+        _jl.GC.gc()
+        _jl.GC.gc(True)
+    except Exception:
+        pass
+
+
+def _peak_rss_bytes():
+    if _PROC is None:
+        return None
+    try:
+        return int(_PROC.memory_info().rss)
+    except Exception:
+        return None
+
+
+def _quartiles(values):
+    """Return (median, q25, q75) for a list of floats. Uses linear
+    interpolation; falls back gracefully on len<=2."""
+    if not values:
+        return (float("nan"), float("nan"), float("nan"))
+    if len(values) == 1:
+        v = float(values[0])
+        return (v, v, v)
+    sv = sorted(float(v) for v in values)
+    median = statistics.median(sv)
+
+    def _quantile(q):
+        if len(sv) == 2:
+            # linear interp between the two
+            return sv[0] + q * (sv[1] - sv[0])
+        # numpy-equivalent linear quantile
+        pos = q * (len(sv) - 1)
+        lo = int(pos)
+        hi = min(lo + 1, len(sv) - 1)
+        frac = pos - lo
+        return sv[lo] + frac * (sv[hi] - sv[lo])
+
+    return (median, _quantile(0.25), _quantile(0.75))
+
+
+def _verify_thread_counts(threads: int):
+    """Log effective thread counts for each library at run time so a
+    silent oversubscription doesn't quietly skew cross-library numbers.
+    """
+    print("\n--- Effective thread counts (runtime check) ---")
+    # Julia
+    try:
+        from juliacall import Main as _jl
+        jl_threads = int(_jl.seval("Threads.nthreads()"))
+        print(f"  Julia Threads.nthreads()          = {jl_threads}")
+        try:
+            blas_threads = int(_jl.seval("using LinearAlgebra; BLAS.get_num_threads()"))
+            print(f"  Julia BLAS.get_num_threads()      = {blas_threads}")
+        except Exception:
+            pass
+        if jl_threads != threads:
+            print(f"  ⚠️  Julia thread count != --threads={threads}")
+    except Exception as exc:
+        print(f"  juliacall threading probe failed: {exc}")
+    # FAISS
+    try:
+        import faiss
+        print(f"  faiss.omp_get_max_threads()       = {faiss.omp_get_max_threads()}")
+    except Exception:
+        pass
+    # OpenMP / OMP_NUM_THREADS
+    print(f"  OMP_NUM_THREADS                   = {os.environ.get('OMP_NUM_THREADS', '<unset>')}")
+    print(f"  JULIA_NUM_THREADS                 = {os.environ.get('JULIA_NUM_THREADS', '<unset>')}")
+    print()
+
+
+def _emit_pareto_csv(output_dir: Path, group_name: str, group_rows: list, k: int):
+    """Emit a recall-vs-qps CSV for a comparable group.
+
+    `group_rows` is a list of result-dicts (already aggregated; each row
+    is one algorithm × one parameter set). With single-config groups
+    this is a snapshot, not a sweep — but the CSV still expresses the
+    "recall, qps" head-to-head which is what gets plotted as a Pareto
+    when sweeps land.
+    """
+    csv_path = output_dir / f"pareto_{group_name}.csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([
+            "algorithm", f"recall@{k}", f"recall@{k}_q25", f"recall@{k}_q75",
+            "qps", "qps_q25", "qps_q75", "build_time_s",
+        ])
+        for r in group_rows:
+            w.writerow([
+                r["name"],
+                f"{r['recall']:.4f}",
+                f"{r.get('recall_q25', r['recall']):.4f}",
+                f"{r.get('recall_q75', r['recall']):.4f}",
+                f"{r['qps']:.2f}",
+                f"{r.get('qps_q25', r['qps']):.2f}",
+                f"{r.get('qps_q75', r['qps']):.2f}",
+                f"{r['build_time']:.2f}",
+            ])
+    print(f"✓ Pareto CSV ({group_name}): {csv_path}")
+
+
+def _validate_comparable_groups(comparable_groups: dict, results: list):
+    """Warn loudly if members of a comparable group don't reach
+    overlapping recall ranges (indicates parameters aren't dialled to
+    apples-to-apples points).
+
+    With a single param set per algorithm we don't have a recall *range*
+    per member; we use the IQR if --reps>1, otherwise the point recall.
+    Signal: members differ by > 0.10 in recall.
+    """
+    if not comparable_groups:
+        return
+    by_name = {r["name"]: r for r in results}
+    for group_name, body in comparable_groups.items():
+        members = body.get("members", [])
+        present = [by_name[m] for m in members if m in by_name]
+        missing = [m for m in members if m not in by_name]
+        if missing:
+            print(f"⚠️  comparable_group '{group_name}': missing members "
+                  f"{missing} (skipped or failed)")
+        if len(present) < 2:
+            continue
+        recalls = [r["recall"] for r in present]
+        spread = max(recalls) - min(recalls)
+        if spread > 0.10:
+            print(
+                f"⚠️  comparable_group '{group_name}' recall spread = {spread:.3f} "
+                f"across members — parameters likely NOT apples-to-apples. "
+                f"Members: " + ", ".join(
+                    f"{r['name']}={r['recall']:.3f}" for r in present
+                )
+            )
+        else:
+            print(
+                f"✓ comparable_group '{group_name}' recall spread = {spread:.3f} "
+                f"(members within 0.10 — apples-to-apples)"
+            )
+
+
+def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False, threads: int = None, reps: int = 1):
     """Run benchmarks for a single dataset configuration.
 
     Args:
@@ -350,6 +532,11 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     # Verify Julia threading (only check once, when Julia is first initialized)
     _verify_julia_threading()
 
+    # Effective thread-count snapshot per library, post-init. Catches the
+    # silent oversubscription case (e.g. FAISS reading OMP_NUM_THREADS
+    # rather than our --threads N).
+    _verify_thread_counts(threads)
+
     # Download and load dataset
     dataset_path = download_dataset(dataset_name, data_dir)
     train, test, ground_truth = load_dataset(dataset_path, n_train=n_train, n_test=n_test)
@@ -401,81 +588,151 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             # matrix for Julia wrappers, dtype/contiguity coercion for
             # FAISS/hnswlib, pass-through for the rest).
             prepared_train = algo.prepare_data(train)
-            # KDTree's loop-of-singletons batch path needs the original
-            # numpy queries; everything else benefits from a one-shot
-            # marshalling.
             try:
                 prepared_test = algo.prepare_queries(test)
             except Exception:
                 prepared_test = test
 
-            # Build index
+            # Build-path JIT warmup at the *actual* config (Julia
+            # juliacall, numba). Costs seconds once per (algo, dim);
+            # untimed.
+            try:
+                algo.warmup_build(int(train.shape[1]))
+            except Exception as exc:
+                print(f"⚠️  warmup_build failed: {exc}")
+
+            # Clean GC state right before the timed build region.
+            _full_gc()
+            rss_before_build = _peak_rss_bytes()
+
+            # Build index (single rep — deterministic at fixed seed).
             print("Building index...")
             build_start = time.perf_counter()
             algo.fit(prepared_train)
             build_time = time.perf_counter() - build_start
-            print(f"✓ Build time: {build_time:.2f}s")
+            rss_after_build = _peak_rss_bytes()
+            build_rss_delta = (
+                None if (rss_before_build is None or rss_after_build is None)
+                else rss_after_build - rss_before_build
+            )
+            print(f"✓ Build time: {build_time:.2f}s"
+                  + (f" (+{build_rss_delta/1e6:.1f} MB RSS)"
+                     if build_rss_delta is not None else ""))
 
-            # Warm the query path: every library's batch query (or per-query
-            # API) may JIT-compile or cache state at the actual batch size
-            # (numba JITs on first call; juliacall caches conversion paths
-            # at the size used). Without this the first timed call pays
-            # asymmetric setup cost. Run a small warmup batch on the same
-            # shape, going through `prepare_queries` so the warmup uses
-            # whatever object form the algo expects.
-            warm_n = min(8, test.shape[0])
+            # Warm the query path at the *actual* k and batch size used
+            # in the timed run. We want shape-specialised codegen
+            # (numba JITs on first call at this k; juliacall caches the
+            # conversion path at this n_queries) to land before any
+            # timed rep starts.
             try:
-                warm_prepared = algo.prepare_queries(test[:warm_n])
-                if hasattr(algo, "query_batch"):
-                    try:
-                        algo.query_batch(warm_prepared, k)
-                    except TypeError:
-                        algo.query_batch(test[:warm_n], k)
+                if hasattr(algo, "query_batch_raw"):
+                    raw_warm = algo.query_batch_raw(prepared_test, k)
+                    algo.finalize_batch_ids(raw_warm)
+                elif hasattr(algo, "query_batch"):
+                    algo.query_batch(prepared_test, k)
                 else:
-                    for i in range(warm_n):
-                        algo.query(test[i], k)
+                    for q in test:
+                        algo.query(q, k)
             except Exception as exc:
-                print(f"⚠️  query warmup failed: {exc}")
+                print(f"⚠️  query warmup at config failed: {exc}")
 
-            # Query
-            print(f"Querying {n_test} test points...")
-            query_start = time.perf_counter()
+            # Reps: time the query path only (build is one-shot).
+            qps_samples = []
+            recall_samples = []
+            query_time_samples = []
+            rss_query_samples = []
+            predictions = None
+            for rep_i in range(reps):
+                # GC right before the timed window so a pause inside
+                # doesn't get charged to this rep.
+                _full_gc()
+                rss_q_before = _peak_rss_bytes()
+                print(
+                    f"Querying {n_test} test points "
+                    f"(rep {rep_i + 1}/{reps})..."
+                )
+                query_start = time.perf_counter()
+                if hasattr(algo, "query_batch_raw"):
+                    raw = algo.query_batch_raw(prepared_test, k)
+                    query_time = time.perf_counter() - query_start
+                    # Id-conversion / numpy marshalling lives OUTSIDE the
+                    # timed region — fairness fix versus the earlier
+                    # implementation that charged Julia-only result
+                    # conversion to the timed query. See base.py for the
+                    # contract.
+                    predictions = algo.finalize_batch_ids(raw)
+                elif hasattr(algo, "query_batch"):
+                    try:
+                        predictions = algo.query_batch(prepared_test, k)
+                    except TypeError:
+                        predictions = algo.query_batch(test, k)
+                    query_time = time.perf_counter() - query_start
+                else:
+                    predictions = [algo.query(q, k) for q in test]
+                    query_time = time.perf_counter() - query_start
+                rss_q_after = _peak_rss_bytes()
+                qps_i = n_test / query_time if query_time > 0 else float("inf")
+                recall_i = compute_recall_batch(predictions, ground_truth, k)
+                qps_samples.append(qps_i)
+                recall_samples.append(recall_i)
+                query_time_samples.append(query_time)
+                if rss_q_before is not None and rss_q_after is not None:
+                    rss_query_samples.append(rss_q_after - rss_q_before)
+                print(
+                    f"  rep {rep_i + 1}: query={query_time:.2f}s, "
+                    f"qps={qps_i:.0f}, recall@{k}={recall_i:.4f}"
+                )
 
-            # Use batch query if available, otherwise loop. Some wrappers
-            # (e.g. ManifoldANN_KDTree) only support numpy in `query_batch`;
-            # fall back to the unprepared `test` if the prepared form is
-            # rejected.
-            if hasattr(algo, "query_batch"):
-                try:
-                    predictions = algo.query_batch(prepared_test, k)
-                except TypeError:
-                    predictions = algo.query_batch(test, k)
-            else:
-                predictions = [algo.query(q, k) for q in test]
-
-            query_time = time.perf_counter() - query_start
-            qps = n_test / query_time if query_time > 0 else float("inf")
-            print(f"✓ Query time: {query_time:.2f}s ({qps:.0f} queries/sec)")
-
-            # Compute recall
-            recall = compute_recall_batch(predictions, ground_truth, k)
-            print(f"✓ Recall@{k}: {recall:.4f}")
+            qps_med, qps_q25, qps_q75 = _quartiles(qps_samples)
+            recall_med, recall_q25, recall_q75 = _quartiles(recall_samples)
+            qt_med, _qt_q25, _qt_q75 = _quartiles(query_time_samples)
+            print(f"✓ Query time (median): {qt_med:.2f}s "
+                  f"(qps median={qps_med:.0f} [IQR {qps_q25:.0f}–{qps_q75:.0f}])")
+            print(f"✓ Recall@{k} (median): {recall_med:.4f} "
+                  f"[IQR {recall_q25:.4f}–{recall_q75:.4f}]")
 
             # Get metadata for this algorithm (with prefix matching for variants)
             metadata = get_algorithm_metadata(algo_name, algo_metadata)
 
-            # Store results
+            # Library-reported index footprint, if exposed.
+            try:
+                index_bytes = algo.memory_usage()
+            except Exception:
+                index_bytes = None
+
+            # Store results — keep legacy fields (`qps`, `recall`,
+            # `query_time`) populated with the median so existing
+            # single-rep consumers keep working; add per-rep + IQR
+            # fields for thesis-grade reporting.
             results.append({
                 "name": algo_name,
                 "display": str(algo),
                 "source": metadata.get("source", "Unknown"),
                 "type": metadata.get("type", "unknown"),
                 "build_time": build_time,
-                "query_time": query_time,
-                "qps": qps,
-                "recall": recall,
+                "query_time": qt_med,
+                "qps": qps_med,
+                "recall": recall_med,
+                "qps_q25": qps_q25,
+                "qps_q75": qps_q75,
+                "recall_q25": recall_q25,
+                "recall_q75": recall_q75,
+                "qps_samples": qps_samples,
+                "recall_samples": recall_samples,
+                "query_time_samples": query_time_samples,
+                "reps": reps,
+                "build_rss_delta_bytes": build_rss_delta,
+                "query_rss_delta_bytes_max": (
+                    max(rss_query_samples) if rss_query_samples else None
+                ),
+                "index_bytes": index_bytes,
                 "params": algo_params or {},
             })
+
+            # Drop the algorithm/index reference and force a full GC so
+            # the next algorithm starts from a clean slate.
+            del algo, prepared_train, prepared_test, predictions
+            _full_gc()
 
         except Exception as e:
             error_msg = str(e)
@@ -503,10 +760,22 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     results.sort(key=lambda x: x["recall"], reverse=True)
 
     # Print results table
-    print(f"{'Algorithm':<30} {'Source':<28} {'Type':<10} {'Build(s)':>10} {'QPS':>10} {'Recall@'+str(k):>12}")
-    print("─" * 103)
-    for r in results:
-        print(f"{r['name']:<30} {r['source']:<28} {r['type']:<10} {r['build_time']:>10.2f} {r['qps']:>10.0f} {r['recall']:>12.4f}")
+    if reps > 1:
+        print(f"{'Algorithm':<30} {'Source':<24} {'Build(s)':>10} "
+              f"{'QPS (med)':>10} {'QPS IQR':>16} "
+              f"{'R@'+str(k):>8} {'R IQR':>14}")
+        print("─" * 116)
+        for r in results:
+            qps_iqr = f"[{r.get('qps_q25', r['qps']):.0f}-{r.get('qps_q75', r['qps']):.0f}]"
+            r_iqr = f"[{r.get('recall_q25', r['recall']):.3f}-{r.get('recall_q75', r['recall']):.3f}]"
+            print(f"{r['name']:<30} {r['source']:<24} {r['build_time']:>10.2f} "
+                  f"{r['qps']:>10.0f} {qps_iqr:>16} "
+                  f"{r['recall']:>8.4f} {r_iqr:>14}")
+    else:
+        print(f"{'Algorithm':<30} {'Source':<28} {'Type':<10} {'Build(s)':>10} {'QPS':>10} {'Recall@'+str(k):>12}")
+        print("─" * 103)
+        for r in results:
+            print(f"{r['name']:<30} {r['source']:<28} {r['type']:<10} {r['build_time']:>10.2f} {r['qps']:>10.0f} {r['recall']:>12.4f}")
 
     # Print parameter details
     print(f"\n{'─' * 80}")
@@ -537,17 +806,36 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
             "k": k,
             "n_train": n_train,
             "n_test": n_test,
+            "reps": reps,
+            "threads": threads,
         }
         save_metadata(output_dir, config_name, config, cli_args, git_info)
 
         # Copy config files
         copy_config_files(output_dir, config_name)
 
-        # Save results CSV
+        # Save results CSV + JSON
         save_results_csv(output_dir, results, failed_algorithms, k)
+        save_results_json(output_dir, results, failed_algorithms, k, reps)
+
+        # Comparable-groups validation + Pareto CSVs.
+        comparable_groups = config.get("comparable_groups") or {}
+        if comparable_groups:
+            print(f"\n--- Comparable groups ---")
+            _validate_comparable_groups(comparable_groups, results)
+            by_name = {r["name"]: r for r in results}
+            for group_name, body in comparable_groups.items():
+                members = body.get("members", [])
+                rows = [by_name[m] for m in members if m in by_name]
+                if len(rows) >= 2:
+                    _emit_pareto_csv(output_dir, group_name, rows, k)
 
         print(f"\n✓ All results saved to: {output_dir}")
         print(f"{'=' * 80}\n")
+    elif config.get("comparable_groups"):
+        # Even without --save-output, surface the validation warning.
+        print(f"\n--- Comparable groups ---")
+        _validate_comparable_groups(config["comparable_groups"], results)
 
 
 def main():
@@ -627,6 +915,19 @@ Available datasets:
     )
 
     parser.add_argument(
+        "--reps",
+        type=int,
+        default=1,
+        help=(
+            "Number of query-phase repetitions; reports median + IQR of "
+            "QPS and recall when reps > 1. Default 1 preserves single-shot "
+            "behaviour for development sweeps. Use 3 or 5 for thesis-grade "
+            "stability on noisy variants. Build phase runs once (deterministic "
+            "at fixed seed)."
+        ),
+    )
+
+    parser.add_argument(
         "--threads",
         type=int,
         default=None,
@@ -666,6 +967,7 @@ Available datasets:
         args.n_test,
         args.save_output,
         threads=args.threads,
+        reps=max(1, int(args.reps)),
     )
 
 

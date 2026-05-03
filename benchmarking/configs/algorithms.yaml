@@ -112,16 +112,12 @@ algorithms:
     type: tree
     description: Standard KD-Tree (exact, Euclidean only)
 
-  # PyNNDescent - EXCLUDED
-  # Reason: Requires llvmlite which only supports Python <3.10
-  # This forces entire environment to Python 3.9, unfair for modern package comparisons
-  # To re-enable: uncomment below and add back to registry.py
-  # PyNNDescent:
-  #   name: PyNNDescent
-  #   source: lmcinnes/pynndescent
-  #   language: Python
-  #   type: graph
-  #   description: Python NN-Descent implementation
+  PyNNDescent:
+    name: PyNNDescent
+    source: lmcinnes/pynndescent
+    language: Python
+    type: graph
+    description: Python NN-Descent implementation (numba JIT)
 
   NearestNeighbors-KDTree:
     name: NN.jl KDTree
