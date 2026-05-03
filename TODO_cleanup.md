@@ -329,6 +329,20 @@ The independent code review skipped: `src/indices/multilevel/*`
 Worth a second pass before claiming the package has been
 comprehensively reviewed.
 
+### ORC / refinement / tangent-sharing test coverage
+
+`ShareSimilarTangents` and its helpers (`_fit_geometries`,
+`_find_shareable_geometry`, `_fit_geometries_with_candidates`,
+`_find_shareable_geometry_candidates`) have zero unit-test coverage.
+A broken constructor in those functions slipped through `Pkg.test()`
+and was caught only when an unrelated bench script invoked the path.
+Tangent-sharing is exercised via thesis experiments but not via the
+test suite. Worth a focused coverage pass — at minimum, smoke tests
+that the four functions execute without error on a small graph.
+Same likely true for other ORC / refinement code (curvature solvers,
+`EdgeNeighborhoodView` construction); audit coverage broadly, not
+just the one site that bit us.
+
 ## Strategic decisions outstanding
 
 ### Julia-ecosystem-native vs self-contained
