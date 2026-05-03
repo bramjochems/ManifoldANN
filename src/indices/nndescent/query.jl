@@ -88,7 +88,7 @@ NOT used by the single-query API — that path allocates fresh buffers per call
 to preserve the existing thread-safety contract (single-query callers may share
 an index across threads).
 """
-mutable struct NNDescentBatchScratch{S<:AbstractFloat}
+struct NNDescentBatchScratch{S<:AbstractFloat}
     visited::BitVector
     pending_data::Vector{NeighborCandidate{S}}
     best::Vector{NeighborCandidate{S}}
@@ -176,11 +176,11 @@ function _query_pooled!(
     return neighbors
 end
 
-# Worker body extracted into a real function so Julia's closure conversion
-# gives each spawned task an isolated `scratch`. Defining it inline as
-# `Threads.@spawn let scratch = ... end` was observed to allow scratch
-# state to alias between sibling tasks under -t > 1 on Julia 1.12; making
-# the task body a plain function call sidesteps that.
+# Worker body is a top-level function so each `Threads.@spawn` call site
+# allocates its own `scratch` from a clean stack frame, with no closure
+# capture across the worker-spawn loop. Keeping the structure explicit
+# avoids subtle aliasing issues that can arise when a `let scratch = ...`
+# block is used inside the spawn loop.
 function _nndescent_batch_worker!(
     results::Vector{Vector{Neighbor{S}}},
     work::Channel{Int},
@@ -270,20 +270,6 @@ function query(
     return query(index, data, matrix, k; kwargs...)
 end
 
-function _pick_entry_points(n_points::Int, count::Int, rng::AbstractRNG)
-    count = max(count, 1)
-    count = min(count, n_points)
-    selected = Int[]
-    seen = Set{Int}()
-    while length(selected) < count
-        candidate = rand(rng, 1:n_points)
-        candidate in seen && continue
-        push!(selected, candidate)
-        push!(seen, candidate)
-    end
-    return selected
-end
-
 # Pooled variant: writes into caller-owned `selected` Vector and `seen` Set,
 # both of which are emptied first. Returns `selected` for convenience.
 function _pick_entry_points_pooled!(
@@ -305,6 +291,9 @@ function _pick_entry_points_pooled!(
     end
     return selected
 end
+
+_pick_entry_points(n_points::Int, count::Int, rng::AbstractRNG) =
+    _pick_entry_points_pooled!(Int[], Set{Int}(), n_points, count, rng)
 
 function _insert_best_neighbor!(
     list::Vector{NeighborCandidate{T}},

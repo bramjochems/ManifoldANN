@@ -43,19 +43,31 @@ build_t = @elapsed idx = MA.build_index(MA.NNDescentIndex, data; k=K,
 MA.query(idx, data, @view(queries[:, 1:8]), K; ef_search=EFS)
 GC.gc()
 
-@printf "\nBatch query (Matrix input, %d queries):\n" NQ
-times = Float64[]
-allocs = Int[]
-for r in 1:REPS
-    GC.gc(); a0 = Base.gc_bytes()
-    t = @elapsed MA.query(idx, data, queries, K; ef_search=EFS)
-    a1 = Base.gc_bytes()
-    push!(times, t)
-    push!(allocs, a1 - a0)
+function _bench_batch(label::AbstractString, idx, data, qs, k, ef, reps)
+    nq = size(qs, 2)
+    times = Float64[]
+    allocs = Int[]
+    for _ in 1:reps
+        GC.gc(); a0 = Base.gc_bytes()
+        t = @elapsed MA.query(idx, data, qs, k; ef_search=ef)
+        a1 = Base.gc_bytes()
+        push!(times, t); push!(allocs, a1 - a0)
+    end
+    best = minimum(times)
+    median = sort(times)[ceil(Int, length(times)/2)]
+    @printf "%s (n_queries=%d):\n" label nq
+    @printf "  best:   %.3fs   qps %6.0f   alloc %.2f KB/query\n" best (nq/best) (minimum(allocs)/nq/1024)
+    @printf "  median: %.3fs   qps %6.0f\n" median (nq/median)
 end
-let best = minimum(times), median = sort(times)[ceil(Int, length(times)/2)]
-    @printf "  best:   %.3fs   qps %6.0f   alloc %.1f MB total = %.2f KB/query\n" best (NQ/best) (minimum(allocs)/(1024^2)) (minimum(allocs)/NQ/1024)
-    @printf "  median: %.3fs   qps %6.0f\n" median (NQ/median)
-end
+
+println()
+_bench_batch("Batch query (large)", idx, data, queries, K, EFS, REPS)
+
+# Small-batch sweep — the threaded path's Channel + worker spawn has a fixed
+# cost; a small batch can be slower than the serial fallback. Verify the
+# BATCH_THREAD_THRESHOLD gate keeps small-batch performance reasonable.
+println()
+small_qs = @view queries[:, 1:min(100, NQ)]
+_bench_batch("Batch query (small)", idx, data, small_qs, K, EFS, REPS)
 
 println("\nDone.")

@@ -64,6 +64,18 @@ end
         for i in 1:n_queries
             @test [n.id for n in a[i]] == [n.id for n in b[i]]
         end
+
+        # Cross-thread-count determinism: batch result must equal the
+        # serial single-query loop driven by the same child-RNG sequence,
+        # regardless of how many workers process the batch.
+        seed_rng = MersenneTwister(99)
+        child_rngs = ManifoldANN.spawn_child_rngs(seed_rng, n_queries)
+        ref = [query(idx, data, view(queries, :, i), 5; ef_search = 25,
+                     rng = child_rngs[i]) for i in 1:n_queries]
+        for i in 1:n_queries
+            @test [n.id for n in a[i]] == [n.id for n in ref[i]]
+            @test [n.dist for n in a[i]] == [n.dist for n in ref[i]]
+        end
     end
 end
 
@@ -112,12 +124,10 @@ end
 
     bytes = @allocated query(idx, data, queries, 5; ef_search = 20,
                               rng = MersenneTwister(0x5E))
-    # Pre-pooling: BitVector(n_points) + Set + heap(beam) per query, ~40-50 KB
-    # for visited+heap at n=4000 (BitVector dominates: 500 B/query) plus the
-    # Set entry-point buffer (~700 B/query). Plus the unavoidable per-query
-    # MersenneTwister allocation (~2.5 KB). Pre-pooling totalled ~80+ KB/query
-    # at this config; pooled path drops the BitVector + heap + Set buffers,
-    # leaving primarily the RNG spawn. Pin a 60 KB/query bound that fits
-    # comfortably above the pooled path but still catches a regression.
-    @test bytes < 60 * 1024 * n_queries
+    # Pooled path measures ~36 KB/query at n=20k under the production bench
+    # (commit message). At n=4000 with smaller beam the figure is comparable.
+    # Pin 45 KB/query — tight enough to catch a regression that re-introduces
+    # a per-query Set or BitVector (each ~500 B) without false-failing on GC
+    # heap noise.
+    @test bytes < 45 * 1024 * n_queries
 end
