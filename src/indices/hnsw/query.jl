@@ -848,64 +848,67 @@ function _build_index_threaded!(
                 level = levels[node_id]
                 point = @view data[:, node_id]
 
-                # Snapshot entry/max under global lock. The values may be
-                # stale by the time we use them; that's tolerated (recall
-                # may suffer slightly, but no structural defect — see
-                # connect-loop comment below).
+                # Snapshot entry/max. If level <= snapshot, the snapshot may
+                # become stale during execution but that's tolerated: serial
+                # HNSW with the same snapshot would have produced the same
+                # local result. If level > snapshot, we may race with another
+                # level-extender and end up unreachable at layers
+                # snapshot+1..level — handled by the locked path below.
                 Base.lock(index.global_lock)
                 cur_entry = index.entry_point
                 cur_max = index.max_layer
                 Base.unlock(index.global_lock)
 
-                # Greedy descent on layers above this node's level.
-                current = cur_entry
-                current_dist = index.distance(@view(data[:, current]), point)
-                for layer = cur_max:-1:max(level + 1, 1)
-                    cand = _greedy_descent_threaded(index, layer, current, point, data, nbr_scratch)
-                    current = cand.id
-                    current_dist = cand.dist
-                end
-
-                # Connect loop on layers min(level, cur_max)..0.
-                # If level > cur_max, layers cur_max+1..level are intentionally
-                # skipped here — same as serial HNSW when this node becomes
-                # the new highest-level node alone. Other nodes at those
-                # layers (added concurrently by other threads) won't have a
-                # reverse edge to this node, but the global-lock update at
-                # the end ensures this node becomes entry_point if level is
-                # still the max. The race where another thread overtakes us
-                # past `level` mid-execution is handled by the conditional
-                # update — we just don't become entry_point in that case.
-                for layer = min(level, cur_max):-1:0
-                    visit_gen += UInt32(1)
-                    if visit_gen == UInt32(0)
-                        fill!(visit_buf, UInt32(0))
-                        visit_gen = UInt32(1)
-                    end
-                    visited = StampVisited(visit_buf, visit_gen)
-
-                    results = _search_layer_threaded(
-                        index, layer,
-                        NeighborCandidate(current, current_dist),
-                        point, data, index.ef_construction, visited, nbr_scratch,
-                    )
-                    neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
-                    _connect_new_node_threaded!(index, layer, node_id, neighbors, data)
-                    if !isempty(neighbors)
-                        current = neighbors[1].id
-                        current_dist = neighbors[1].dist
-                    end
-                end
-
-                # Update entry point if we exceeded the current max_layer.
-                if level > cur_max
+                extending = level > cur_max
+                if extending
+                    # Re-snapshot under the lock and hold it for the entire
+                    # insertion. Serializes only level-extending inserts
+                    # (rare, ~1/M of nodes); other threads inserting at
+                    # levels <= max_layer continue in parallel via per-node
+                    # locks. This closes the stale-cur_max race where two
+                    # extenders concurrently snapshot the same cur_max and
+                    # leave each other unreachable at the top layers.
                     Base.lock(index.global_lock)
-                    try
-                        if level > index.max_layer
-                            index.max_layer = level
-                            index.entry_point = node_id
+                    cur_entry = index.entry_point
+                    cur_max = index.max_layer
+                end
+
+                try
+                    current = cur_entry
+                    current_dist = index.distance(@view(data[:, current]), point)
+                    for layer = cur_max:-1:max(level + 1, 1)
+                        cand = _greedy_descent_threaded(index, layer, current, point, data, nbr_scratch)
+                        current = cand.id
+                        current_dist = cand.dist
+                    end
+
+                    for layer = min(level, cur_max):-1:0
+                        visit_gen += UInt32(1)
+                        if visit_gen == UInt32(0)
+                            fill!(visit_buf, UInt32(0))
+                            visit_gen = UInt32(1)
                         end
-                    finally
+                        visited = StampVisited(visit_buf, visit_gen)
+
+                        results = _search_layer_threaded(
+                            index, layer,
+                            NeighborCandidate(current, current_dist),
+                            point, data, index.ef_construction, visited, nbr_scratch,
+                        )
+                        neighbors = select_neighbors(index.neighbor_policy, results, data, index.distance)
+                        _connect_new_node_threaded!(index, layer, node_id, neighbors, data)
+                        if !isempty(neighbors)
+                            current = neighbors[1].id
+                            current_dist = neighbors[1].dist
+                        end
+                    end
+
+                    if extending && level > index.max_layer
+                        index.max_layer = level
+                        index.entry_point = node_id
+                    end
+                finally
+                    if extending
                         Base.unlock(index.global_lock)
                     end
                 end
