@@ -54,7 +54,8 @@ function lloyd!(
     converged = false
     iter = 0
 
-    for iter in 1:max_iters
+    for it in 1:max_iters
+        iter = it
         # E-step: Assign points to nearest centroids
         pairwise_distances!(D, X, centroids, distance)
         assign_clusters!(assignments, D)
