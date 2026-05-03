@@ -100,50 +100,56 @@ something.
 
 ### LSH
 
-- **Tiny follow-ups (consider later if worthwhile).** Both are non-issues
-  at thesis-typical sizes; neither warrants a dedicated session.
-  - Replace `shuffle!` + `resize!` in `query` with reservoir sampling
-    when `candidate_cap << length(candidates)` (O(cap) instead of O(C)).
-  - `_collect_candidates` calls `sizehint!(seen::BitSet, expected)`,
-    misleading because BitSet storage scales with `max(id)` not element
-    count. Either drop the line or revisit BitSet vs `Set{Int}` at large
-    N (~1.25 MB/query at N=10M).
+LSH is a thesis baseline and is delivering ~85% recall at typical configs;
+no further perf work is load-bearing. Items below are tiny polish; defer
+unless LSH becomes a more central thesis comparison.
+
+- **Reservoir sampling for `candidate_cap`.** `query` currently uses
+  `shuffle!` + `resize!` on the full candidate list — O(C) when O(cap)
+  would do. Non-issue at thesis-typical candidate sizes.
+- **BitSet vs `Set{Int}` at large N.** `_collect_candidates!`'s
+  `sizehint!(seen::BitSet, expected)` is misleading because BitSet
+  storage scales with `max(id)` not element count. With per-task pool
+  the BitSet now has a fixed `n_points/8`-byte high-water mark per
+  task; correct as-is, but the comment-or-swap discussion remains.
+- **CSR (offsets + flat ids) layout for tables.** Build-once,
+  query-many is the actual LSH use case; CSR would give cache-friendly
+  bucket scans. Blocked by `insert!` support — would require dropping
+  it (LSH `insert!` exists today and matches the `supports_mutation`
+  trait, but has no production callers). Modest win (~10-20% qps),
+  not load-bearing.
+- **`mean_bucket_size` formula is uniform-distribution.** Real LSH
+  buckets are skewed by design; the sizehint underestimates in skewed
+  regimes. Capped at `n_points` so no catastrophe. Worth a comment.
+- **`hash_factory` extension-point contract.** 689974b auto-injects
+  `T = eltype(data)` for the built-in factories (`make_random_hyperplane_hash`,
+  `make_binning_hash`); user-supplied factories receive `hash_kwargs`
+  verbatim (743f57b). If we ever document the hash_factory extension
+  point publicly, the contract should be either "your factory must
+  accept `T`" or "you must pre-bind `T` via a closure." Decide when
+  surfacing it.
 
 ### KDTree
 
 KDTree is reference-only for the thesis (the contribution lives in the
-manifold-aware graph machinery, not the KD-tree). The first-pass
-quickselect / in-place partition / query alloc cleanup landed; remaining
-items below are textbook improvements (Friedman-Bentley-Finkel 1977) for
-bringing the reference up to a respectable baseline.
+manifold-aware graph machinery, not the KD-tree). Leaf-bucket layer +
+router-only internal nodes landed (5bae18d / 8aa89ff); distance-metric
+safety gate landed (f4d1acd / 1a9b0b4) excluding non-componentwise-monotone
+metrics from the build API.
 
-**Second pass (do AFTER measuring whether it's still worthwhile):**
+**Latent correctness issue worth fixing properly:**
 
-- **Leaf-bucket layer (leafsize ~16-32).** Stop recursion at a
-  configurable bucket size; store the leaf as a `UnitRange` into the
-  `indices` permutation, scan the bucket linearly in the query. Closes
-  most of the remaining query gap at low/mid d (3-4× query speedup at
-  d=8 expected). ~80-120 LOC across `types.jl`/`builder.jl`/`query.jl`.
-  Additive — keep `KDTreeIndex` exported fields stable, internal layout
-  change only.
-
-- **Reorder data for leaf-contiguous memory.** Build a permuted
-  `Matrix{T}` so leaf scans become sequential column reads instead of
-  random `data[:, indices[i]]` lookups. 1.3-1.6× query speedup *on top
-  of* the leaf-bucket change. ~30 LOC. **Only meaningful after the
-  leaf-bucket change** — without leaves there's nothing to reorder.
-  Make it opt-out so callers passing huge matrices can skip the copy.
+- **Pruning is in mixed units.** `query.jl:60` compares linear
+  `axis_distance = abs(q_val - split_value)` against `worst`, but for
+  squared metrics `worst` is in squared units. We currently work
+  around this by excluding `SqEuclidean` from the safe-metric list.
+  The clean fix is the **incremental rolling-bound distance**
+  (Friedman-Bentley-Finkel 1977): maintain `q-to-cell` squared
+  distance through descent, update one axis's contribution at the
+  far-child gate. Compares like-for-like; would unblock SqEuclidean
+  re-admission to the safe list. ~40 LOC, gated on additive metrics.
 
 **Lower-priority follow-ups:**
-
-- **Incremental rolling-bound distance during query.** Standard
-  Friedman-Bentley-Finkel 1977 trick: maintain the squared distance from
-  `q` to the active cell; when descending into the far child, update
-  only the changed axis's contribution. Tighter pruning than
-  `abs(q_val - split_value)`. 1.2-1.4× query speedup expected at
-  moderate d. ~40 LOC, gate on `default_distance` (only correct for
-  additive Minkowski-like metrics). Probably not worth doing if the
-  leaf-bucket change closes most of the query gap.
 
 - **Hyperrectangle width tracking** as an *alternative* axis selector.
   Maintain `mins`/`maxes` down recursion and pick `argmax(maxes - mins)`
@@ -158,6 +164,10 @@ bringing the reference up to a respectable baseline.
 
 **Anti-recommendations (do not do these):**
 
+- **Reorder data for leaf-contiguous memory.** Would give 1.3-1.6× query
+  speedup on top of leaf-buckets but is the canonical NN.jl-shaped
+  feature kit; deliberately not pursued — package is meant to be a
+  reference baseline, not a polished alternative to NearestNeighbors.jl.
 - Implicit binary heap layout (`getleft(i)=2i, getright(i)=2i+1`) for
   the node array. Saves one Int per node at the cost of significant
   bit-twiddling complexity.
@@ -168,6 +178,35 @@ bringing the reference up to a respectable baseline.
   obscures the algorithmic story we'd want to tell.
 - Metric-specific kernel branches (Chebyshev, etc.) — couples the tree
   to metrics we don't ship.
+
+### Multilevel / IVF follow-ups
+
+A through D landed this session along with a brutal-critic pass. Mostly
+clean; residuals worth knowing about:
+
+- **Tie-break ordering changed in inverted-loop batch dispatch.** Old
+  single-vector path appended results in parent-routing order; new
+  matrix path (d24a7c3) appends in `child_idx` order. For tied
+  distances, top-k selection picks different elements. Δrecall on 1000
+  GloVe-100 queries: +0.0001 — well within noise. Both orderings are
+  algorithmically valid; the difference is a deterministic-merge
+  detail. No action; document only if a user reports a recall flake.
+
+- **Empty-children edge case.** If a query routes to zero children
+  (`probe_indices` empty), `merge_results(SimpleMerge(), [], k)` is
+  called with an empty list. Currently works (returns empty Vector) but
+  the contract isn't explicitly tested. Worth a defensive testset if
+  this comes up.
+
+- **Per-batch `queries_per_child` allocates `n_children` empty Vectors**
+  even for empty cells (`query.jl:347`). At nlist=128 that's 128 empties
+  per batch — small but real. CSR-style flat layout (counts pass +
+  offsets + flat array) would halve the gather-bookkeeping memory.
+  Bounded value; defer.
+
+- **Doc bloat in multilevel.** Multilevel docstrings duplicate the same
+  IVF example 3-4× across `multilevel/{multilevel_index,multilevel,
+  transformed,routing}.jl`. Worth a focused doc consolidation pass.
 
 ### Latent type-narrowing in kmeans (multilevel-build path)
 
@@ -315,10 +354,9 @@ remain:
 Items surfaced by the read-only architecture review. Mechanical cleanups,
 none gating.
 
-- **Doc bloat.** Multilevel docstrings duplicate the same IVF example
-  3-4× across `multilevel/{multilevel_index,multilevel,transformed,routing}.jl`.
-  Export list in `src/ManifoldANN.jl` is ~185 names with ~20-30
-  internal-only. Worth a focused doc/exports pass.
+- **Export list bloat.** `src/ManifoldANN.jl` is ~185 names with ~20-30
+  internal-only. Worth a focused exports audit (multilevel doc bloat
+  noted under the multilevel section).
 
 - **Submodule-style imports without submodules.**
   `src/indices/multilevel/multilevel_index.jl:47-52` and friends use
@@ -334,13 +372,16 @@ none gating.
 
 ### Areas not reviewed
 
-The independent code review skipped: `src/indices/multilevel/*`
-(IVF-HNSW), `src/transforms/kmeans/*`, `src/preprocessing/*`,
-`src/geodesic/refinement.jl`, `src/geometry/neighborhood.jl`,
-`src/geometry/criteria.jl`, ORC `EdgeNeighborhoodView` construction
+The independent code review skipped: `src/transforms/kmeans/*`
+(but kmeans got the subsample-for-training pass — partial review),
+`src/preprocessing/*`, `src/geodesic/refinement.jl`,
+`src/geometry/neighborhood.jl`, `src/geometry/criteria.jl`, ORC
+`EdgeNeighborhoodView` construction
 (`graphs/refinement/{types,filtering,effective_epsilon_policy}.jl`).
 Worth a second pass before claiming the package has been
-comprehensively reviewed.
+comprehensively reviewed. Multilevel/IVF was reviewed in this session
+across A/B/C/D and the brutal-critic pass — see "Multilevel / IVF
+follow-ups" below for residual items.
 
 ### ORC / refinement / tangent-sharing test coverage
 
@@ -363,17 +404,17 @@ just the one site that bit us.
 Three workstreams point in the same direction and should be decided
 together, not as discrete fixes:
 
-- **Distances.jl as the metric provider.** Replace `default_distance`
-  etc. with thin aliases over `Euclidean()` / `SqEuclidean()` / etc.
-  Wire `Distances.pairwise!` into bruteforce builder/query and k-means
-  Lloyd kernels — that's where the BLAS3 win materialises (cross-term
-  identity dispatches to GEMM). Per-call `evaluate(metric, x, y)` is
-  **no** SIMD win over our current `@simd` kernels — only bulk
-  pairwise/colwise pays. Half a day for the alias swap; 2-3 days for
-  `pairwise!` integration with benchmarks. Risk: BLAS-backed pairwise
-  can produce small negatives from cancellation; bit-for-bit results
-  may differ from `@simd` reduction and could perturb tie-breaking in
-  unit tests.
+- **Distances.jl as the metric provider — alias layer landed (0834a73).**
+  `default_distance` / `default_squared_distance` / `euclidean_distance`
+  / `cosine_distance` are now thin aliases over Distances.jl types;
+  hand-rolled SIMD kernels deleted. `squared_cosine_distance` kept as a
+  function (genuine semantic mismatch — `2·(1-cos_sim)` ≠ anything in
+  Distances.jl). Microbench confirmed per-pair perf parity. Remaining
+  work: wire `Distances.pairwise!` into bruteforce builder/query for the
+  BLAS3 batch win (kmeans already uses it). 2-3 days for that
+  integration with benchmarks. Risk: BLAS-backed pairwise can produce
+  small negatives from cancellation; bit-for-bit results may differ
+  from `@simd` reduction and could perturb tie-breaking in unit tests.
 
 - **Manifolds.jl as the manifold/sampler provider.** Wire as a sampler
   + ground-truth-distance backend. Adapter: `sample_manifold(M, n) →
