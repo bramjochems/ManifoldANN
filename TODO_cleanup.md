@@ -475,6 +475,82 @@ The independent code review skipped: `src/indices/multilevel/*` (IVF-HNSW),
 (`graphs/refinement/{types,filtering,effective_epsilon_policy}.jl`). Worth a
 second pass before claiming the package has been comprehensively reviewed.
 
+### Architecture / idiomatic-Julia review findings
+
+Items surfaced by a read-only architecture review (mid-session). None are
+gating; most are mechanical cleanups for a future housekeeping pass.
+
+- **`lloyd!` returns `iter=0` always.** `src/transforms/kmeans/lloyd.jl:55-57`.
+  Loop variable `iter` is shadowed by `for iter in 1:max_iters` (Julia 1.0+
+  loop locals), so the outer binding is never updated. Benign because no
+  caller uses the returned iteration count, but a future caller will get
+  bitten. One-line fix.
+
+- **Two test files orphaned outside `test/unit/`.**
+  `test/indices/multilevel/test_deepcopy_fix.jl` and `test_ivf_smoke.jl` are
+  not picked up by `runtests.jl` (which only walks `test/unit/`). Either
+  silent test gap or stale code. Move into `test/unit/indices/multilevel/`
+  or delete.
+
+- **`::Function`-typed fields on multilevel hot paths.** Same family as the
+  KDTree-distance fix (already landed): `multilevel/{builder,ivf_hnsw,query}.jl`
+  uses `::Function` for distance/cost slots. Compiler may already specialise
+  via single-call-site inlining (per the KDTree experiment's negative
+  result), so a no-op perf change in current usage but removes a latent
+  cliff if non-default callables are passed. ~30 LOC if pursued.
+
+- **`NodeNeighborhood.geometry::Union{Nothing,Any}`.**
+  `src/graphs/refinement/types.jl:10`. Type-erased — every access is dynamic
+  dispatch. Could be parametrised on the struct (`Union{Nothing,G}`). Listed
+  separately under "Geodesic / graph" already as `_fit_geometries` boxing.
+
+- **`benchmarking/julia/src/ManifoldANNBenchmarks.jl` is a 6-line stub.**
+  Whole `Project.toml` + `Manifest.toml` for a stub module. Either flesh out
+  or delete; it adds confusion.
+
+- **Doc bloat.** Multilevel docstrings duplicate the same IVF example 3-4×
+  across `multilevel/{multilevel_index,multilevel,transformed,routing}.jl`.
+  Export list in `src/ManifoldANN.jl` is ~185 names with ~20-30
+  internal-only.
+
+- **Submodule-style imports without submodules.**
+  `src/indices/multilevel/multilevel_index.jl:47-52` and friends use
+  `using ...ManifoldANN: ...` (3 dots). Works only because Julia tolerates
+  the extra dot; if a real submodule is ever introduced, these silently
+  change meaning. Cosmetic but gnarly.
+
+- **PCATransform / KMeansTransform use `error("...")` instead of `ArgumentError`**
+  at `PCATransform.jl:68,75,80,87` and `Transform.jl`. Idiomatic-Julia
+  cleanup. Low priority.
+
+- **TODO_cleanup.md restructure (this file).** ~559 lines, conflates working
+  principles, open work, anti-patterns, and (occasionally) finished work.
+  Reviewer's specific recommendation: move durable principles + anti-patterns
+  to `AGENTS.md` or `docs/architecture.md`; keep this file purely
+  forward-looking.
+
+### NN-Descent: bounded-candidates / recall-speed knob
+
+Profile (mid-session) revealed MANN does **6.2× more distance evaluations
+per query than NND.jl** at `ef_search=60` / `max_candidates=60` —
+**because MANN's candidates queue is unbounded**. NND.jl bounds its
+candidates heap at `max_candidates`, prunes aggressively at push time, and
+terminates early. Result at n=20000 d=32 k=20: MANN recall@20 = 0.929,
+NND.jl recall@20 = 0.770 — MANN delivers 16 pp higher recall while NND.jl
+trades recall for speed.
+
+**Status:** the gap is not a bug — it's a deliberate (but unparametrised)
+recall/speed tradeoff. Worth exposing as a swappable knob: a
+`bounded_candidates::Bool` or `max_candidates::Int` parameter that, when
+set, prunes the candidates frontier the way NND.jl does. Default to current
+unbounded behaviour to preserve recall. Users who want NND.jl-class qps can
+opt in and accept the recall hit.
+
+For thesis-grade comparisons: **the apples-to-apples comparison is at
+matched recall**, not matched parameters. Either lower MANN's `ef_search`
+to hit 0.77 recall or raise NND.jl's `max_candidates` to hit 0.93. Until
+that comparison is run, the "MANN slower at -t 1" framing is misleading.
+
 ## Strategic decisions outstanding
 
 ### Julia-ecosystem-native vs self-contained
