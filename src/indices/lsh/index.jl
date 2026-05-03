@@ -59,6 +59,7 @@ function query(
     q::AbstractVector{T},
     k::Integer;
     candidate_cap::Union{Nothing,Int} = nothing,
+    rng::AbstractRNG = Random.default_rng(),
 ) where {T<:BlasFloat}
     validate_index_dimensions(index, data, q)
     S = float(T)
@@ -68,6 +69,9 @@ function query(
     isempty(candidates) && return Neighbor{S}[]
 
     if candidate_cap !== nothing && length(candidates) > candidate_cap
+        # Uniform sample without replacement: shuffle then truncate. Avoids the
+        # low-ID bias of a sort+resize.
+        shuffle!(rng, candidates)
         resize!(candidates, candidate_cap)
     end
 
@@ -91,18 +95,20 @@ function _collect_candidates(index::LSHIndex, q::AbstractVector)
     candidates = Int[]
     n_tables = length(index.tables)
     n_tables == 0 && return candidates
-    # Pre-allocate based on expected candidates per table
-    sizehint!(candidates, n_tables * LSH_EXPECTED_CANDIDATES_PER_TABLE)
+    expected = n_tables * LSH_EXPECTED_CANDIDATES_PER_TABLE
+    sizehint!(candidates, expected)
+    seen = BitSet()
+    sizehint!(seen, expected)
     for table in index.tables
         h = hash_point(table.hash_function, q)
         bucket = get(table.buckets, h, nothing)
-        if bucket !== nothing
-            append!(candidates, bucket)
+        bucket === nothing && continue
+        @inbounds for id in bucket
+            if !(id in seen)
+                push!(seen, id)
+                push!(candidates, id)
+            end
         end
-    end
-    if !isempty(candidates)
-        sort!(candidates)
-        unique!(candidates)
     end
     return candidates
 end
