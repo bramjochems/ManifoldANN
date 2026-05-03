@@ -23,7 +23,7 @@ function select_neighbors(
     policy::HeuristicNeighborPolicy,
     candidates::Vector{NeighborCandidate{T}},
     ::AbstractMatrix,
-    ::Function;
+    _distance;
     limit::Union{Nothing,Int} = nothing,
 ) where {T}
     isempty(candidates) && return NeighborCandidate{T}[]
@@ -60,7 +60,7 @@ function select_neighbors(
     policy::DiversifiedNeighborPolicy,
     candidates::Vector{NeighborCandidate{T}},
     data::AbstractMatrix,
-    distance_fn::Function;
+    distance_fn;
     limit::Union{Nothing,Int} = nothing,
 ) where {T}
     isempty(candidates) && return NeighborCandidate{T}[]

@@ -65,48 +65,6 @@ const _FNV_PRIME_64        = 0x00000100000001b3
     return h
 end
 
-"""
-    euclidean_distance(x, y)
-
-Compute Euclidean (L2) distance between vectors x and y.
-Optimized to avoid allocations and use SIMD instructions.
-"""
-@inline function euclidean_distance(x::AbstractVector{T}, y::AbstractVector{T}) where T
-    length(x) == length(y) || throw(DimensionMismatch("Vectors must have same length"))
-    d = zero(T)
-    @inbounds @simd for i in eachindex(x, y)
-        diff = x[i] - y[i]
-        d += diff * diff
-    end
-    return sqrt(d)
-end
-
-"""
-    cosine_distance(x, y)
-
-Compute cosine distance (1 - cosine_similarity) between vectors x and y.
-Optimized to avoid allocations and use SIMD instructions.
-Returns Inf if either vector has zero norm.
-"""
-@inline function cosine_distance(x::AbstractVector{T}, y::AbstractVector{T}) where T
-    length(x) == length(y) || throw(DimensionMismatch("Vectors must have same length"))
-
-    dot_prod = zero(T)
-    norm_x_sq = zero(T)
-    norm_y_sq = zero(T)
-
-    @inbounds @simd for i in eachindex(x, y)
-        xi = x[i]
-        yi = y[i]
-        dot_prod += xi * yi
-        norm_x_sq += xi * xi
-        norm_y_sq += yi * yi
-    end
-
-    norm_x = sqrt(norm_x_sq)
-    norm_y = sqrt(norm_y_sq)
-
-    (norm_x == 0 || norm_y == 0) && return T(Inf)
-
-    return 1 - dot_prod / (norm_x * norm_y)
-end
+# `euclidean_distance` and `cosine_distance` (used by hash families' default
+# `distance_function`) are now Distances.jl aliases defined in
+# src/utils/distances.jl.

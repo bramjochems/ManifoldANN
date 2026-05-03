@@ -526,7 +526,7 @@ function _select_into!(
     out_ids::AbstractVector{Int},
     candidates::Vector{NeighborCandidate{T}},
     ::AbstractMatrix,
-    ::Function,
+    _distance,
     limit::Int,
 ) where {T}
     cap = min(limit, length(candidates))
