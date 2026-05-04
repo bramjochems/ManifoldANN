@@ -103,7 +103,8 @@ Learn k cluster centroids from training data using Lloyd's algorithm.
 # Effects
 - Sets `t.centroids` to learned centroid matrix (d × k)
 """
-function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:AbstractFloat,T<:Real}
+function fit!(t::KMeansTransform{D,TC}, X::Matrix{T};
+              rng::AbstractRNG=Random.default_rng()) where {D<:SemiMetric,TC<:AbstractFloat,T<:Real}
     d, n = size(X)
 
     @assert t.k <= n "Cannot fit $(t.k) clusters with only $n points"
@@ -114,7 +115,7 @@ function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:A
     use_subsample = t.subsample_size !== nothing && t.subsample_size < n
     X_train = if use_subsample
         sample_n = max(t.subsample_size, t.k)  # need at least k points to fit k clusters
-        idx = randperm(n)[1:sample_n]
+        idx = randperm(rng, n)[1:sample_n]
         X[:, idx]
     else
         X
@@ -122,9 +123,9 @@ function fit!(t::KMeansTransform{D,TC}, X::Matrix{T}) where {D<:SemiMetric,TC<:A
 
     # Initialize centroids
     if t.init == :random
-        centroids = init_random(X_train, t.k)
+        centroids = init_random(X_train, t.k; rng=rng)
     elseif t.init == :kmeans_plus_plus
-        centroids = init_kmeans_plus_plus(X_train, t.k, t.distance)
+        centroids = init_kmeans_plus_plus(X_train, t.k, t.distance; rng=rng)
     else
         throw(ArgumentError("Unknown initialization strategy: $(t.init)"))
     end
