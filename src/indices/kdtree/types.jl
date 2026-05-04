@@ -54,24 +54,22 @@ index_distance(index::KDTreeIndex) = index.distance
 configured_k(::KDTreeIndex) = nothing
 supports_mutation(::KDTreeIndex) = false
 
-# KDTree's pruning bound `|q[axis] - split_value| <= worst` is a valid lower
-# bound on the full distance only for componentwise-monotone metrics — those
-# where a per-axis difference can never exceed the full L_p-style aggregate.
-# Cosine, Hamming, Jaccard, KL etc. violate this and would give silently wrong
-# results. The build gate accepts the in-tree default helpers and the
-# Distances.jl metrics that satisfy the property; everything else errors out
-# at construction with a pointer to HNSW/LSH.
+# KDTree's prune bound is built from per-axis contributions of an
+# axis-aligned cell containing the candidate points. A metric is safe iff
+# its full distance is bounded below by an additive (or max-style) reduce
+# of those per-axis contributions — the Friedman-Bentley-Finkel 1977
+# safety class. Cosine, Hamming, Jaccard, KL etc. violate this and would
+# give silently wrong results.
 #
-# NOTE: SqEuclidean and WeightedSqEuclidean are deliberately NOT on the safe
-# list. The pruning bound compares the linear `axis_distance = abs(q_val -
-# split_value)` against `worst`. For squared metrics `worst` is in squared
-# units, so the units don't match — the comparison wrongly prunes when
-# `worst < 1`. Fixing the query path to compare in matched units is a real
-# refactor; for now we just exclude squared metrics. Users who want squared-
-# distance semantics should pass `Euclidean()` (the algorithm's relative
-# ordering of neighbors is preserved; only the returned distance values
-# differ by a `sqrt`).
+# `SqEuclidean` is on the safe list: the query path uses an incremental
+# rolling cell-distance bound (FBF77) computed in the metric's prune units
+# (squared for L2/SqL2, linear for L1/Minkowski), so the prune compare is
+# unit-consistent. See `_kdtree_use_rolling_bound` in `query.jl` for the
+# metrics that take the rolling-bound path. Chebyshev and the weighted
+# variants currently fall back to the legacy linear-axis prune (still
+# correct for those metrics; rolling-bound is an open extension).
 @inline _kdtree_safe_metric(::Distances.Euclidean) = true
+@inline _kdtree_safe_metric(::Distances.SqEuclidean) = true
 @inline _kdtree_safe_metric(::Distances.Cityblock) = true
 @inline _kdtree_safe_metric(::Distances.Chebyshev) = true
 @inline _kdtree_safe_metric(::Distances.Minkowski) = true

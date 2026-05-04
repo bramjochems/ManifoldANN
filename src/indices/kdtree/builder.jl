@@ -25,10 +25,10 @@ function build_index(
     axis_selector in (:variance, :cyclic) ||
         throw(ArgumentError("axis_selector must be :variance or :cyclic"))
     _kdtree_safe_metric(distance) || throw(ArgumentError(
-        "KDTreeIndex's `axis_distance ≤ worst` pruning bound is only correct " *
-        "for componentwise-monotone metrics (Euclidean, SqEuclidean, Cityblock, " *
-        "Chebyshev, Minkowski). Got distance=$distance — for cosine, hamming, " *
-        "or other non-monotone metrics use HNSWIndex or LSHIndex instead."))
+        "KDTreeIndex's cell-bound prune is only correct for additive (FBF77) " *
+        "metrics (Euclidean, SqEuclidean, Cityblock, Chebyshev, Minkowski, " *
+        "and weighted variants). Got distance=$distance — for cosine, hamming, " *
+        "or other non-additive metrics use HNSWIndex or LSHIndex instead."))
 
     indices = collect(1:n)
     nodes = Vector{KDTreeNode{T}}()
