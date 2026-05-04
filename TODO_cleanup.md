@@ -436,6 +436,56 @@ binary-searched or stored as an `OffsetVector` keyed by node id) means
 plumbing through each `compute_curvature` method. Defer until someone
 profiles a real ORC sweep and confirms this is the bottleneck.
 
+### ORC pipeline runs Float64 regardless of input type
+
+`_process_edge!`, `compute_all_curvatures`, `filter_graph` all hardcode
+`Float64` throughout: `CurvatureResult{Float64}`,
+`build_neighborhood(..., Float64)`, `Dict{Int,NodeNeighborhood{Float64}}`,
+explicit `Float64(edge_dist)` casts. So Float32 input data is silently
+promoted to Float64 inside the curvature pipeline. Consequence: 2× memory
+on dist matrices and neighborhood dicts; type-stability surprise at the
+public API (CurvatureResult comes back as Float64 even if user passed
+Float32).
+
+Fix is mechanical but not tiny: ~8-12 callsites in `filtering.jl` parameterise
+on `T` from input data; `build_neighborhood` already takes a type arg and
+should take `T` instead of hardcoded `Float64`. Tests verifying Float32
+propagates end-to-end. ~50-80 LOC. Defer until a Float32 thesis dataset
+hits memory pressure — package functions correctly today, just inefficiently
+on Float32.
+
+### Multilevel/IVF builder doesn't propagate `rng` to inner transforms
+
+`KMeansTransform` and `RandomProjectionTransform` now accept `rng::AbstractRNG`
+kwargs (commits f6b5ca5 / a913130 / b3c4d3c). But the multilevel builder
+(`src/indices/multilevel/builder.jl`) and IVF builder don't thread an `rng`
+arg through to their inner `fit!(::KMeansTransform, X)` calls. So even
+though the transforms now have the kwarg, threaded multilevel/IVF builds
+still race on global RNG when constructing per-cluster k-means transforms.
+Fix is to plumb `rng` through `_build_transformed` (and similar paths) to
+each per-partition `fit!`. ~15-20 LOC; the public-API surface of the inner
+transforms is already correct.
+
+### Weighted Cityblock not on rolling-bound path
+
+`WeightedEuclidean` and `WeightedMinkowski` got proper FBF77 support in
+commit 47fc8be. `WeightedCityblock` (if it gets used) would over-prune on
+the legacy axis-projection path the same way the unweighted variants did.
+Cityblock isn't on the sum-reduce rolling-bound branch yet; adding it
+would mean adding `Cityblock` to the `_axis_contrib(metric, e, axis::Int)`
++ `_kdtree_use_rolling_bound(::Cityblock) = true` set, then mirroring for
+the weighted variant. Defer; package doesn't ship anything that uses
+weighted Cityblock today.
+
+### Zero-coverage paths in `geometry/`
+
+`ExpandingNeighborhood`, `SubspaceAngleCriterion`, `DistortionCriterion`
+evaluation paths have no direct unit tests. Same risk profile as the
+`ShareSimilarTangents` incident: a broken constructor would only show up
+when a thesis script invoked the path, not in `Pkg.test()`. Per-strategy
+smoke tests (construct + one expansion/shrinking step + `subspace_angle`
+identity / orthogonal / dimension-mismatch) close the gap with ~30-40 LOC.
+
 ## Strategic decisions outstanding
 
 ### Julia-ecosystem-native vs self-contained
