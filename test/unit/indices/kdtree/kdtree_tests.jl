@@ -211,6 +211,57 @@ end
     end
 end
 
+@testset "KDTreeIndex WeightedCityblock rolling bound" begin
+    # Per-axis contribution is `w[axis] * |excess|`, so weights < 1 must
+    # not over-prune. Brute force is the reference.
+    rng = MersenneTwister(909090)
+    dimension = 5
+    data = randn(rng, dimension, 60)
+    weights = [0.5, 1.0, 0.25, 2.0, 1.0]
+    metric = WeightedCityblock(weights)
+    kd = build_index(KDTreeIndex, data; distance = metric)
+    brute = build_index(BruteForceIndex, data; distance = metric)
+    for k in 1:5, _ in 1:15
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd, data, q, k)) ==
+              neighbor_ids(query(brute, data, q, k))
+    end
+end
+
+@testset "KDTreeIndex WeightedCityblock all-ones identity" begin
+    # All-ones weights must give identical neighbour IDs to plain
+    # Cityblock — the prune-units factor cancels.
+    rng = MersenneTwister(818181)
+    dimension = 4
+    data = randn(rng, dimension, 50)
+    ones_w = ones(dimension)
+    kd_w = build_index(KDTreeIndex, data; distance = WeightedCityblock(ones_w))
+    kd_u = build_index(KDTreeIndex, data; distance = Cityblock())
+    for _ in 1:10
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd_w, data, q, 5)) ==
+              neighbor_ids(query(kd_u, data, q, 5))
+    end
+end
+
+@testset "KDTreeIndex WeightedCityblock single-weight under-1 edge case" begin
+    # Targets the failure mode the legacy `axis_distance <= worst` prune
+    # would hit: one axis with weight 0.5 forces cell_dist contributions
+    # smaller than per-axis excess. Asserts the rolling bound stays sound.
+    rng = MersenneTwister(727272)
+    dimension = 3
+    data = randn(rng, dimension, 40)
+    weights = [0.5, 1.0, 1.0]
+    metric = WeightedCityblock(weights)
+    kd = build_index(KDTreeIndex, data; distance = metric)
+    brute = build_index(BruteForceIndex, data; distance = metric)
+    for k in 1:4, _ in 1:12
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd, data, q, k)) ==
+              neighbor_ids(query(brute, data, q, k))
+    end
+end
+
 @testset "KDTreeIndex Float32 + SqEuclidean" begin
     rng = MersenneTwister(7777)
     data = randn(rng, Float32, 4, 40)
