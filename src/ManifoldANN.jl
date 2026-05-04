@@ -17,6 +17,7 @@ include("indices/hnsw.jl")
 include("indices/nndescent.jl")
 include("indices/rptree_forest.jl")
 include("indices/pcatree.jl")
+include("indices/pcatree_forest.jl")
 
 # Transform module (must come before indices that depend on it)
 include("transforms/transforms.jl")
@@ -65,6 +66,7 @@ export AbstractANNIndex,
        RPTreeIndex,
        RPTreeForestIndex,
        PCATreeIndex,
+       PCATreeForestIndex,
        PCASplitter,
        pca_forest_splitter,
        AbstractSpectrumEstimator,
