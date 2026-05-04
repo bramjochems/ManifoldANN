@@ -1,22 +1,18 @@
 """
-Refactored ORC curvature solvers using external packages.
+ORC curvature solvers.
 
-Changes from original:
-1. Use Hungarian.jl directly (remove wrapper overhead, 9x speedup)
-2. Use OptimalTransport.jl sinkhorn2() (community-maintained, better than custom)
-3. Use OptimalTransport.jl emd2() with Tulip for network simplex (exact OT)
-4. Keep HiGHS LP solver as reference for debugging
-
-Performance improvements:
-- Hungarian: 9x faster (removed wrapper overhead)
-- Sinkhorn: Better convergence, community-maintained
-- Network Simplex: Specialized OT solver (faster than generic LP)
+Backends:
+- Hungarian.jl (assignment-only, equal-size uniform marginals)
+- OptimalTransport.jl sinkhorn2() (entropic OT, fast approximate)
+- Clp via MOI direct (general LP, exact, classical revised simplex)
+- HiGHS via JuMP (general LP, kept as a reference path)
 """
 
 using LinearAlgebra
 using Hungarian
 using OptimalTransport
-using Tulip
+using Clp
+using JuMP
 
 # ============================================================================
 # Optimal Transport Solver Interface
@@ -134,7 +130,7 @@ Entropy-regularized OT solver using OptimalTransport.jl's sinkhorn2().
 
     **However**: Sinkhorn gives approximate OT (entropy-regularized), not exact OT.
     Higher reg = faster convergence but less accurate.
-    For research accuracy, prefer NetworkSimplexSolver or LPReferenceSolver.
+    For research accuracy, prefer ClpSolver or LPReferenceSolver.
 
 # Arguments
 - `reg::Float64=0.01`: Entropy regularization parameter (data-dependent!)
@@ -155,11 +151,11 @@ solver = SinkhornSolver(reg=0.1 * data_scale, atol=1e-6)
 solver = SinkhornSolver(reg=0.05, atol=1e-6)
 
 # Option 3: Use exact solver instead (recommended)
-solver = NetworkSimplexSolver()  # Exact OT via OptimalTransport.jl + Tulip
+solver = ClpSolver()  # Exact OT via Clp simplex (recommended default)
 ```
 
 # See Also
-- NetworkSimplexSolver: Exact OT, robust fallback
+- ClpSolver: Exact OT, robust fallback
 - LPReferenceSolver: Exact OT via general LP solver
 - Diagnostic: `scripts/diagnose_sinkhorn.jl`
 """
@@ -177,7 +173,7 @@ struct SinkhornSolver <: AbstractOTSolver
         if reg < 0.02
             @warn "SinkhornSolver: reg=$reg may be too small relative to ORC cost matrix scale. " *
                   "Rule of thumb: reg ≈ 5-10% of mean(cost_matrix). " *
-                  "If you get NaN values, increase reg or use NetworkSimplexSolver(). " *
+                  "If you get NaN values, increase reg or use ClpSolver(). " *
                   "See scripts/diagnose_sinkhorn.jl for diagnostics."
         end
 
@@ -252,36 +248,53 @@ function _solve_sinkhorn_ot(
 end
 
 # ============================================================================
-# NetworkSimplexSolver - Exact OT using OptimalTransport.jl + Tulip
+# ClpSolver - Exact OT via Clp simplex (direct C-API, per-thread model pool)
 # ============================================================================
 
+# One Clp_Simplex* per thread, allocated lazily and reused via Clp_loadProblem
+# (which fully replaces the LP). Skips MOI/CachingOptimizer entirely — that
+# layer's per-call DoubleDict rebuild was the dominant residual alloc.
+const _CLP_POOL = Dict{Int, Ptr{Cvoid}}()
+const _CLP_POOL_LOCK = ReentrantLock()
+
+function _get_pooled_clp_model()
+    tid = Threads.threadid()
+    m = get(_CLP_POOL, tid, C_NULL)
+    m != C_NULL && return m
+    return lock(_CLP_POOL_LOCK) do
+        get!(_CLP_POOL, tid) do
+            mdl = Clp.Clp_newModel()
+            Clp.Clp_setLogLevel(mdl, Cint(0))
+            mdl
+        end
+    end
+end
+
 """
-    NetworkSimplexSolver <: AbstractOTSolver
+    ClpSolver <: AbstractOTSolver
 
-Exact optimal transport using network simplex algorithm via OptimalTransport.jl.
+Exact optimal transport via Clp's revised simplex method.
 
-Handles any distributions (uniform/non-uniform, equal/unequal sizes).
-Computes exact OT distance (no approximation).
+Calls Clp through its C API directly (no MOI/JuMP layer in the hot path) and
+keeps one `Clp_Simplex*` per thread, reused across edges via `Clp_loadProblem`.
 
-Complexity: O(k² log k) expected, O(k³) worst case
+Recommended default for ORC variants where Hungarian doesn't apply (e.g.
+ORCManL with non-equal-size neighborhoods).
 
-Uses Tulip.Optimizer as the underlying LP solver. Faster than generic LP
-because it's specialized for network flow problems (OT is min-cost flow).
-
-Example:
+# Example
 ```julia
-solver = NetworkSimplexSolver()
+solver = ClpSolver()
 curvature = compute_curvature(solver, edge_view, dist_fn)
 ```
 """
-struct NetworkSimplexSolver <: AbstractOTSolver end
+struct ClpSolver <: AbstractOTSolver end
 
 function compute_curvature(
-    ::NetworkSimplexSolver,
+    ::ClpSolver,
     edge_view::EdgeNeighborhoodView{T},
     distance_fn::Function
 ) where {T<:AbstractFloat}
-    # Greedily transport shared mass at zero cost
+    # Greedy shared-mass transport at zero cost
     shared_cost = zero(T)
     x_residual = copy(edge_view.x_probs)
     y_residual = copy(edge_view.y_probs)
@@ -294,48 +307,76 @@ function compute_curvature(
         y_residual[z] ≈ 0 && delete!(y_residual, z)
     end
 
-    # Solve exact OT on residual
     residual_cost = if isempty(x_residual) || isempty(y_residual)
         zero(T)
     else
-        _solve_network_simplex(x_residual, y_residual, distance_fn, T)
+        _solve_clp_ot(x_residual, y_residual, distance_fn, T)
     end
 
     wasserstein = shared_cost + residual_cost
     curvature = one(T) - wasserstein / edge_view.edge_distance
-    CurvatureResult{T}(edge_view.x_id, edge_view.y_id, curvature, wasserstein, edge_view.edge_distance, :network_simplex)
+    CurvatureResult{T}(edge_view.x_id, edge_view.y_id, curvature, wasserstein,
+                       edge_view.edge_distance, :clp)
 end
 
-function _solve_network_simplex(
+# OT LP in CSC form: γ[i,j] (i∈1:n_x, j∈1:n_y) flattened column-major as
+# col = (j-1)*n_x + i. Each variable appears in exactly two rows (row i for
+# the source-marginal eq, row n_x+j for the target-marginal eq), so every
+# column has 2 nonzeros — fixed-pattern CSC, cheap to build.
+function _solve_clp_ot(
     x_probs::Dict{Int,T},
     y_probs::Dict{Int,T},
     distance_fn::Function,
     ::Type{T}
 ) where {T}
-    """
-    Wrapper around OptimalTransport.jl emd2() with Tulip optimizer.
-    """
     x_nodes = collect(keys(x_probs))
     y_nodes = collect(keys(y_probs))
     n_x, n_y = length(x_nodes), length(y_nodes)
-
     (n_x == 0 || n_y == 0) && return zero(T)
 
-    # Build cost matrix
-    cost = Matrix{Float64}(undef, n_x, n_y)
-    for i in 1:n_x, j in 1:n_y
-        cost[i, j] = Float64(distance_fn(x_nodes[i], y_nodes[j]))
+    n_vars = n_x * n_y
+    n_rows = n_x + n_y
+    nnz    = 2 * n_vars
+
+    col_start = Vector{Clp.CoinBigIndex}(undef, n_vars + 1)
+    row_idx   = Vector{Cint}(undef, nnz)
+    values    = Vector{Cdouble}(undef, nnz)
+    obj       = Vector{Cdouble}(undef, n_vars)
+    col_lb    = zeros(Cdouble, n_vars)
+    col_ub    = fill(Cdouble(Inf), n_vars)
+    row_lb    = Vector{Cdouble}(undef, n_rows)
+    row_ub    = Vector{Cdouble}(undef, n_rows)
+
+    @inbounds for j in 1:n_y, i in 1:n_x
+        col = (j - 1) * n_x + i
+        col_start[col] = 2 * (col - 1)
+        row_idx[2*col - 1] = Cint(i - 1)         # source-marginal row i
+        row_idx[2*col    ] = Cint(n_x + j - 1)   # target-marginal row j
+        values[2*col - 1] = 1.0
+        values[2*col    ] = 1.0
+        obj[col] = Float64(distance_fn(x_nodes[i], y_nodes[j]))
+    end
+    col_start[n_vars + 1] = nnz
+
+    @inbounds for i in 1:n_x
+        m = Float64(x_probs[x_nodes[i]])
+        row_lb[i] = m; row_ub[i] = m
+    end
+    @inbounds for j in 1:n_y
+        m = Float64(y_probs[y_nodes[j]])
+        row_lb[n_x + j] = m; row_ub[n_x + j] = m
     end
 
-    # Marginals
-    μ = [Float64(x_probs[x_nodes[i]]) for i in 1:n_x]
-    ν = [Float64(y_probs[y_nodes[j]]) for j in 1:n_y]
-
-    # Call OptimalTransport.jl with Tulip optimizer
-    # Note: Tulip.Optimizer() creates a new instance (not the type!)
-    total_cost = emd2(μ, ν, cost, Tulip.Optimizer())
-
-    return T(total_cost)
+    model = _get_pooled_clp_model()
+    Clp.Clp_loadProblem(model, Cint(n_vars), Cint(n_rows),
+                        col_start, row_idx, values,
+                        col_lb, col_ub, obj, row_lb, row_ub)
+    Clp.Clp_setObjSense(model, 1.0)  # minimize
+    Clp.Clp_initialSolve(model)
+    if Clp.Clp_isProvenOptimal(model) == 0
+        return typemax(T)
+    end
+    return T(Clp.Clp_getObjValue(model))
 end
 
 # ============================================================================
@@ -348,7 +389,7 @@ end
 Generic LP solver using HiGHS for exact optimal transport.
 
 This is a **reference implementation** for debugging and verification.
-NOT recommended for production use - prefer NetworkSimplexSolver or HungarianSolver.
+NOT recommended for production use - prefer ClpSolver or HungarianSolver.
 
 Why keep this?
 - Reference implementation for algorithmic clarity
@@ -557,7 +598,7 @@ Convenience function that returns the appropriate solver based on method.
 Maps to solvers:
 - `:hungarian` → HungarianSolver()
 - `:sinkhorn` → SinkhornSolver(reg=sinkhorn_reg)
-- `:network_simplex` → NetworkSimplexSolver()
+- `:clp` → ClpSolver()
 - `:lp` → LPReferenceSolver()
 - `:greedy` → GreedySolver()
 
@@ -572,13 +613,13 @@ function GenericOTSolver(; method::Symbol=:sinkhorn, sinkhorn_reg::Float64=0.01)
         return HungarianSolver()
     elseif method == :sinkhorn
         return SinkhornSolver(reg=sinkhorn_reg)
-    elseif method == :network_simplex
-        return NetworkSimplexSolver()
+    elseif method == :clp
+        return ClpSolver()
     elseif method == :lp
         return LPReferenceSolver()
     elseif method == :greedy
         return GreedySolver()
     else
-        throw(ArgumentError("method must be :hungarian, :sinkhorn, :network_simplex, :lp, or :greedy"))
+        throw(ArgumentError("method must be :hungarian, :sinkhorn, :clp, :lp, or :greedy"))
     end
 end

@@ -15,7 +15,7 @@ for improving geodesic distance estimates on kNN graphs.
 Available OT solvers for curvature computation:
 1. **HungarianSolver**: O(k³) exact OT for uniform distributions (Hungarian.jl)
 2. **SinkhornSolver**: O(k² × iter) approximate OT for any distribution (OptimalTransport.jl)
-3. **NetworkSimplexSolver**: O(k² log k) exact OT for any distribution (OptimalTransport.jl)
+3. **ClpSolver**: Exact OT via Clp simplex (general LP, low per-call alloc)
 4. **LPReferenceSolver**: O(k³) reference implementation (HiGHS)
 5. **GreedySolver**: O(k³) fast approximate OT (could be O(k² log k) with a heap; not pursued — k small in practice)
 6. **GenericOTSolver**: Convenience wrapper (maps to specific solvers)

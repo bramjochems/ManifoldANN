@@ -240,7 +240,7 @@ export AbstractANNIndex,
        # Solvers
        HungarianSolver,
        SinkhornSolver,
-       NetworkSimplexSolver,
+       ClpSolver,
        LPReferenceSolver,
        GreedySolver,
        GenericOTSolver,

@@ -35,12 +35,12 @@ using Random
             graph_undirected, data;
             variant=ORCManL(),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver()
+            fallback_solver=ClpSolver()
         )
         results_std = compute_all_curvatures(graph_undirected, data;
             variant=StandardORC(),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver()
+            fallback_solver=ClpSolver()
         )
 
         @test !isempty(results_orcml)
@@ -66,7 +66,7 @@ using Random
             graph_undirected, data;
             variant=ORCManL(profile=OrcmlExact()),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver()
+            fallback_solver=ClpSolver()
         )
         @test !isempty(results)
         @test all(isfinite(result.curvature) for result in values(results))

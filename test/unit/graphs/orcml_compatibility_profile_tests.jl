@@ -52,14 +52,14 @@ using Statistics
             graph, data;
             variant=ORCManL(),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver(),
+            fallback_solver=ClpSolver(),
             use_threading=false,
         )
         c_default = compute_all_curvatures(
             graph, data;
             variant=ORCManL(profile=ManifoldANNDefault()),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver(),
+            fallback_solver=ClpSolver(),
             use_threading=false,
         )
         @test length(c_implicit) == length(c_default)
@@ -76,7 +76,7 @@ using Statistics
             graph, data;
             variant=ORCManL(profile=OrcmlExact()),
             solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver(),
+            fallback_solver=ClpSolver(),
             use_threading=false,
         )
 
