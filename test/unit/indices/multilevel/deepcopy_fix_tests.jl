@@ -20,7 +20,12 @@ using LinearAlgebra
     )
 
     println("Building two-level hierarchy...")
-    index = build_index(MultiLevelIndex, data, config)
+    # Seed the build explicitly: without this, the inner KMeans rng is
+    # Random.default_rng() and bucket sizes depend on prior session state.
+    # On bad starting state, an outer KMeans bucket can come back with
+    # < 3 points, which then trips the inner KMeans(k=3) "Cannot fit 3
+    # clusters with only 2 points" assertion.
+    index = build_index(MultiLevelIndex, data, config; rng = MersenneTwister(123))
 
     @test index isa MultiLevelIndex
     @test length(index.root.indices) == 5
