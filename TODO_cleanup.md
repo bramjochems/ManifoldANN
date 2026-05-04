@@ -148,14 +148,12 @@ safety gate landed (f4d1acd / 1a9b0b4) excluding non-additive metrics
 from the build API. The query path now uses the **Friedman-Bentley-
 Finkel 1977 incremental rolling-bound prune** for Euclidean,
 SqEuclidean, Cityblock, and Minkowski — unit-consistent compare,
-SqEuclidean is back on the safe list. `WeightedEuclidean` and
-`WeightedMinkowski` are now on the rolling-bound path as well (per-axis
-contribution `w[axis] * excess^p`); the legacy `axis_distance <= worst`
-prune over-pruned them when weights < 1 — fixed. Chebyshev and
-`WeightedCityblock` remain on the legacy prune (Chebyshev is correct
-there; `WeightedCityblock` carries the same latent over-prune as the
-other weighted variants but is not exercised by the package today —
-rolling-bound extension is mechanical when needed).
+SqEuclidean is back on the safe list. `WeightedEuclidean`,
+`WeightedMinkowski`, and `WeightedCityblock` are also on the rolling-bound
+path (per-axis contribution `w[axis] * excess^p`); the legacy
+`axis_distance <= worst` prune over-pruned them when weights < 1 — fixed.
+Chebyshev remains on the legacy prune (correct there: max-reduce, not
+sum-reduce, so the rolling-bound code path doesn't apply).
 
 **Lower-priority follow-ups:**
 
@@ -453,38 +451,6 @@ should take `T` instead of hardcoded `Float64`. Tests verifying Float32
 propagates end-to-end. ~50-80 LOC. Defer until a Float32 thesis dataset
 hits memory pressure — package functions correctly today, just inefficiently
 on Float32.
-
-### Multilevel/IVF builder doesn't propagate `rng` to inner transforms
-
-`KMeansTransform` and `RandomProjectionTransform` now accept `rng::AbstractRNG`
-kwargs (commits f6b5ca5 / a913130 / b3c4d3c). But the multilevel builder
-(`src/indices/multilevel/builder.jl`) and IVF builder don't thread an `rng`
-arg through to their inner `fit!(::KMeansTransform, X)` calls. So even
-though the transforms now have the kwarg, threaded multilevel/IVF builds
-still race on global RNG when constructing per-cluster k-means transforms.
-Fix is to plumb `rng` through `_build_transformed` (and similar paths) to
-each per-partition `fit!`. ~15-20 LOC; the public-API surface of the inner
-transforms is already correct.
-
-### Weighted Cityblock not on rolling-bound path
-
-`WeightedEuclidean` and `WeightedMinkowski` got proper FBF77 support in
-commit 47fc8be. `WeightedCityblock` (if it gets used) would over-prune on
-the legacy axis-projection path the same way the unweighted variants did.
-Cityblock isn't on the sum-reduce rolling-bound branch yet; adding it
-would mean adding `Cityblock` to the `_axis_contrib(metric, e, axis::Int)`
-+ `_kdtree_use_rolling_bound(::Cityblock) = true` set, then mirroring for
-the weighted variant. Defer; package doesn't ship anything that uses
-weighted Cityblock today.
-
-### Zero-coverage paths in `geometry/`
-
-`ExpandingNeighborhood`, `SubspaceAngleCriterion`, `DistortionCriterion`
-evaluation paths have no direct unit tests. Same risk profile as the
-`ShareSimilarTangents` incident: a broken constructor would only show up
-when a thesis script invoked the path, not in `Pkg.test()`. Per-strategy
-smoke tests (construct + one expansion/shrinking step + `subspace_angle`
-identity / orthogonal / dimension-mismatch) close the gap with ~30-40 LOC.
 
 ## Strategic decisions outstanding
 
