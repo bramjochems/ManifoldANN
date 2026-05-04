@@ -1,27 +1,7 @@
-# RP-tree primitives (RPTree, RPTreeNode, build_rptree, leaf_members) live in
-# src/utils/rptree.jl and are loaded earlier in src/ManifoldANN.jl. This file
-# only carries the NN-Descent-specific forest builder and seeding helper.
-
-"""
-    build_rptree_forest(data, n_trees, leaf_cap; rng) -> Vector{RPTree}
-
-Build `n_trees` independent random-projection trees over `data`. Each tree
-samples its own splits, providing the decorrelation that NN-Descent
-initialization needs.
-"""
-function build_rptree_forest(
-    data::AbstractMatrix{T},
-    n_trees::Int,
-    leaf_cap::Int;
-    rng::AbstractRNG = Random.default_rng(),
-) where {T<:AbstractFloat}
-    n_trees > 0 || throw(ArgumentError("n_trees must be positive"))
-    forest = Vector{RPTree{T}}(undef, n_trees)
-    for t in 1:n_trees
-        forest[t] = build_rptree(data, leaf_cap; rng = rng)
-    end
-    return forest
-end
+# RP-tree primitives (RPTree, RPTreeNode, build_rptree, leaf_members,
+# build_rptree_forest) live in src/utils/rptree.jl and are loaded earlier in
+# src/ManifoldANN.jl. This file only carries the NN-Descent-specific seeding
+# helper.
 
 """
     _initialize_rptree_neighbors!(graph, data, k, distance, rng, n_trees, leaf_cap)
