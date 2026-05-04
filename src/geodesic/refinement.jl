@@ -568,7 +568,12 @@ function estimate_local_curvature(geom::ManifoldANN.EstimatedGeometry)
 end
 
 # Fallback for other geometry types
-# Returns 0.0 (no correction) for geometries without curvature estimation
+# Returns 0.0 (no correction) for geometries without curvature estimation.
+# Note: returns Float64 unconditionally regardless of the working precision
+# of the surrounding pipeline. Downstream consumers (e.g. the Taylor-correction
+# in `CurvatureCorrectedDistance`) promote to Float64 in this case. To
+# preserve Float32 throughout, define a `estimate_local_curvature(::YourGeom{T})`
+# method that returns `zero(T)` for unsupported geometries.
 function estimate_local_curvature(geom::AbstractLocalGeometry)
     # Warn once per session about unsupported geometry type
     @warn """

@@ -229,8 +229,10 @@ function _collect_edges_to_process(graph::KNNGraph)
                 continue
             end
 
-            # Check if edge is bidirectional (both x→y and y→x exist)
-            is_bidirectional = y in graph[x] && x in graph[y]
+            # `y in graph[x]` is tautological inside `for y in graph[x]`,
+            # so the bidirectionality test reduces to checking the reverse
+            # edge. Skipping the redundant scan saves an O(k) lookup per edge.
+            is_bidirectional = x in graph[y]
 
             if is_bidirectional
                 # For bidirectional edges, only add canonical form (x < y)
@@ -414,7 +416,9 @@ function filter_graph(
             result = compute_curvature(active_solver, edge_view, dist_fn)
             edge_curvatures[(x, y)] = result
 
-            if y in graph[x] && x in graph[y]
+            # `y in graph[x]` is tautological in this loop; only check
+            # the reverse direction.
+            if x in graph[y]
                 edge_curvatures[(y, x)] = CurvatureResult{Float64}(
                     y, x, result.curvature, result.wasserstein_distance,
                     result.edge_distance, result.solver_type
