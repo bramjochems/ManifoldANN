@@ -332,9 +332,9 @@ For bidirectional edges where only the canonical form (x < y) was computed,
 this adds the reverse direction (y, x) with the same curvature values.
 """
 function _mirror_bidirectional_results!(
-    results::Dict{Tuple{Int,Int},CurvatureResult{Float64}},
+    results::Dict{Tuple{Int,Int},CurvatureResult{T}},
     graph::KNNGraph
-)
+) where {T<:AbstractFloat}
     n_nodes = length(graph)
     reverse_edges = Tuple{Int,Int}[]
 
@@ -350,7 +350,7 @@ function _mirror_bidirectional_results!(
     # Mirror the results
     for (x, y) in reverse_edges
         orig = results[(y, x)]
-        results[(x, y)] = CurvatureResult{Float64}(
+        results[(x, y)] = CurvatureResult{T}(
             x, y, orig.curvature, orig.wasserstein_distance,
             orig.edge_distance, orig.solver_type
         )
@@ -368,7 +368,7 @@ Process a single edge and store the curvature result.
 This helper function is used by compute_all_curvatures for both threaded and sequential processing.
 """
 function _process_edge!(
-    results::Dict{Tuple{Int,Int},CurvatureResult{Float64}},
+    results::Dict{Tuple{Int,Int},CurvatureResult{T}},
     results_lock::ReentrantLock,
     edge::Tuple{Int,Int},
     graph::KNNGraph,
@@ -388,15 +388,17 @@ function _process_edge!(
     # (a positional-argument quirk in the upstream Python
     # `_get_single_node_neighbors_distributions`). The source side still
     # excludes the target as usual.
-    neighborhood_x = build_neighborhood(x, graph[x], y, exclude_edge_endpoints, Float64)
+    neighborhood_x = build_neighborhood(x, graph[x], y, exclude_edge_endpoints, T)
     exclude_y_side = exclude_edge_endpoints && !profile.asymmetric_target_exclusion
-    neighborhood_y = build_neighborhood(y, graph[y], x, exclude_y_side, Float64)
+    neighborhood_y = build_neighborhood(y, graph[y], x, exclude_y_side, T)
 
     # Compute edge distance using denominator metric
     edge_dist = denom_fn(x, y)
 
-    # Create edge view
-    edge_view = create_edge_view(neighborhood_x, neighborhood_y, Float64(edge_dist))
+    # Create edge view at input precision T. denom_fn may internally use
+    # Float64 (shortest-path matrices, effective_epsilon) — the cast here
+    # is the boundary back to the user-facing eltype.
+    edge_view = create_edge_view(neighborhood_x, neighborhood_y, T(edge_dist))
 
     # Pre-compute distance matrix for this edge's neighborhood using cost metric
     # This avoids redundant distance calls during OT solving
@@ -603,7 +605,8 @@ Compute Ollivier-Ricci curvatures for all edges in a k-NN graph.
 - `distance_fn::Union{Nothing,Function}=nothing`: (Deprecated) Custom distance function
 
 # Returns
-- `Dict{Tuple{Int,Int}, CurvatureResult{Float64}}`: Curvature results for all edges
+- `Dict{Tuple{Int,Int}, CurvatureResult{T}}`: Curvature results for all edges,
+  where `T = eltype(data)` (Float64 input → Float64 output, Float32 → Float32).
 
 # Configuration Examples
 
@@ -663,8 +666,10 @@ function compute_all_curvatures(
     edges_to_process = _collect_edges_to_process(graph)
     verbose && println("Processing $(length(edges_to_process)) edges (threading: $use_threading)...")
 
-    # Process all edges (threaded or sequential)
-    results = Dict{Tuple{Int,Int},CurvatureResult{Float64}}()
+    # Process all edges (threaded or sequential). Container is parameterised
+    # on the input data eltype T so Float32 input → CurvatureResult{Float32}
+    # without silent promotion through the pipeline.
+    results = Dict{Tuple{Int,Int},CurvatureResult{T}}()
     results_lock = ReentrantLock()
 
     if use_threading

@@ -414,25 +414,6 @@ broader audit is still open: other ORC / refinement code (curvature
 solvers, `EdgeNeighborhoodView` construction) likely has similar
 coverage gaps — audit broadly, not just the one site that bit us.
 
-### ORC pipeline runs Float64 regardless of input type
-
-`_process_edge!`, `compute_all_curvatures`, `filter_graph` all hardcode
-`Float64` throughout: `CurvatureResult{Float64}`,
-`build_neighborhood(..., Float64)`, `Dict{Int,NodeNeighborhood{Float64}}`,
-explicit `Float64(edge_dist)` casts. So Float32 input data is silently
-promoted to Float64 inside the curvature pipeline. Consequence: 2× memory
-on dist matrices and neighborhood dicts; type-stability surprise at the
-public API (CurvatureResult comes back as Float64 even if user passed
-Float32).
-
-Fix is mechanical but not tiny: ~8-12 callsites in `filtering.jl` parameterise
-on `T` from input data; `build_neighborhood` already takes a type arg and
-should take `T` instead of hardcoded `Float64`. Tests verifying Float32
-propagates end-to-end. ~50-80 LOC. Defer until a Float32 thesis dataset
-hits memory pressure — package functions correctly today, just inefficiently
-on Float32. Not validated by the swiss-roll profile (data was Float64);
-worth a Float32 rerun before claiming the perf cost is real.
-
 ### ORC OT-solver follow-ups
 
 - **Note that `HungarianSolver` on ORCManL silently routes ~82% of
