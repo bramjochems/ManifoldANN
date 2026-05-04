@@ -26,14 +26,14 @@ using Printf
 using Dates
 using Pkg
 
-include(joinpath(@__DIR__, "orc_helpers.jl"))
-include(joinpath(@__DIR__, "..", "docs", "examples", "geodesic", "swiss_roll_utils.jl"))
+include(joinpath(@__DIR__, "..", "orc", "orc_helpers.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "docs", "examples", "geodesic", "swiss_roll_utils.jl"))
 
 # ==============================================================================
 # Configuration
 # ==============================================================================
 
-const RESULTS_DIR = joinpath(@__DIR__, "..", "benchmark_results", "geodesic_e2e")
+const RESULTS_DIR = joinpath(@__DIR__, "..", "..", "..", "benchmark_results", "geodesic_e2e")
 
 # Swiss roll parameters
 const T_MIN   = 1.5π

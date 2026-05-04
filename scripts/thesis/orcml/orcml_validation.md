@@ -27,7 +27,7 @@ installed.
 
    ```bash
    cd benchmarking
-   .venv/bin/python ../scripts/generate_orcml_validation_data.py \
+   .venv/bin/python ../scripts/thesis/orcml/generate_orcml_validation_data.py \
        --n-points 500 --noise 0.05 --k 15 --seed 42
    ```
 
@@ -35,7 +35,7 @@ installed.
    write the matched-pair CSV (`benchmark_results/manl_validation_pairs.csv`):
 
    ```bash
-   julia --project=. scripts/test_orcml_exact_match.jl
+   julia --project=. scripts/thesis/orcml/test_orcml_exact_match.jl
    ```
 
 3. Render the three diagnostic plots (scatter, Bland-Altman,
@@ -43,7 +43,7 @@ installed.
 
    ```bash
    cd benchmarking
-   .venv/bin/python ../scripts/plot_orcml_validation.py
+   .venv/bin/python ../scripts/thesis/orcml/plot_orcml_validation.py
    ```
 
 The scatter and Bland-Altman PDFs are the ones used in the thesis
@@ -129,11 +129,11 @@ needed.
 
 Committed to the repository:
 
-- `scripts/generate_orcml_validation_data.py` — generates the swiss
+- `scripts/thesis/orcml/generate_orcml_validation_data.py` — generates the swiss
   roll and reference curvatures via the orcml package.
-- `scripts/test_orcml_exact_match.jl` — recomputes curvatures with
+- `scripts/thesis/orcml/test_orcml_exact_match.jl` — recomputes curvatures with
   `ManifoldANN.jl` and writes `manl_validation_pairs.csv`.
-- `scripts/plot_orcml_validation.py` — produces the scatter,
+- `scripts/thesis/orcml/plot_orcml_validation.py` — produces the scatter,
   Bland-Altman, and residual-histogram plots.
 
 Generated (under `benchmark_results/`, not committed):

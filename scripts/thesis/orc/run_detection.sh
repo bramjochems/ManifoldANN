@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Run pruning-only experiment (SKIP_DETECTION=1) for both manifolds.
-# Still computes ORC (needed for rank-based pruning) but skips F1/edge output.
+# Run detection-only experiment (SKIP_PRUNING=1) for both manifolds.
 #
 # Usage:
-#   ./scripts/run_pruning.sh
-#   SMOKE=1 ./scripts/run_pruning.sh
+#   ./scripts/thesis/orc/run_detection.sh
+#   SMOKE=1 ./scripts/thesis/orc/run_detection.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
-export SKIP_DETECTION=1
+export SKIP_PRUNING=1
 
 echo "========================================================"
-echo "ORC Pruning Only: Swiss Roll + Torus"
+echo "ORC Detection Only: Swiss Roll + Torus"
 echo "========================================================"
 echo ""
 

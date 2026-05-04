@@ -1,78 +1,104 @@
 # Scripts
 
-## ORC Experiments
+Three buckets:
 
-Evaluate Ollivier-Ricci curvature as a shortcut detector on synthetic manifolds.
+- `thesis/` — produces results and figures for the thesis. Reads from
+  `<package>/docs/examples/...` and writes to
+  `<parent>/mai/thesis/docs/thesis/{results,figures}` (the thesis docs tree
+  outside this repo). Long-term home is the sibling thesis-code repo per
+  `CLAUDE.md`'s separation principle.
+- `perf/` — focused fair-compare scripts that produce thesis-grade head-to-head
+  numbers (recall-vs-qps Pareto, single-config head-to-head). Holding pen until
+  `benchmarking/` migrates out; then these go with it.
+- `archive/` — superseded one-off benchmarks, profile drivers, and diagnostic
+  scripts. Kept in case the underlying question comes back.
 
-### Running
+Correctness assertions (regression / unit) live under `test/`, not here.
 
-```bash
-# Full runs (each creates a timestamped output directory)
-./scripts/run_orc_swiss_roll.sh
-./scripts/run_orc_torus.sh
-./scripts/run_orc_sampling_diagnostic.sh
+## thesis/
 
-# Smoke tests (single small config, fast)
-SMOKE=1 ./scripts/run_orc_swiss_roll.sh
-
-# Run all experiments sequentially
-./scripts/run_orc_all.sh
-```
-
-### Resuming interrupted runs
-
-Results are written incrementally after each ORC computation. If a run is
-interrupted, set `RESUME_DIR` to the output directory to skip already-computed
-configs:
+### orc/ — Ollivier-Ricci curvature on synthetic manifolds
 
 ```bash
-RESUME_DIR=.../orc_results/swiss_roll_20260221_143012 ./scripts/run_orc_swiss_roll.sh
+# Full pipeline (swiss roll + torus + analysis)
+./scripts/thesis/orc/run_all.sh
+
+# Smoke test
+SMOKE=1 ./scripts/thesis/orc/run_all.sh
+
+# Phase-specific
+./scripts/thesis/orc/run_detection.sh        # SKIP_PRUNING=1
+./scripts/thesis/orc/run_pruning.sh          # SKIP_DETECTION=1
+
+# Sampling diagnostic
+./scripts/thesis/orc/run_orc_sampling_diagnostic.sh
 ```
 
-### Environment variables
-
-| Variable | Scripts | Description |
-|---|---|---|
-| `SMOKE=1` | all | Minimal single-config run |
-| `RESUME_DIR=path` | all | Resume into a previous run's directory |
-| `N_OVERRIDE=500` | swiss roll, torus | Single n value |
-| `K_OVERRIDE=10` | swiss roll, torus | Single k value |
-| `VARIANT_OVERRIDE=R2r1` | torus | Single torus geometry variant |
-| `SKIP_EDGES=1` | swiss roll, torus | Skip per-edge CSV (saves time) |
-| `SKIP_GEODERROR=1` | swiss roll, torus | Skip geodesic error analysis |
-
-### Output structure
-
-Each run creates a timestamped directory under `docs/thesis/results/orc_results/`:
-
-```
-swiss_roll_20260221_143012/
-  raw.csv          # one row per (n, k, noise, variant, tau)
-  pivot_f1.csv     # F1 at kappa=0 pivoted (rows=n, cols=k)
-  pivot_best.csv   # best-threshold F1 pivoted
-  edges.csv        # per-edge data for AUROC (optional)
-  geoderror.csv    # geodesic error at pruning thresholds (optional)
-  config.toml      # git hash + parameters
-```
-
-### Script files
+Resume an interrupted run by setting `RESUME_DIR=<path-to-prior-output>`.
 
 | File | Description |
 |---|---|
-| `experiment_orc_swiss_roll.jl` | Swiss roll experiment |
-| `experiment_orc_torus.jl` | Torus experiment (3 geometry variants) |
+| `experiment_orc.jl` | Unified swiss-roll + torus experiment (driven by `MANIFOLD={swiss,torus}`) |
 | `experiment_orc_sampling_diagnostic.jl` | Non-uniform sampling diagnostic |
-| `orc_helpers.jl` | Shared evaluation logic, CSV I/O helpers |
-| `plot_sampling_diagnostic.py` | Visualisation for sampling diagnostic |
-| `run_orc_*.sh` | Shell wrappers |
+| `orc_helpers.jl` | Shared evaluation logic + CSV I/O |
+| `analyze_orc.py` | Aggregate detection/pruning CSVs + emit thesis figures |
+| `analyze_orc_benchmarks.jl` | Solver-comparison analysis |
+| `plot_sampling_diagnostic.py` | Visualisation for the sampling diagnostic |
+| `run_*.sh` | Shell wrappers |
 
-## Benchmarks
+Environment overrides: `SMOKE`, `RESUME_DIR`, `N_OVERRIDE`, `K_OVERRIDE`,
+`VARIANT_OVERRIDE`, `SKIP_EDGES`, `SKIP_GEODERROR`, `SKIP_PRUNING`,
+`SKIP_DETECTION`, `JULIA_NUM_THREADS`.
 
-- `benchmark_nndescent.jl` - Performance testing for NN-Descent
-- `benchmark_reference.jl` - Reference comparison with NearestNeighborDescent.jl
+### composite/ — Composite shortcut labelling study
 
-```bash
-julia --project=. scripts/benchmark_nndescent.jl
-```
+Validates the composite (chord-ratio AND graph-effect) shortcut label against
+chord-only on three pre-existing manifold runs.
 
-For the full benchmarking suite, see `benchmarking/`.
+| File | Description |
+|---|---|
+| `composite_shortcut_validation.py` | Validation against three manifold cells |
+| `composite_shortcut_full_eval.py` | Full eval (~8 min) |
+| `composite_shortcut_extended_eval.py` | Extended pruning sweep |
+| `composite_shortcut_dump_points.jl` | Reproduce point clouds (RNG-pinned) |
+| `_composite_full_eval_gen_points.jl` | Helper invoked by full_eval |
+| `all_pairs_mre_swiss.py` | All-pairs MRE on swiss roll |
+| `plot_composite_auroc.py` / `plot_composite_coverage.py` | Figures |
+
+### geodesic/ — Geodesic estimation end-to-end
+
+| File | Description |
+|---|---|
+| `experiment_geodesic_e2e.jl` | E2E geodesic estimation experiment |
+| `plot_geodesic_e2e.py` | MRE-vs-n and decomposition figures |
+
+### orcml/ — Validation against the reference Python `orcml`
+
+| File | Description |
+|---|---|
+| `orcml_validation.md` | Walk-through |
+| `generate_orcml_validation_data.py` | Generate swiss-roll inputs |
+| `plot_orcml_validation.py` | Scatter / Bland-Altman figures |
+| `extract_edge_curvatures.py` | Pull per-edge curvatures from results |
+| `test_orcml_exact_match.jl` | Validates Julia ORC matches Python orcml on a fixed input |
+| `test_orcml_exact_match_policy.jl` | Same, with the `OrcmlExact` compatibility profile |
+| `orcml_torus_flag.py` | Torus-flag exploratory script |
+
+## perf/
+
+Focused fair-compare scripts. Apples-to-apples library comparisons happen on
+the recall-vs-qps Pareto curve, not at fixed parameter values; see
+`nndescent_jl_pareto.jl` for the canonical pattern.
+
+| File | Description |
+|---|---|
+| `hnsw_fair_compare.py` | HNSW: ManifoldANN vs hnswlib vs HNSW.jl |
+| `kdtree_fair_compare.jl` | KDTree: ManifoldANN vs NearestNeighbors.jl |
+| `nndescent_jl_pareto.jl` | NN-Descent: recall-vs-qps Pareto sweep |
+| `nndescent_jl_compare.jl` | Single-point head-to-head |
+
+## archive/
+
+Superseded one-shots: per-edge microbenches, build/query profile drivers,
+diagnostics from past refactors, the early ORC swiss/torus scripts that the
+unified `experiment_orc.jl` replaced.

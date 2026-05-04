@@ -2,9 +2,9 @@
 # Run the ORC sampling diagnostic experiment and generate visualisations.
 #
 # Usage:
-#   ./scripts/run_orc_sampling_diagnostic.sh        # full run then plot
-#   SMOKE=1 ./scripts/run_orc_sampling_diagnostic.sh   # quick smoke test
-#   SKIP_PLOT=1 ./scripts/run_orc_sampling_diagnostic.sh   # Julia only
+#   ./scripts/thesis/orc/run_orc_sampling_diagnostic.sh        # full run then plot
+#   SMOKE=1 ./scripts/thesis/orc/run_orc_sampling_diagnostic.sh   # quick smoke test
+#   SKIP_PLOT=1 ./scripts/thesis/orc/run_orc_sampling_diagnostic.sh   # Julia only
 #
 # Results land in:
 #   docs/thesis/results/orc_results/sampling_diag_<timestamp>/
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 JULIA_SCRIPT="$SCRIPT_DIR/experiment_orc_sampling_diagnostic.jl"
 PLOT_SCRIPT="$SCRIPT_DIR/plot_sampling_diagnostic.py"
 

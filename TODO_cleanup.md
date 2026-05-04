@@ -26,8 +26,19 @@ something.
   `VectorizationBase.jl` if hand-tuning is needed.
 
 - **Do not measure perf in the test suite.** `Pkg.test()` is the
-  correctness gate; perf goes in `scripts/*_bench.jl`. Conflating them
-  makes CI flaky and obscures regressions.
+  correctness gate (`test/unit/` + `test/regression/`, both must-pass);
+  perf is comparative measurement, lives in `scripts/perf/`, and is run
+  by hand around changes that might move it. Conflating them gives you a
+  CI gate that's both architecture-dependent (perf bands fail on
+  unrelated machines) and recall-blind (regression gets buried under
+  flaky timing). Keep them separate.
+
+- **`test/unit/` vs `test/regression/` split.** Both run on every
+  `Pkg.test()`. `unit/` = single-function-or-cluster, milliseconds; runs
+  on every save. `regression/` = end-to-end pipeline outputs (snapshot
+  hashes, recall floors, eltype propagation across stages). Both
+  correctness, both must-pass — the only real difference is granularity.
+  Put new tests in whichever fits; don't gate on opt-in flags.
 
 - **Report testset count, not raw `@test` count.** Per-edge assertions in
   loops inflate the latter into meaningless six-digit numbers; the
@@ -48,9 +59,9 @@ something.
   general harness.** `benchmarking/benchmark.py` is for breadth ("roughly
   where do we sit across N algorithms × M datasets?"). Specific QPS /
   build time claims that get cited in the thesis or in commit messages
-  must come from a focused fair-compare script in `scripts/` (e.g.
-  `scripts/hnsw_fair_compare.py`, `scripts/nndescent_jl_pareto.jl`,
-  `scripts/kdtree_fair_compare.jl`).
+  must come from a focused fair-compare script in `scripts/perf/` (e.g.
+  `scripts/perf/hnsw_fair_compare.py`, `scripts/perf/nndescent_jl_pareto.jl`,
+  `scripts/perf/kdtree_fair_compare.jl`).
 
 - **Apples-to-apples library comparisons go on the recall-vs-qps Pareto
   curve, not at fixed parameter values.** Different libraries' search
@@ -58,7 +69,7 @@ something.
   structures and dial recall at different rates. Numerically-equal
   parameter values can land at very different recall levels. Always
   measure both libraries across a parameter sweep and compare qps at
-  matched recall. See `scripts/nndescent_jl_pareto.jl` for the pattern.
+  matched recall. See `scripts/perf/nndescent_jl_pareto.jl` for the pattern.
 
 ## Open work
 
@@ -350,25 +361,12 @@ Open / lower-priority:
 
 ### Repository hygiene
 
-- **`scripts/` directory cleanup.** Currently 50+ files, mixed bag from
-  multiple thesis workstreams (composite-shortcut research, ORC/curvature,
-  geodesic, perf scripts). Worth restructuring into subdirectories by
-  purpose — defer concrete moves until the user can triage which
-  research scripts are still active. Suggested structure:
-  - `scripts/perf/` — `hnsw_*`, `nndescent_*`, `kdtree_*`, `distance_*`
-  - `scripts/research/` — composite-shortcut, ORC, geodesic experimental
-    scripts (move to thesis-code repo if/when `benchmarking/` migrates)
-  - `scripts/diagnostics/` — `diag_eff_eps.jl`, `diagnose_sinkhorn.jl`
-  - `scripts/archive/` — already exists; sweep stale items in here
-  - Top-level: `README.md`, `run_*.sh` orchestration scripts only
-  - `scripts/__pycache__/` should be in `.gitignore`.
-
 - **`benchmarking/` migration to a sibling thesis-code repo** (per
   `CLAUDE.md`'s separation principle). Strategic move not blocking
   immediate work. Pre-requisite: harness fairness fixes above. After
   migration, the package's perf surface lives in `scripts/perf/`; the
   thesis-coupled multi-algorithm sweep harness lives in the sibling
-  repo.
+  repo. `scripts/thesis/` and `scripts/perf/` would migrate with it.
 
 ### Architecture / idiomatic-Julia review backlog
 
@@ -416,22 +414,11 @@ coverage gaps — audit broadly, not just the one site that bit us.
 
 ### ORC OT-solver follow-ups
 
-- **`scripts/benchmark_orc_comprehensive.jl` uses `randn` data** which
-  defeats Sinkhorn convergence and routes Hungarian neighborhoods
-  through pathological LP cases. Swap to a manifold sampler (swiss roll
-  / sphere / torus) before drawing thesis numbers from it.
-
-### Stricter unit / regression / performance test split
-
-Today `test/` has only `test/unit/`; the ORCManL curvature snapshot
-(`test/unit/graphs/orcml_curvature_snapshot_tests.jl`) and the new
-eltype-propagation + ShareSimilarTangents smoke tests all live under
-`unit/`. There is no separate perf gate (perf is deliberately out of
-`Pkg.test()` per working principle, but the boundary is informal).
-Worth restructuring to `test/unit/`, `test/regression/`, and a
-`scripts/perf_gate*` (or similar) with an explicit policy on what
-goes where. Defer until ~5+ regression snapshots exist to motivate
-the layout.
+- **`scripts/archive/benchmark_orc_comprehensive.jl` uses `randn` data**
+  which defeats Sinkhorn convergence and routes Hungarian neighborhoods
+  through pathological LP cases. Archived because the script was
+  superseded; if it ever comes back, swap to a manifold sampler (swiss
+  roll / sphere / torus) before drawing thesis numbers from it.
 
 ## Strategic decisions outstanding
 
@@ -529,7 +516,7 @@ One-liners pointing at full context in commit history.
   (0.34-0.5×) — GEMV setup cost dominates at d=128. With
   `JULIA_NUM_THREADS=1` (BLAS=8), pairwise! wins everywhere — but
   realistic deployment is multi-threaded Julia. Bench:
-  `scripts/bruteforce_pairwise_bench.jl`. Don't re-explore unless the
+  `scripts/archive/bruteforce_pairwise_bench.jl`. Don't re-explore unless the
   batch path becomes load-bearing at n≥50k specifically. The kmeans
   `pairwise_distances!` win is genuine because k-means hits k×n with
   k≪n on every Lloyd iteration; bruteforce hits n×nq with n,nq similar

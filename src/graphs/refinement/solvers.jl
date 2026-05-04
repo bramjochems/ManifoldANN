@@ -133,7 +133,7 @@ Entropy-regularized OT solver using OptimalTransport.jl's sinkhorn2().
     Example tuning:
     - Data normalized to [0,1]: `reg=0.01` may work
     - Unnormalized data: `reg=0.05-0.1` often needed
-    - Check diagnostics: `scripts/diagnose_sinkhorn.jl`
+    - Check diagnostics: `scripts/archive/diagnose_sinkhorn.jl` (archived)
 
     **However**: Sinkhorn gives approximate OT (entropy-regularized), not exact OT.
     Higher reg = faster convergence but less accurate.
@@ -164,7 +164,7 @@ solver = ClpSolver()  # Exact OT via Clp simplex (recommended default)
 # See Also
 - ClpSolver: Exact OT, robust fallback
 - LPReferenceSolver: Exact OT via general LP solver
-- Diagnostic: `scripts/diagnose_sinkhorn.jl`
+- Diagnostic: `scripts/archive/diagnose_sinkhorn.jl` (archived)
 """
 struct SinkhornSolver <: AbstractOTSolver
     reg::Float64
@@ -181,7 +181,7 @@ struct SinkhornSolver <: AbstractOTSolver
             @warn "SinkhornSolver: reg=$reg may be too small relative to ORC cost matrix scale. " *
                   "Rule of thumb: reg ≈ 5-10% of mean(cost_matrix). " *
                   "If you get NaN values, increase reg or use ClpSolver(). " *
-                  "See scripts/diagnose_sinkhorn.jl for diagnostics."
+                  "Reference: scripts/archive/diagnose_sinkhorn.jl (archived)."
         end
 
         new(reg, maxiter, atol)

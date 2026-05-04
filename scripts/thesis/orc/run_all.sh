@@ -2,9 +2,9 @@
 # Run unified ORC experiment for both manifolds, then analysis.
 #
 # Usage:
-#   ./scripts/run_all.sh                    # full run
-#   SMOKE=1 ./scripts/run_all.sh            # smoke test
-#   SKIP_PRUNING=1 ./scripts/run_all.sh     # detection only
+#   ./scripts/thesis/orc/run_all.sh                    # full run
+#   SMOKE=1 ./scripts/thesis/orc/run_all.sh            # smoke test
+#   SKIP_PRUNING=1 ./scripts/thesis/orc/run_all.sh     # detection only
 #
 # Results land in:
 #   docs/thesis/results/orc_results/swiss_roll_<ts>/
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 echo "========================================================"
 echo "ORC Full Pipeline: Swiss Roll + Torus + Analysis"

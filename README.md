@@ -61,11 +61,11 @@ See [`benchmarking/README.md`](benchmarking/README.md) for detailed benchmarking
 ## Directory Layout
 
 - `src/` - Julia package source code
-- `test/` - Unit tests (`test/runtests.jl` entry point)
+- `test/` - `unit/` and `regression/` (both run on `Pkg.test()`); entry point `test/runtests.jl`
 - `docs/examples/` - Runnable documentation examples
 - `docs/design/` - Architecture decision records (ADRs)
 - `benchmarking/` - Benchmarking suite for ANN library comparison
   - `configs/` - Per-dataset YAML configurations
   - `benchmarking/` - Python package (utils, wrappers, registry)
   - `julia/` - Separate Julia environment for Julia library benchmarks
-- `scripts/` - Development and testing scripts
+- `scripts/` - Tooling: `thesis/` (figures/results), `perf/` (fair-compare benchmarks), `archive/` (superseded one-shots). See `scripts/README.md`.

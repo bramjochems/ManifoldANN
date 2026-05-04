@@ -16,7 +16,7 @@ Two presets, each a value of `AbstractOrcMLCompatibilityProfile`:
   This is the default everywhere in the public API and is guaranteed
   to produce the same curvatures as the previous `main` branch.
 - [`OrcmlExact`](@ref): match the reference Python `orcml` package
-  bit-for-bit (see `scripts/test_orcml_exact_match_policy.jl` for the
+  bit-for-bit (see `scripts/thesis/orcml/test_orcml_exact_match_policy.jl` for the
   validation harness — under `OrcmlExact` we get
   Pearson r ≈ 0.9995, mean bias ≈ -0.001, with ~74% of edges agreeing
   to within 1e-6 on the 500-point swiss roll benchmark).
@@ -116,7 +116,7 @@ bit-for-bit. Under this profile, `compute_all_curvatures` agrees with
 the upstream `orcml` curvatures to within ~1e-6 on ~74% of edges of a
 500-point swiss-roll benchmark (Pearson r ≈ 0.9995, mean bias ≈ -0.001).
 
-See `scripts/test_orcml_exact_match_policy.jl` for the validation
+See `scripts/thesis/orcml/test_orcml_exact_match_policy.jl` for the validation
 harness.
 """
 OrcmlExact() = OrcMLCompatibilityProfile(true, true, true)

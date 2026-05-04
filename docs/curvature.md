@@ -264,7 +264,7 @@ data_scale = mean(norm(data[:, i] - data[:, j])
 solver = SinkhornSolver(reg=0.1 * data_scale, atol=1e-6)
 ```
 
-See `docs/references/SINKHORN_DIAGNOSIS.md` and `scripts/diagnose_sinkhorn.jl` for diagnostics.
+See `docs/references/SINKHORN_DIAGNOSIS.md` and `scripts/archive/diagnose_sinkhorn.jl` for diagnostics.
 
 ## References
 
@@ -272,4 +272,4 @@ See `docs/references/SINKHORN_DIAGNOSIS.md` and `scripts/diagnose_sinkhorn.jl` f
 - **orcml package**: https://github.com/TristanSaidi/orcml
 - **Performance analysis**: `docs/references/ORC_PERFORMANCE_ANALYSIS.md`
 - **Benchmarks**: `benchmark_results/orc_benchmark_julia.csv`
-- **Test scripts**: `scripts/test_orcml_exact_match.jl` (99.65% correlation with orcml.py)
+- **Test scripts**: `scripts/thesis/orcml/test_orcml_exact_match.jl` (99.65% correlation with orcml.py)

@@ -55,15 +55,15 @@ using Printf
 using Dates
 
 include(joinpath(@__DIR__, "orc_helpers.jl"))
-include(joinpath(@__DIR__, "..", "docs", "examples", "geodesic", "swiss_roll_utils.jl"))
-include(joinpath(@__DIR__, "..", "docs", "examples", "geodesic", "torus_utils.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "docs", "examples", "geodesic", "swiss_roll_utils.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "docs", "examples", "geodesic", "torus_utils.jl"))
 
 # ==============================================================================
 # Configuration
 # ==============================================================================
 
 const RESULTS_DIR = joinpath(
-    @__DIR__, "..", "..", "..", "docs", "thesis", "results", "orc_results"
+    @__DIR__, "..", "..", "..", "..", "..", "docs", "thesis", "results", "orc_results"
 )
 
 # Manifold selection
