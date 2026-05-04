@@ -112,8 +112,10 @@ algorithms:
 # Comparable groups: cross-library configs that are intended to be
 # apples-to-apples (same algorithm class, comparable parameters). The
 # harness validates that recall ranges overlap across the group and
-# emits a recall-vs-qps Pareto-style CSV per group. Mismatched recall
-# ranges trigger a loud warning. Add/remove members as relevant.
+# emits a head-to-head CSV per group (one row per algorithm at the
+# configured params — not a Pareto frontier; see TODO_cleanup.md).
+# Mismatched recall ranges trigger a loud warning. Add/remove members
+# as relevant.
 comparable_groups:
   HNSW:
     members:

@@ -419,16 +419,17 @@ def _verify_thread_counts(threads: int):
     print()
 
 
-def _emit_pareto_csv(output_dir: Path, group_name: str, group_rows: list, k: int):
-    """Emit a recall-vs-qps CSV for a comparable group.
+def _emit_headtohead_csv(output_dir: Path, group_name: str, group_rows: list, k: int):
+    """Emit a recall-vs-qps head-to-head CSV for a comparable group.
 
     `group_rows` is a list of result-dicts (already aggregated; each row
-    is one algorithm × one parameter set). With single-config groups
-    this is a snapshot, not a sweep — but the CSV still expresses the
-    "recall, qps" head-to-head which is what gets plotted as a Pareto
-    when sweeps land.
+    is one algorithm × one parameter set). This is a head-to-head
+    snapshot at one config per algorithm — NOT a Pareto frontier (no
+    domination filtering, no parameter sweep). The general harness
+    produces breadth comparisons; thesis-grade Pareto curves come from
+    focused fair-compare scripts in `scripts/` (working principle).
     """
-    csv_path = output_dir / f"pareto_{group_name}.csv"
+    csv_path = output_dir / f"headtohead_{group_name}.csv"
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow([
@@ -446,7 +447,7 @@ def _emit_pareto_csv(output_dir: Path, group_name: str, group_rows: list, k: int
                 f"{r.get('qps_q75', r['qps']):.2f}",
                 f"{r['build_time']:.2f}",
             ])
-    print(f"✓ Pareto CSV ({group_name}): {csv_path}")
+    print(f"✓ Head-to-head CSV ({group_name}): {csv_path}")
 
 
 def _validate_comparable_groups(comparable_groups: dict, results: list):
@@ -836,7 +837,7 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         save_results_csv(output_dir, results, failed_algorithms, k)
         save_results_json(output_dir, results, failed_algorithms, k, reps)
 
-        # Comparable-groups validation + Pareto CSVs.
+        # Comparable-groups validation + head-to-head CSVs.
         comparable_groups = config.get("comparable_groups") or {}
         if comparable_groups:
             print(f"\n--- Comparable groups ---")
@@ -846,7 +847,7 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
                 members = body.get("members", [])
                 rows = [by_name[m] for m in members if m in by_name]
                 if len(rows) >= 2:
-                    _emit_pareto_csv(output_dir, group_name, rows, k)
+                    _emit_headtohead_csv(output_dir, group_name, rows, k)
 
         print(f"\n✓ All results saved to: {output_dir}")
         print(f"{'=' * 80}\n")

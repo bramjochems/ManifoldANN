@@ -311,9 +311,11 @@ What landed in the fairness pass:
 - `comparable_groups:` YAML section in dataset configs names
   cross-library apples-to-apples sets. Harness validates members'
   recall ranges overlap (warns when spread > 0.10) and emits a
-  recall-vs-qps Pareto-style CSV per group when `--save-output` is on.
-  Initial groups in `fashion-mnist.yaml`: HNSW (MANN/HNSWlib/HNSW-jl),
-  KDTree (MANN/SciPy/NN.jl), NN-Descent (MANN/NND.jl/PyNNDescent).
+  `headtohead_<group>.csv` per group when `--save-output` is on (one
+  row per algorithm at the configured params; not a Pareto frontier
+  — see open item below). Initial groups in `fashion-mnist.yaml`:
+  HNSW (MANN/HNSWlib/HNSW-jl), KDTree (MANN/SciPy/NN.jl), NN-Descent
+  (MANN/NND.jl/PyNNDescent).
 - PyNNDescent re-enabled in the registry, `algorithms.yaml`, and
   `fashion-mnist.yaml` (Python 3.13.5 install works; the
   Python-<3.10 comment was stale).
@@ -323,11 +325,11 @@ What landed in the fairness pass:
 
 Open / lower-priority:
 
-- Pareto CSVs reflect a single parameter set per algorithm at run time;
-  the genuine recall-vs-qps Pareto sweep belongs in focused scripts
-  (`scripts/perf/hnsw_fair_compare.py`, etc.). Treat the harness CSV
-  as the single-point head-to-head sanity check, not as the thesis
-  Pareto.
+- `headtohead_<group>.csv` reflects a single parameter set per
+  algorithm at run time; the genuine recall-vs-qps Pareto sweep
+  belongs in focused scripts (`scripts/perf/hnsw_fair_compare.py`,
+  etc.). The harness CSV is a single-point sanity check, not the
+  thesis Pareto curve.
 - Comparable-groups validation uses point recall (or IQR if
   `--reps>1`), not a symbolic-parameter check on shared knobs (`M`,
   `ef_construction`, etc.). A symbolic check would catch a config
