@@ -3,6 +3,8 @@
 *.jl.mem
 /Manifest.toml
 /docs/build/
+# Claude Code harness state (worktrees, settings, agent metadata)
+/.claude/
 # Benchmarking artifacts (keep sources under version control)
 /benchmarking/data/
 /benchmarking/ann-benchmarks/
