@@ -1,23 +1,22 @@
 """
 Generic binary-partition-tree (BPT) recursion skeleton.
 
-Existing tree-style indices (`KDTreeIndex`, `RPTreeIndex`, and now
-`PCATreeIndex`) share a meta-pattern: recursively partition a point set
-along some splitting rule, with router-internal-nodes and leaf buckets.
-This module factors out *only* the recursion + leaf-bucket emission. It
-deliberately does NOT subsume per-tree storage layout (KD packs `axis +
-threshold` into 4 ints; RP stores a hyperplane vector; PCA stores a
-direction + threshold + spectral metadata) and it does NOT subsume the
-query-time descent (KDTree prunes via componentwise-monotone bounds, RP
-trees do not, PCA trees may or may not depending on the projection).
+Tree-style indices (`KDTreeIndex`, `RPTreeIndex`, `PCATreeIndex`) share
+a meta-pattern: recursively partition a point set along some splitting
+rule, with router-internal-nodes and leaf buckets. This module factors
+out *only* the recursion + leaf-bucket emission. It deliberately does
+NOT subsume per-tree storage layout (KD packs `axis + threshold` into 4
+ints; RP stores a hyperplane vector; PCA stores a direction + threshold
++ spectral metadata) and it does NOT subsume the query-time descent
+(KDTree prunes via componentwise-monotone bounds; RP and PCA trees do
+not).
 
-The shared skeleton is intentionally shallow — the per-tree
-specialisation is essential. The split content, the bucket-storage
-layout, and the descent rules stay where they are. KDTree and RPTree are
-NOT refactored onto this helper (they predate it, are debugged, and
-their tight bespoke layouts pay off in the hot path). The helper exists
-to spare the next tree-style index from re-implementing the same
-recursion.
+The helper has two consumers today: `PCATreeIndex`
+(`src/indices/pcatree/builder.jl`) and `RPTree` (`src/utils/rptree.jl`,
+which wraps `AbstractRPSplitter` via an internal adapter). KDTreeIndex
+keeps its bespoke in-place `(lo, hi)` + `quickselect!` layout — it would
+need a Partitioner trait change to fit BPT's fresh-`Vector{Int}` per
+split contract, which isn't worth doing speculatively.
 
 # Splitter contract
 
@@ -110,6 +109,14 @@ responsible for not retaining references.
 root (so there is no internal-node probe to infer `P` from), and the
 helper needs the concrete `BPTNode{P}` element type up front for type
 stability of the `nodes` vector.
+
+# Payload contract
+
+`P` MUST have a no-arg constructor `P()` returning a sentinel value used
+to fill the `payload` field of leaf nodes. Only the internal-node case
+reads payload contents (callers gate reads on `bpt_is_leaf`). The
+sentinel exists purely to satisfy `BPTNode{P}`'s type stability —
+nothing inspects it.
 """
 function bpt_build!(
     splitter,
@@ -144,24 +151,14 @@ function _bpt_recurse!(
                             internal.payload))
     self_idx = length(nodes)
 
+    # Splitters MUST partition non-trivially (see `bpt_split!` docstring).
+    # An empty `left_indices` or `right_indices` is a contract violation,
+    # not something the helper post-corrects: silently coalescing would
+    # leak previously-emitted nodes/members on the non-empty side.
     left_id  = _bpt_recurse!(nodes, leaf_members, splitter, ctx,
                              internal.left_indices, depth + 1)
     right_id = _bpt_recurse!(nodes, leaf_members, splitter, ctx,
                              internal.right_indices, depth + 1)
-
-    # Degenerate guard: if either side collapsed to nothing (splitter
-    # promised internal but produced an empty side), fall back to a leaf
-    # emitted from the union.
-    if left_id == 0 || right_id == 0
-        # Replace the reserved self-slot with a leaf over the union.
-        union_idx = vcat(internal.left_indices, internal.right_indices)
-        start = Int32(length(leaf_members) + 1)
-        append!(leaf_members, union_idx)
-        stop = Int32(length(leaf_members))
-        nodes[self_idx] = BPTNode{P}(true, Int32(0), Int32(0), start, stop,
-                                     internal.payload)
-        return self_idx
-    end
 
     nodes[self_idx] = BPTNode{P}(false, Int32(left_id), Int32(right_id),
                                  Int32(0), Int32(0), internal.payload)
@@ -193,7 +190,17 @@ end
 """
     bpt_split!(splitter, ctx, indices, depth) -> BPTSplitOutcome
 
-Splitter callback. Concrete splitters (e.g. `PCASplitter`) overload
-this. Default: error — callers must specialise.
+Splitter callback. Concrete splitters (e.g. `PCASplitter`,
+`AbstractRPSplitter` via its adapter) overload this. Default: error —
+callers must specialise.
+
+# Non-degeneracy contract
+
+A splitter that returns `BPTInternal{P}(left_indices, right_indices,
+payload)` MUST guarantee `!isempty(left_indices)` and
+`!isempty(right_indices)`. If a candidate split would collapse to one
+side, the splitter must return `BPTLeaf()` instead. The recursion does
+not post-correct empty-side splits; passing one violates the contract
+and produces undefined node/leaf-member state.
 """
 function bpt_split! end

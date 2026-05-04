@@ -114,23 +114,49 @@ end
 end
 
 @testset "PCATreeIndex IntrinsicDimRatio respects n_floor" begin
+    # Rank-1+noise data so that, in the absence of `n_floor` gating,
+    # `IntrinsicDimRatio(0.5)` *would* fire at the root. We probe two
+    # configurations:
+    #   (a) low n_floor: ratio fires early -> single-leaf or shallow tree
+    #   (b) high n_floor: ratio is suppressed -> MaxLeafSize splits all
+    #       the way down, producing many internal nodes.
+    # If `n_floor` weren't gating in (b), the ratio criterion would
+    # short-circuit the build the same way it does in (a) and the two
+    # configurations would be indistinguishable.
     rng = MersenneTwister(0xC2)
     d = 16
-    n = 50
-    data = randn(rng, d, n)  # full-rank Gaussian; ratio criterion never fires
+    n = 200
+    direction = normalize!(randn(rng, d))
+    scales = randn(rng, n)
+    data = direction * scales' .+ 1e-6 .* randn(rng, d, n)
 
-    # Even on rank-1-ish data, n_floor=10_000 should suppress the
-    # ratio-stop, leaving only MaxLeafSize to terminate recursion.
-    splitter = PCASplitter(
+    splitter_low = PCASplitter(
+        ExactSVD(), TopComponent(),
+        AnyOf(MaxLeafSize(8),
+              IntrinsicDimRatio(0.5; n_floor = 1)),
+        MedianSplit(),
+    )
+    splitter_high = PCASplitter(
         ExactSVD(), TopComponent(),
         AnyOf(MaxLeafSize(8),
               IntrinsicDimRatio(0.5; n_floor = 10_000)),
         MedianSplit(),
     )
-    idx = build_index(PCATreeIndex, data; splitter = splitter,
-                      rng = MersenneTwister(1))
-    # MaxLeafSize(8) on n=50 forces multiple internal nodes.
-    @test count(node -> !node.is_leaf, idx.nodes) >= 1
+    idx_low  = build_index(PCATreeIndex, data; splitter = splitter_low,
+                           rng = MersenneTwister(1))
+    idx_high = build_index(PCATreeIndex, data; splitter = splitter_high,
+                           rng = MersenneTwister(1))
+
+    n_internal_low  = count(node -> !node.is_leaf, idx_low.nodes)
+    n_internal_high = count(node -> !node.is_leaf, idx_high.nodes)
+
+    # Low n_floor: ratio fires immediately, single-leaf tree.
+    @test n_internal_low == 0
+    # High n_floor: ratio is gated off, MaxLeafSize(8) drives n=200 down
+    # to many leaves -> many internal nodes.
+    @test n_internal_high >= 5
+    # The contrast is the test: n_floor *did* gate the ratio criterion.
+    @test n_internal_high > n_internal_low
 end
 
 @testset "PCATreeIndex policy variants smoke-construct" begin
@@ -178,20 +204,119 @@ end
 end
 
 @testset "PCATreeIndex threading-safe query" begin
-    rng = MersenneTwister(0xD0)
-    n, d = 400, 16
-    data = randn(rng, Float64, d, n)
-    idx = build_index(PCATreeIndex, data; rng = MersenneTwister(2024))
-    queries = randn(MersenneTwister(7), d, 200)
+    # The PCA tree's `query` claims concurrent-safety. Two threads
+    # calling it on the same index with different queries must produce
+    # results identical to a serial loop. Mirrors the RPTreeForestIndex
+    # re-entrancy test pattern. Under `julia -t 1` the threaded loop
+    # degenerates to a serial sweep, so we skip with a warning rather
+    # than report a green smoke test.
+    if Threads.nthreads() >= 2
+        rng = MersenneTwister(0xD0)
+        n, d = 400, 16
+        data = randn(rng, Float64, d, n)
+        idx = build_index(PCATreeIndex, data; rng = MersenneTwister(2024))
+        queries = [randn(MersenneTwister(0x100 + i), Float64, d) for i in 1:64]
 
-    # Reference: serial single-query path.
-    serial = [query(idx, data, view(queries, :, i), 5) for i in 1:size(queries, 2)]
-    # Threaded batch path (generic AbstractANNIndex fallback).
-    threaded = query(idx, data, queries, 5)
-    @test length(threaded) == length(serial)
-    for i in eachindex(serial)
-        @test neighbor_ids(threaded[i]) == neighbor_ids(serial[i])
+        ref = [query(idx, data, q, 5) for q in queries]
+        got = Vector{Vector{ManifoldANN.Neighbor{Float64}}}(undef, length(queries))
+        Threads.@threads for i in eachindex(queries)
+            got[i] = query(idx, data, queries[i], 5)
+        end
+        for i in eachindex(queries)
+            @test neighbor_ids(got[i]) == neighbor_ids(ref[i])
+        end
+    else
+        @warn "PCATreeIndex re-entrancy test requires Threads.nthreads() >= 2; skipping"
     end
+end
+
+@testset "PCATreeIndex elides SVD when MaxLeafSize fires on tiny nodes" begin
+    # Fix #3: with the `!needs_spec` guard removed, the cheap-stop probe
+    # `should_stop(stopping, n_node, nothing)` runs first; if it fires
+    # (e.g. because `MaxLeafSize` says stop on a tiny node), we never
+    # call the spectrum estimator. A composite stopping criterion that
+    # *also* contains a spectrum-dependent rule used to defeat this; it
+    # no longer does.
+    mutable struct _CountingSVD <: ManifoldANN.AbstractSpectrumEstimator
+        calls::Base.RefValue{Int}
+    end
+    _CountingSVD() = _CountingSVD(Ref(0))
+    function ManifoldANN.estimate_spectrum(est::_CountingSVD, X::AbstractMatrix, rng::AbstractRNG)
+        est.calls[] += 1
+        return ManifoldANN.estimate_spectrum(ManifoldANN.ExactSVD(), X, rng)
+    end
+
+    rng = MersenneTwister(0xE0)
+    d = 8
+    n = 64
+    data = randn(rng, Float64, d, n)
+
+    estimator = _CountingSVD()
+    # MaxLeafSize(8) fires on every node with <= 8 points; IntrinsicDimRatio
+    # is spectrum-dependent. The cheap-stop probe must short-circuit on
+    # tiny leaves before we ever touch the SVD.
+    splitter = PCASplitter(
+        estimator, TopComponent(),
+        AnyOf(MaxLeafSize(8), IntrinsicDimRatio(0.01; n_floor = 1)),
+        MedianSplit(),
+    )
+    idx = build_index(PCATreeIndex, data; splitter = splitter,
+                      rng = MersenneTwister(7))
+
+    # Internal nodes are exactly the SVD-driven splits. Leaves where
+    # MaxLeafSize fired must NOT have triggered an SVD call.
+    n_internal = count(node -> !node.is_leaf, idx.nodes)
+    @test estimator.calls[] == n_internal
+    # Sanity: the tree actually split (so we exercised the
+    # internal-node SVD path at least once and the leaf-elision path).
+    @test n_internal >= 1
+    @test count(node -> node.is_leaf, idx.nodes) >= 2
+end
+
+@testset "PCASplitter honors BPT non-degeneracy contract" begin
+    # Fix #2: BPT no longer post-corrects empty-side splits; splitters
+    # MUST emit BPTLeaf when a candidate split would collapse to one
+    # side. Concentrate `n` co-located points so that the median split
+    # produces an empty right side, forcing the splitter to fall back.
+    n = 32
+    d = 4
+    data = zeros(Float64, d, n)  # all points identical -> spectrum is zero
+    splitter = PCASplitter(
+        ExactSVD(), TopComponent(),
+        MaxLeafSize(2),  # ask for splitting; the splitter must still leaf
+        MedianSplit(),
+    )
+    idx = build_index(PCATreeIndex, data; splitter = splitter,
+                      rng = MersenneTwister(1))
+    # Either every point ends up under one leaf, or the tree is empty
+    # of internal nodes — in any case, the union of leaf members covers
+    # every point exactly once and no node leaks.
+    members = Int[]
+    for node in idx.nodes
+        if node.is_leaf
+            append!(members, idx.leaf_members[Int(node.leaf_lo):Int(node.leaf_hi)])
+        end
+    end
+    @test sort(members) == collect(1:n)
+end
+
+@testset "AbstractRPSplitter honors BPT non-degeneracy contract" begin
+    # Fix #2 mirror for the RP adapter: identical points cannot be split
+    # by a two-point hyperplane (both selected points coincide -> zero
+    # hyperplane). The splitter returns `nothing`, the adapter emits
+    # BPTLeaf, and BPT does not post-correct.
+    n = 16
+    d = 4
+    data = ones(Float64, d, n)
+    idx = build_index(RPTreeIndex, data; leaf_cap = 2,
+                      rng = MersenneTwister(1))
+    members = Int[]
+    for node in idx.tree.nodes
+        if node.is_leaf
+            append!(members, idx.tree.leaf_members[Int(node.leaf_lo):Int(node.leaf_hi)])
+        end
+    end
+    @test sort(members) == collect(1:n)
 end
 
 @testset "PCATreeIndex RandomLinearCombo preserves Float32 eltype" begin

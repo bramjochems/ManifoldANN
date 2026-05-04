@@ -25,10 +25,13 @@ function bpt_split!(
     # Trivial leaf: 0 or 1 point can't be split.
     n_node <= 1 && return BPTLeaf()
 
-    # Cheap-stop: if no criterion needs the spectrum and the size criterion
-    # already says stop, skip the SVD.
-    needs_spec = needs_spectrum(splitter.stopping)
-    if !needs_spec && should_stop(splitter.stopping, n_node, nothing)
+    # Cheap-stop probe: with a `nothing` spectrum, only size-style
+    # criteria can fire (`IntrinsicDimRatio` short-circuits on
+    # `spectrum === nothing`). If `should_stop` already says stop here,
+    # we skip the SVD entirely — this catches `MaxLeafSize` on tiny
+    # nodes even when the composite stopping criterion *also* contains a
+    # spectrum-dependent rule like `IntrinsicDimRatio`.
+    if should_stop(splitter.stopping, n_node, nothing)
         return BPTLeaf()
     end
 
