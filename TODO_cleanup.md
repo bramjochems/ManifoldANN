@@ -241,14 +241,16 @@ explicitly handling the strided/non-strided fork inside
   abstraction is offline-only; if Mondrian ever lands, treat it as a
   sibling index, not an RPTree variant.
 
-- **PCA-tree forest wrapper.** `PCATreeIndex` landed as a single tree
-  with the four-trait swap surface (`AbstractSpectrumEstimator`,
-  `AbstractSplitDirectionPolicy`, `AbstractStoppingCriterion`,
-  `AbstractSplitValuePolicy`); per-tree RNG already plumbed through.
-  The forest wrapper is the natural recall-friendly extension —
-  same shape as the pending `RPTreeForestIndex`. Use
-  `pca_forest_splitter()` as the per-tree default; ensemble via
-  union-of-buckets + brute-force scan + top-k heap merge.
+- **Generalize forest as `BPTForestIndex` keyed on a randomization marker
+  trait.** Currently `RPTreeForestIndex` and `PCATreeForestIndex` are
+  separate concrete types; both wrap "build N parallel BPT trees with
+  `spawn_child_rngs` + union leaf buckets at query." A generic forest
+  gated on a marker trait that splitters opt into ("yes, I genuinely
+  consume rng across calls") would absorb both — and would
+  compile-time-prevent forests over deterministic splitters (which
+  produce N identical trees). Trigger to revisit: a third
+  randomized-tree index lands (Mondrian, randomized BallTree, or
+  randomized VPTree).
 
 - **Depth-adaptive PCA-then-RP meta-splitter.** Implementable as a
   meta-splitter that wraps a `PCASplitter` and an `AbstractRPSplitter`
