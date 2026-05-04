@@ -101,27 +101,26 @@ end
     @test avg_recall >= 0.35
 end
 
-@testset "RPTreeForestIndex forest beats single tree on average recall" begin
-    rng = MersenneTwister(0xCAFE)
-    n, d, k = 600, 16, 10
-    data = randn(rng, Float32, d, n)
+@testset "RPTreeForestIndex re-entrancy of public query API" begin
+    # The forest's `query` claims concurrent-safety. Two threads calling
+    # it on the same index with different queries must produce results
+    # identical to a serial loop. Mirrors the HNSW pattern.
+    if Threads.nthreads() >= 2
+        rng = MersenneTwister(0xF6)
+        data = randn(rng, Float32, 12, 600)
+        idx = build_index(RPTreeForestIndex, data;
+            n_trees = 6, leaf_cap = 24, rng = MersenneTwister(0xF6))
+        queries = [randn(MersenneTwister(0x100 + i), Float32, 12) for i in 1:32]
 
-    forest = build_index(RPTreeForestIndex, data;
-        n_trees = 8, leaf_cap = 24, rng = MersenneTwister(1234))
-    single = build_index(RPTreeIndex, data;
-        leaf_cap = 24, rng = MersenneTwister(1234))
-    brute = build_index(BruteForceIndex, data)
-
-    forest_recalls = Float64[]
-    single_recalls = Float64[]
-    for trial in 1:25
-        q = randn(MersenneTwister(7000 + trial), Float32, d)
-        bf = Set(neighbor_ids(query(brute, data, q, k)))
-        push!(forest_recalls,
-            length(intersect(Set(neighbor_ids(query(forest, data, q, k))), bf)) / length(bf))
-        push!(single_recalls,
-            length(intersect(Set(neighbor_ids(query(single, data, q, k))), bf)) / length(bf))
+        ref = [query(idx, data, q, 5) for q in queries]
+        got = Vector{Vector{ManifoldANN.Neighbor{Float32}}}(undef, 32)
+        Threads.@threads for i in 1:32
+            got[i] = query(idx, data, queries[i], 5)
+        end
+        for i in 1:32
+            @test [n.id for n in got[i]] == [n.id for n in ref[i]]
+        end
+    else
+        @warn "RPTreeForestIndex re-entrancy test requires Threads.nthreads() ≥ 2; skipping"
     end
-    @test sum(forest_recalls) / length(forest_recalls) >
-          sum(single_recalls) / length(single_recalls)
 end

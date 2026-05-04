@@ -48,6 +48,13 @@ LSH's `AbstractLSHHash` / multilevel's `AbstractRoutingStrategy`. The
 default `TwoPointSplitter` reproduces the original two-point hyperplane
 heuristic; alternative splitters (e.g. random-direction, PCA-aligned,
 or Mondrian-style) can plug in without touching the build/query loops.
+
+`split_node` must be safe to call concurrently from multiple tasks on
+the *same splitter instance* — `RPTreeForestIndex` builds N trees in
+parallel and shares one splitter across them. Stateless splitters (like
+the default) satisfy this trivially; user-supplied splitters that cache
+state across calls must use thread-local storage or document that they
+are not forest-safe.
 """
 abstract type AbstractRPSplitter end
 
