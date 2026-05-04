@@ -404,19 +404,15 @@ comprehensively reviewed. Multilevel/IVF was reviewed in this session
 across A/B/C/D and the brutal-critic pass — see "Multilevel / IVF
 follow-ups" below for residual items.
 
-### ORC / refinement / tangent-sharing test coverage
+### ORC / refinement test coverage audit
 
-`ShareSimilarTangents` and its helpers (`_fit_geometries`,
-`_find_shareable_geometry`, `_fit_geometries_with_candidates`,
-`_find_shareable_geometry_candidates`) have zero unit-test coverage.
-A broken constructor in those functions slipped through `Pkg.test()`
-and was caught only when an unrelated bench script invoked the path.
-Tangent-sharing is exercised via thesis experiments but not via the
-test suite. Worth a focused coverage pass — at minimum, smoke tests
-that the four functions execute without error on a small graph.
-Same likely true for other ORC / refinement code (curvature solvers,
-`EdgeNeighborhoodView` construction); audit coverage broadly, not
-just the one site that bit us.
+Smoke coverage for `ShareSimilarTangents` and its helpers
+(`_fit_geometries`, `_find_shareable_geometry`,
+`_fit_geometries_with_candidates`, `_find_shareable_geometry_candidates`)
+landed in `test/unit/graphs/share_similar_tangents_tests.jl`. The
+broader audit is still open: other ORC / refinement code (curvature
+solvers, `EdgeNeighborhoodView` construction) likely has similar
+coverage gaps — audit broadly, not just the one site that bit us.
 
 ### ORC pipeline runs Float64 regardless of input type
 
