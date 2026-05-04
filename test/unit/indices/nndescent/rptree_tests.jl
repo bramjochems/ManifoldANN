@@ -14,8 +14,8 @@ const default_rptree_leaf_cap = _MA.default_rptree_leaf_cap
 function _collect_leaves(tree)
     leaves = Vector{Vector{Int}}()
     for node in tree.nodes
-        if node.left == 0  # leaf
-            push!(leaves, collect(tree.leaf_members[Int(first(node.leaf_range)):Int(last(node.leaf_range))]))
+        if node.is_leaf
+            push!(leaves, collect(tree.leaf_members[Int(node.leaf_lo):Int(node.leaf_hi)]))
         end
     end
     return leaves
@@ -62,9 +62,11 @@ end
     @test t1.leaf_members == t2.leaf_members
     @test length(t1.nodes) == length(t2.nodes)
     for i in eachindex(t1.nodes)
+        @test t1.nodes[i].is_leaf == t2.nodes[i].is_leaf
         @test t1.nodes[i].left == t2.nodes[i].left
         @test t1.nodes[i].right == t2.nodes[i].right
-        @test t1.nodes[i].leaf_range == t2.nodes[i].leaf_range
+        @test t1.nodes[i].leaf_lo == t2.nodes[i].leaf_lo
+        @test t1.nodes[i].leaf_hi == t2.nodes[i].leaf_hi
     end
 end
 

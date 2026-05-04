@@ -8,6 +8,7 @@ include("utils/random_utils.jl")
 include("utils/validation.jl")
 include("utils/eval_utils.jl")
 include("utils/neighbor_heaps.jl")
+include("utils/binary_partition_tree.jl")
 include("utils/rptree.jl")
 include("indices/bruteforce.jl")
 include("indices/lsh.jl")
@@ -15,6 +16,7 @@ include("indices/kdtree.jl")
 include("indices/hnsw.jl")
 include("indices/nndescent.jl")
 include("indices/rptree_forest.jl")
+include("indices/pcatree.jl")
 
 # Transform module (must come before indices that depend on it)
 include("transforms/transforms.jl")
@@ -62,6 +64,26 @@ export AbstractANNIndex,
        NNDescentIndex,
        RPTreeIndex,
        RPTreeForestIndex,
+       PCATreeIndex,
+       PCASplitter,
+       pca_forest_splitter,
+       AbstractSpectrumEstimator,
+       ExactSVD,
+       RandomizedSVD,
+       SubsampledSVD,
+       AbstractSplitDirectionPolicy,
+       TopComponent,
+       RandomTopK,
+       RandomLinearCombo,
+       AbstractStoppingCriterion,
+       MaxLeafSize,
+       IntrinsicDimRatio,
+       AnyOf,
+       AllOf,
+       AbstractSplitValuePolicy,
+       MedianSplit,
+       MeanSplit,
+       RandomBetweenQuantiles,
        UniformPairSampling,
        FullSymmetry,
        PrunedSymmetry,
