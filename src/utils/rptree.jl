@@ -2,37 +2,39 @@ using LinearAlgebra
 using Random
 
 """
-    RPTreeNode{T}
+    RPNodePayload{T}
 
-Node in a random-projection tree built from two-point hyperplane splits.
-Leaves are encoded by `left == 0` (and `right == 0`); their member point ids
-live in `leaf_range`, which indexes into the parent `RPTree.leaf_members`
-flat array. Internal nodes have empty `hyperplane` allocated only for the
-split direction and a scalar `offset` threshold.
+Per-internal-node payload stored in the binary-partition-tree node array
+for an `RPTree`. Carries the hyperplane direction and the scalar offset
+used for routing: a query `q` descends right when `dot(hyperplane, q) >
+offset`, else left.
+
+Leaves get a default-constructed sentinel (callers gate on
+`bpt_is_leaf`); BPT requires payload types to provide a no-arg
+constructor for the leaf sentinel slot.
 """
-struct RPTreeNode{T<:AbstractFloat}
+struct RPNodePayload{T<:AbstractFloat}
     hyperplane::Vector{T}
     offset::T
-    left::Int32
-    right::Int32
-    leaf_range::UnitRange{Int32}
 end
+
+RPNodePayload{T}() where {T<:AbstractFloat} = RPNodePayload{T}(Vector{T}(), zero(T))
 
 """
     RPTree{T}
 
-Random-projection tree over a fixed dataset. `nodes` is a flat node array;
+Random-projection tree over a fixed dataset. `nodes` is a flat
+`Vector{BPTNode{RPNodePayload{T}}}` produced by the shared
+binary-partition-tree helper (`src/utils/binary_partition_tree.jl`);
 `leaf_members` concatenates the point ids belonging to each leaf in the
-order they were emitted, and `leaf_range` (per leaf) views into it. `root`
-is the index of the root node.
+order they were emitted, and each leaf node carries a `(leaf_lo,
+leaf_hi)` range view into it. `root` is the index of the root node.
 """
 struct RPTree{T<:AbstractFloat}
-    nodes::Vector{RPTreeNode{T}}
+    nodes::Vector{BPTNode{RPNodePayload{T}}}
     leaf_members::Vector{Int}
     root::Int
 end
-
-@inline _is_leaf(node::RPTreeNode) = node.left == 0
 
 """
     AbstractRPSplitter
@@ -55,6 +57,13 @@ parallel and shares one splitter across them. Stateless splitters (like
 the default) satisfy this trivially; user-supplied splitters that cache
 state across calls must use thread-local storage or document that they
 are not forest-safe.
+
+# Splitter contract (degenerate splits)
+
+A splitter MUST partition non-trivially: if a candidate split would put
+all points on one side of the hyperplane, the splitter must return
+`nothing` so the caller emits a leaf. The BPT recursion does not
+post-correct empty-side splits — see [`bpt_split!`](@ref).
 """
 abstract type AbstractRPSplitter end
 
@@ -113,12 +122,53 @@ function split_node(
 end
 
 """
+    RPBuildContext{T}
+
+Opaque context plumbed through the binary-partition-tree recursion for
+`RPTree`. Holds the data matrix, the per-tree RNG, and the leaf-cap
+recursion-stop threshold (RP trees stop on a fixed leaf cap rather than
+a trait — the BPT helper just walks the recursion).
+"""
+struct RPBuildContext{T<:AbstractFloat}
+    data::AbstractMatrix{T}
+    rng::AbstractRNG
+    leaf_cap::Int
+end
+
+# `bpt_split!` adapter for any `AbstractRPSplitter`. Wraps the existing
+# `split_node` extension contract — third-party splitters keep working
+# unchanged. Concurrency: each tree owns its own ctx + RNG + indices, so
+# the BPT recursion is safe to run in parallel across forest trees as
+# long as `split_node` is itself concurrent-safe (documented contract).
+function bpt_split!(
+    splitter::AbstractRPSplitter,
+    ctx::RPBuildContext{T},
+    indices::Vector{Int},
+    depth::Int,
+) where {T<:AbstractFloat}
+    m = length(indices)
+    if m <= ctx.leaf_cap
+        return BPTLeaf()
+    end
+    result = split_node(splitter, ctx.data, indices, ctx.rng)
+    result === nothing && return BPTLeaf()
+    hyperplane, offset, left_idx, right_idx = result
+    payload = RPNodePayload{T}(hyperplane, offset)
+    return BPTInternal{RPNodePayload{T}}(left_idx, right_idx, payload)
+end
+
+"""
     build_rptree(data, leaf_cap; splitter=TwoPointSplitter(), rng) -> RPTree
 
 Build a random-projection tree. The split strategy at each internal node is
 controlled by `splitter::AbstractRPSplitter` (default: two-point hyperplane).
 Recursion stops at `<= leaf_cap` points or when the splitter signals a
 degenerate split.
+
+Routes via the binary-partition-tree helper at
+`src/utils/binary_partition_tree.jl`; the splitter's existing
+`split_node` contract is preserved — an internal adapter converts its
+output (or `nothing` sentinel) into the BPT outcome type.
 """
 function build_rptree(
     data::AbstractMatrix{T},
@@ -130,58 +180,13 @@ function build_rptree(
     d, n = size(data)
     n > 0 || throw(ArgumentError("data must contain at least one point"))
 
-    nodes = Vector{RPTreeNode{T}}()
-    leaf_members = Vector{Int}()
-    sizehint!(leaf_members, n)
-
+    ctx = RPBuildContext{T}(data, rng, leaf_cap)
     indices = collect(1:n)
-    root = _build_rptree_recursive!(
-        nodes, leaf_members, data, indices, leaf_cap, splitter, rng)
+    nodes, leaf_members, root = bpt_build!(
+        splitter, ctx, indices;
+        payload_type = RPNodePayload{T},
+    )
     return RPTree{T}(nodes, leaf_members, root)
-end
-
-function _build_rptree_recursive!(
-    nodes::Vector{RPTreeNode{T}},
-    leaf_members::Vector{Int},
-    data::AbstractMatrix{T},
-    indices::Vector{Int},
-    leaf_cap::Int,
-    splitter::AbstractRPSplitter,
-    rng::AbstractRNG,
-) where {T<:AbstractFloat}
-    m = length(indices)
-    if m <= leaf_cap
-        return _emit_leaf!(nodes, leaf_members, indices)
-    end
-
-    result = split_node(splitter, data, indices, rng)
-    result === nothing && return _emit_leaf!(nodes, leaf_members, indices)
-    hyperplane, offset, left_idx, right_idx = result
-
-    push!(nodes, RPTreeNode{T}(hyperplane, offset, Int32(0), Int32(0),
-                                Int32(1):Int32(0)))
-    self_idx = length(nodes)
-    left_child = _build_rptree_recursive!(
-        nodes, leaf_members, data, left_idx, leaf_cap, splitter, rng)
-    right_child = _build_rptree_recursive!(
-        nodes, leaf_members, data, right_idx, leaf_cap, splitter, rng)
-    nodes[self_idx] = RPTreeNode{T}(
-        hyperplane, offset, Int32(left_child), Int32(right_child),
-        Int32(1):Int32(0))
-    return self_idx
-end
-
-function _emit_leaf!(
-    nodes::Vector{RPTreeNode{T}},
-    leaf_members::Vector{Int},
-    indices::Vector{Int},
-) where {T<:AbstractFloat}
-    start = Int32(length(leaf_members) + 1)
-    append!(leaf_members, indices)
-    stop = Int32(length(leaf_members))
-    push!(nodes, RPTreeNode{T}(
-        T[], zero(T), Int32(0), Int32(0), start:stop))
-    return length(nodes)
 end
 
 """
@@ -194,14 +199,15 @@ function leaf_members(tree::RPTree{T}, point::AbstractVector) where {T}
     idx = tree.root
     @inbounds while true
         node = tree.nodes[idx]
-        if _is_leaf(node)
-            return view(tree.leaf_members, Int(first(node.leaf_range)):Int(last(node.leaf_range)))
+        if bpt_is_leaf(node)
+            return view(tree.leaf_members, Int(node.leaf_lo):Int(node.leaf_hi))
         end
+        payload = node.payload
         proj = zero(T)
-        @simd for j in eachindex(node.hyperplane)
-            proj += node.hyperplane[j] * point[j]
+        @simd for j in eachindex(payload.hyperplane)
+            proj += payload.hyperplane[j] * point[j]
         end
-        idx = proj > node.offset ? Int(node.right) : Int(node.left)
+        idx = proj > payload.offset ? Int(node.right) : Int(node.left)
     end
 end
 

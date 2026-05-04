@@ -239,71 +239,80 @@ explicitly handling the strided/non-strided fork inside
 
 ### New indices to consider
 
-- **Alternative `AbstractRPSplitter` implementations.** The splitter
-  trait landed in 6e9aa3a with `TwoPointSplitter` as the default. Worth
-  exploring as experimentation surface (not thesis-load-bearing):
-  - **PCA-aligned splits**: hyperplane = top principal component of the
-    points in the current node. Tighter splits in low intrinsic
-    dimension; pays a per-node SVD cost. Good fit for the manifold-aware
-    framing of the thesis.
-  - **Mondrian splits**: exponential-clock-driven random axis-aligned
-    splits with a lifetime parameter (Lakshminarayanan et al.). The
-    splitter trait alone fits, but full Mondrian needs split-time +
-    bounding-box state per node and an online `insert!` API — a separate
-    `MondrianTreeIndex`, not a splitter swap. The splitter abstraction
-    is offline-only; if Mondrian ever lands, treat it as a sibling
-    index, not an RPTree variant.
+- **Mondrian-style tree.** Exponential-clock-driven random axis-aligned
+  splits with a lifetime parameter (Lakshminarayanan et al.). The
+  `AbstractRPSplitter` trait alone fits, but full Mondrian needs
+  split-time + bounding-box state per node and an online `insert!` API —
+  a separate `MondrianTreeIndex`, not a splitter swap. The splitter
+  abstraction is offline-only; if Mondrian ever lands, treat it as a
+  sibling index, not an RPTree variant.
 
-- **Shared "binary partition tree with leaf buckets" abstraction
-  (deferred).** KDTree and RPTree share a meta-pattern: recursive binary
-  partitioning of a point set with router-internal-nodes and
-  leaf-buckets. The split content differs (axis-aligned vs hyperplane),
-  the storage layout differs, the query path differs (KDTree prunes,
-  RPTree doesn't), so the shared skeleton is shallow (~20-30 LOC of
-  recursion) and the per-tree specialisation is essential. Don't factor
-  with only two instances; the Julia idiom (`NearestNeighbors.jl`:
-  KDTree/BallTree/BruteTree as separate concrete types under a thin
-  `NNTree` protocol) supports this. **Trigger to revisit**: a third
-  tree-style index (BallTree, M-tree, vp-tree) lands. At that point the
-  pattern is real and the factoring pays back.
+- **PCA-tree forest wrapper.** `PCATreeIndex` landed as a single tree
+  with the four-trait swap surface (`AbstractSpectrumEstimator`,
+  `AbstractSplitDirectionPolicy`, `AbstractStoppingCriterion`,
+  `AbstractSplitValuePolicy`); per-tree RNG already plumbed through.
+  The forest wrapper is the natural recall-friendly extension —
+  same shape as the pending `RPTreeForestIndex`. Use
+  `pca_forest_splitter()` as the per-tree default; ensemble via
+  union-of-buckets + brute-force scan + top-k heap merge.
+
+- **Depth-adaptive PCA-then-RP meta-splitter.** Implementable as a
+  meta-splitter that wraps a `PCASplitter` and an `AbstractRPSplitter`
+  and dispatches in its own `bpt_split!` overload — without modifying
+  the four trait types. Trigger: empirical evidence that PCA tightens
+  early splits but RP wins at depth where node samples get too small
+  for stable spectra. Defer until benchmarked.
+
+- **Ball-tree and VP-tree as next instances of the shared BPT
+  abstraction.** `src/utils/binary_partition_tree.jl` landed alongside
+  `PCATreeIndex` and validates against the recursive-binary-partition
+  + leaf-bucket meta-pattern. Ball-tree (centroid + radius router) and
+  VP-tree (vantage point + median radius router) are the two natural
+  next instances — each just supplies a `bpt_split!` and a per-tree
+  router-payload struct. The descent rule will differ from PCA/KD/RP
+  (radius-based pruning), so each tree keeps its own query path.
+
+- **KDTree refactor onto the shared BPT helper (deferred).** RPTree
+  was migrated onto BPT alongside the brutal-critic pass — BPT now has
+  two consumers (PCA + RP) and earns its keep as a real abstraction.
+  KDTree stays on its bespoke in-place `(lo, hi)` + `quickselect!`
+  layout: BPT's contract requires fresh `Vector{Int}` per split, which
+  KDTree deliberately avoids. Forcing KDTree onto BPT would require a
+  Partitioner trait change; defer until Ball-tree or VP-tree forces
+  the question.
 
 ### Benchmark harness fairness (`benchmarking/`)
 
 The harness is now thesis-defensible for breadth comparisons after the
-fairness pass on top of the earlier JIT-warmup, thread-control,
-data-marshalling, and native-batch-query fixes (`d19aaad`, `f9765dc`).
-Specific QPS claims in the thesis still come from focused fair-compare
-scripts in `scripts/perf/`, not this harness — `--reps` median + IQR
-here is for breadth-stability, not headline numbers.
+fairness pass (`--reps`, split-timing, build-warmup, memory tracking,
+comparable-groups). Specific QPS claims in the thesis still come from
+focused fair-compare scripts in `scripts/perf/`, not this harness.
 
-What landed in the fairness pass:
+What landed:
 
-- `--reps N` CLI flag with median + IQR reporting on QPS and recall.
-  Default `--reps 1` preserves single-shot behaviour for development
-  sweeps. Full Python + Julia GC (`gc.collect()`, `jl.GC.gc()`,
-  `jl.GC.gc(true)`) between reps AND between algorithms; one collection
-  runs immediately before each timed window so a stale GC pause never
-  gets charged to the rep.
-- Build-path JIT warmup at the *actual* config (not the prior 8-query
-  stub) for Julia builders (HNSW, NN-Descent) and for PyNNDescent
-  (numba JIT). Costs seconds once per (algo, dim), not per-rep.
+- `--reps N` with median + IQR reporting on QPS and recall. Full Python
+  + Julia GC (`gc.collect()`, `jl.GC.gc()`, `jl.GC.gc(true)`) between
+  reps AND between algorithms; one collection runs immediately before
+  each timed window so a stale GC pause never gets charged to the rep.
+- Build-path JIT warmup at the *actual* config (not a tiny stub) for
+  Julia builders (HNSW, NN-Descent) and for PyNNDescent (numba JIT).
+  Costs seconds once per (algo, dim).
 - Query-path warmup uses the actual `k` and batch size, going through
   `query_batch_raw` so the id-conversion path JITs too.
-- Result id-conversion (Julia 1-based -> Python 0-based) moved out of
+- Result id-conversion (Julia 1-based → Python 0-based) moved out of
   the timed region: wrappers expose `query_batch_raw` (timed,
   algorithm-side only) and `finalize_batch_ids` (untimed, marshalling
   only) via the base-class contract. Updated in `manifoldann.py` and
   `julia_external.py`. ManifoldANN batch results now go via a
   Julia-side `Matrix{Int}` so the whole batch crosses the boundary as
   one numpy view.
-- KDTree batch path no longer loops singletons from Python -- the
+- KDTree batch path no longer loops singletons from Python — the
   generic `AbstractANNIndex` matrix dispatch handles it threaded
   Julia-side.
-- Per-library effective-thread-count snapshot at run start (Julia
+- Per-library effective-thread-count check at run start (Julia
   `Threads.nthreads()`, `BLAS.get_num_threads()`,
   `faiss.omp_get_max_threads()`, `OMP_NUM_THREADS`,
-  `JULIA_NUM_THREADS`). Catches silent oversubscription and warns
-  loudly when `--threads` disagrees with `JULIA_NUM_THREADS`.
+  `JULIA_NUM_THREADS`). Catches silent oversubscription.
 - Memory reporting: peak RSS delta during build and during query phases
   via `psutil`; new CSV columns `build_rss_delta_mb`,
   `query_rss_delta_mb_max`. Library-reported `memory_usage()` hook
@@ -311,40 +320,35 @@ What landed in the fairness pass:
 - `comparable_groups:` YAML section in dataset configs names
   cross-library apples-to-apples sets. Harness validates members'
   recall ranges overlap (warns when spread > 0.10) and emits a
-  `headtohead_<group>.csv` per group when `--save-output` is on (one
-  row per algorithm at the configured params; not a Pareto frontier
-  — see open item below). Initial groups in `fashion-mnist.yaml`:
-  HNSW (MANN/HNSWlib/HNSW-jl), KDTree (MANN/SciPy/NN.jl), NN-Descent
-  (MANN/NND.jl/PyNNDescent).
-- PyNNDescent re-enabled in the registry, `algorithms.yaml`, and
-  `fashion-mnist.yaml` (Python 3.13.5 install works; the
-  Python-<3.10 comment was stale).
+  recall-vs-qps Pareto-style CSV per group when `--save-output` is on.
+  Initial groups in `fashion-mnist.yaml`: HNSW (MANN/HNSWlib/HNSW-jl),
+  KDTree (MANN/SciPy/NN.jl), NN-Descent (MANN/NND.jl/PyNNDescent).
+- PyNNDescent re-enabled in registry, `algorithms.yaml`, and
+  `fashion-mnist.yaml` (Python 3.13.5 install works; the Python <3.10
+  comment was stale).
 - NearestNeighbors.jl KDTree enabled in `fashion-mnist.yaml` (the
-  KDTree comparable group needs it). No BallTree wrapper exists or is
+  KDTree comparison group needs it). No BallTree wrapper exists or is
   planned.
 
 Open / lower-priority:
 
-- `headtohead_<group>.csv` reflects a single parameter set per
-  algorithm at run time; the genuine recall-vs-qps Pareto sweep
-  belongs in focused scripts (`scripts/perf/hnsw_fair_compare.py`,
-  etc.). The harness CSV is a single-point sanity check, not the
-  thesis Pareto curve.
+- Pareto CSVs reflect a single parameter set per algorithm at run time;
+  the genuine recall-vs-qps Pareto sweep belongs in focused scripts
+  (`scripts/perf/hnsw_fair_compare.py`, etc.). Treat the harness CSV
+  as the single-point head-to-head sanity check, not as the thesis
+  Pareto.
 - Comparable-groups validation uses point recall (or IQR if
   `--reps>1`), not a symbolic-parameter check on shared knobs (`M`,
   `ef_construction`, etc.). A symbolic check would catch a config
   typo that the recall-spread heuristic misses; deferred pending real
   false-positives.
 - Library-reported `memory_usage()` is a no-op default on every
-  wrapper; the `index_mb` CSV column is empty. Build/query peak-RSS
-  delta is populated and is sufficient for thesis-grade footprint
-  claims, but a true per-library index-footprint number would be
-  more rigorous.
+  wrapper; `index_mb` in the CSV is empty. Build/query peak-RSS delta
+  is populated and is sufficient for thesis-grade footprint claims,
+  but a true per-library index-footprint number would be more rigorous.
 - Comparable groups defined for `fashion-mnist.yaml` only; replicate
   to the other dataset configs as they get used for cross-library
   claims.
-- KDTree gap to SciPy's vectorised `cKDTree.query` is a Julia-side
-  algorithm question, not a harness issue.
 
 ### Repository hygiene
 
@@ -420,20 +424,9 @@ just the one site that bit us.
 
 ### Julia-ecosystem-native vs self-contained
 
-Three workstreams point in the same direction and should be decided
-together, not as discrete fixes:
-
-- **Distances.jl as the metric provider — alias layer landed (0834a73).**
-  `default_distance` / `default_squared_distance` / `euclidean_distance`
-  / `cosine_distance` are now thin aliases over Distances.jl types;
-  hand-rolled SIMD kernels deleted. `squared_cosine_distance` kept as a
-  function (genuine semantic mismatch — `2·(1-cos_sim)` ≠ anything in
-  Distances.jl). Microbench confirmed per-pair perf parity. Remaining
-  work: wire `Distances.pairwise!` into bruteforce builder/query for the
-  BLAS3 batch win (kmeans already uses it). 2-3 days for that
-  integration with benchmarks. Risk: BLAS-backed pairwise can produce
-  small negatives from cancellation; bit-for-bit results may differ
-  from `@simd` reduction and could perturb tie-breaking in unit tests.
+One workstream remaining (Distances.jl integration is closed — alias
+layer landed in 0834a73; bruteforce `pairwise!` wiring investigated and
+shelved, see Anti-patterns):
 
 - **Manifolds.jl as the manifold/sampler provider.** Wire as a sampler
   + ground-truth-distance backend. Adapter: `sample_manifold(M, n) →
@@ -453,17 +446,11 @@ together, not as discrete fixes:
   RecursiveArrayTools + StaticArrays + Distributions + ManifoldDiff
   (~3-5s load time). Effort: 1-2 weeks.
 
-- **NearestNeighbors.jl as an alternative ANN backend.** Mature,
-  threaded, gives us BallTree (useful for higher-d regimes where
-  KD-tree degrades). Replacing our KD-tree for parity is not worth it;
-  adding a `NearestNeighborsBallTree` index wrapper would be cheap and
-  additive.
-
 The thesis benefits from the current self-contained stance (clear
 scope, fewer moving parts). A published library benefits from
 ecosystem-native (less code to maintain, broader compatibility, easier
-for others to extend). **Decide direction first**, then sequence the
-three as one coherent effort.
+for others to extend). Manifolds.jl is the only ecosystem-integration
+move still on the table; decide post-thesis.
 
 ## Anti-patterns (don't re-explore these)
 
@@ -516,6 +503,24 @@ One-liners pointing at full context in commit history.
   helper passed through hot loop) defeated specialization more than the
   layout change saved. Trust integrated benches over microbenches in
   this codebase.
+
+- **`Distances.pairwise!` (BLAS3) batch path for `BruteForceIndex`**:
+  investigated, did not win on the realistic deployment shape. With
+  `JULIA_NUM_THREADS=4` (BLAS=8), the per-query threaded loop already
+  saturates compute; a specialised batch method calling
+  `Distances.pairwise!(metric, D, data, queries; dims=2)` once for the
+  whole batch was 0.78-0.96× on Euclidean/SqEuclidean and only 1.07-1.17×
+  on CosineDist at n=10k d=128 nq∈{100,1000} k=10. At n=20k mixed
+  (Euclidean regresses 0.86×, Cosine wins 1.15-1.41×); only at n=50k
+  does it win across the board (1.8-2.3×). Single-query also regresses
+  (0.34-0.5×) — GEMV setup cost dominates at d=128. With
+  `JULIA_NUM_THREADS=1` (BLAS=8), pairwise! wins everywhere — but
+  realistic deployment is multi-threaded Julia. Bench:
+  `scripts/bruteforce_pairwise_bench.jl`. Don't re-explore unless the
+  batch path becomes load-bearing at n≥50k specifically. The kmeans
+  `pairwise_distances!` win is genuine because k-means hits k×n with
+  k≪n on every Lloyd iteration; bruteforce hits n×nq with n,nq similar
+  scale, where threading already eats the BLAS3 advantage.
 
 - **Type-parameterise KDTree's `distance::Function`**: the change is
   idiomatic and landed (matches every other index), but the audit's
