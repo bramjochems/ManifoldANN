@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Statistics
+using DataStructures: BinaryMinHeap
 
 # ==============================================================================
 # Phase 1: Helper Functions for Flexible Distance Metrics
@@ -27,7 +28,8 @@ end
 """
     compute_shortest_paths(graph::KNNGraph, data::AbstractMatrix{T}, weight_type::Symbol) where T
 
-Compute all-pairs shortest paths using Floyd-Warshall algorithm.
+Compute all-pairs shortest paths using per-source Dijkstra (binary-heap)
+on the kNN graph's sparse adjacency representation.
 
 # Arguments
 - `graph::KNNGraph`: The k-NN graph
@@ -46,7 +48,14 @@ Respects `graph.metadata.directed`:
 - **Undirected graphs**: Edges are automatically bidirectional (i→j implies j→i)
 
 # Performance
-O(n³) time complexity. Pre-compute once and reuse for all edges.
+The kNN graph is sparse with `m ≈ n·k` edges. Per-source Dijkstra runs
+in `O(m + n log n)` per source, giving `O(n·(m + n log n))` total —
+`~40×` fewer ops than the prior Floyd-Warshall implementation at
+`n=1000, k=15`. Mirrors the Python orcml reference, which uses
+`networkx.shortest_path_length` (Dijkstra) on the same graph.
+
+Parallel edges (rare, but possible if a node lists the same neighbour
+twice) are reduced to their min weight, matching the previous behaviour.
 """
 function compute_shortest_paths(
     graph::KNNGraph,
@@ -56,44 +65,82 @@ function compute_shortest_paths(
 ) where {T}
     n = length(graph)
 
-    # Initialize distance matrix (Inf = no path)
-    dist = fill(Inf, n, n)
-
-    # Distance from node to itself is 0
-    for i in 1:n
-        dist[i, i] = 0.0
-    end
-
-    # Set edge weights based on weight_type
     is_undirected = graph.metadata !== nothing &&
                     hasfield(typeof(graph.metadata), :directed) &&
                     !graph.metadata.directed
 
+    # Build sparse adjacency: out_neighbors[u] / out_weights[u]. Computing
+    # `effective_epsilon` here means each weight is computed exactly once
+    # per (i, j) edge — same as the previous FW init loop.
+    out_neighbors = [Int[] for _ in 1:n]
+    out_weights = [Float64[] for _ in 1:n]
+
+    # `min`-merge parallel edges into a temporary dict per source so the
+    # final adjacency carries one weight per (u, v) pair.
+    edge_min = Dict{Tuple{Int,Int},Float64}()
+
+    @inline function _add_edge!(u::Int, v::Int, w::Float64)
+        key = (u, v)
+        prev = get(edge_min, key, Inf)
+        if w < prev
+            edge_min[key] = w
+        end
+    end
+
     for i in 1:n
         for j in graph[i]
             if weight_type == :euclidean
-                weight = norm(data[:, i] - data[:, j])
+                weight = Float64(norm(data[:, i] - data[:, j]))
             elseif weight_type == :normalized
-                weight = effective_epsilon(i, j, graph, data; profile = profile)
+                weight = Float64(effective_epsilon(i, j, graph, data; profile = profile))
             elseif weight_type == :unit
                 weight = 1.0
             else
                 error("Unknown weight_type: $weight_type. Use :euclidean, :normalized, or :unit")
             end
 
-            # Set edge weight for i→j
-            dist[i, j] = min(dist[i, j], weight)
-
-            # Only add reverse edge for undirected graphs
+            _add_edge!(i, j, weight)
             if is_undirected
-                dist[j, i] = min(dist[j, i], weight)
+                _add_edge!(j, i, weight)
             end
         end
     end
 
-    # Floyd-Warshall algorithm
-    for k in 1:n, i in 1:n, j in 1:n
-        dist[i, j] = min(dist[i, j], dist[i, k] + dist[k, j])
+    for ((u, v), w) in edge_min
+        push!(out_neighbors[u], v)
+        push!(out_weights[u], w)
+    end
+
+    # Per-source Dijkstra with a binary min-heap. Settled-node check via
+    # `visited[v]` — entries popped after a node is settled (stale entries
+    # from earlier `push!`es with worse keys) are skipped.
+    dist = fill(Inf, n, n)
+    visited = falses(n)
+
+    for src in 1:n
+        fill!(visited, false)
+        dist[src, src] = 0.0
+
+        heap = BinaryMinHeap{Tuple{Float64,Int}}()
+        push!(heap, (0.0, src))
+
+        while !isempty(heap)
+            d_u, u = pop!(heap)
+            visited[u] && continue
+            visited[u] = true
+
+            nbrs = out_neighbors[u]
+            wts = out_weights[u]
+            @inbounds for idx in eachindex(nbrs)
+                v = nbrs[idx]
+                visited[v] && continue
+                alt = d_u + wts[idx]
+                if alt < dist[src, v]
+                    dist[src, v] = alt
+                    push!(heap, (alt, v))
+                end
+            end
+        end
     end
 
     return dist

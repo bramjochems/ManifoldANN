@@ -451,6 +451,35 @@ worth a Float32 rerun before claiming the perf cost is real.
   through pathological LP cases. Swap to a manifold sampler (swiss roll
   / sphere / torus) before drawing thesis numbers from it.
 
+### Residual ORCManL per-edge overhead after Dijkstra swap
+
+The Floyd-Warshall → per-source Dijkstra swap in `compute_shortest_paths`
+landed and roughly halved ORCManL wall time on swiss-roll-1000-k15 Clp
+(4.56 s → 2.14 s single-thread; 265 → 125 µs/edge). StandardORC stayed
+flat (~1.07 → 1.13 s, within noise). Allocations also dropped ~5×
+(2295 → 459 MB single-thread).
+
+The remaining 1.67× gap to StandardORC (125 vs 75 µs/edge single-thread)
+sits in genuine ManL machinery: `_create_precomputed_distance_fn`
+(filtering.jl:675) builds two `Dict` lookup tables + a heap-allocated
+closure per edge, with larger `n_x × n_y` matrices than StandardORC
+because of the geodesic cost path. The TODO at filtering.jl:668-673
+already flags this — replacing the closure with a per-edge struct that
+the OT solvers consume directly is a design change, not a quick fix.
+Probably the next target if more ORCManL perf is needed; not urgent.
+
+### Stricter unit / regression / performance test split
+
+Today `test/` has only `test/unit/`; the ORCManL curvature snapshot
+(`test/unit/graphs/orcml_curvature_snapshot_tests.jl`) is a regression
+test living under `unit/`, and there is no separate perf gate (perf is
+deliberately out of `Pkg.test()` per working principle, but the boundary
+is informal). Worth restructuring to `test/unit/`, `test/regression/`,
+and a `scripts/perf_gate*` (or similar) with an explicit policy on what
+goes where. The snapshot is the first concrete regression case;
+additional ones (e.g. for the planned `_create_precomputed_distance_fn`
+redesign) will accumulate here until the layout becomes worth changing.
+
 ## Strategic decisions outstanding
 
 ### Julia-ecosystem-native vs self-contained

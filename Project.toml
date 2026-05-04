@@ -5,6 +5,7 @@ authors = ["Bram"]
 
 [deps]
 Clp = "e2554f3b-3117-50c0-817c-e040a3ddf72d"
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
 HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
 Hungarian = "e91730f6-4275-51fb-a7a0-7064cfbd3b39"
