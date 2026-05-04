@@ -207,3 +207,31 @@ end
 
 default_rptree_n_trees(n::Int) = max(3, min(12, round(Int, 2 * log10(max(n, 10)))))
 default_rptree_leaf_cap(k::Int) = min(64, 5 * k)
+
+"""
+    build_rptree_forest(data, n_trees, leaf_cap; splitter, rng) -> Vector{RPTree}
+
+Build `n_trees` independent random-projection trees over `data`. Per-tree
+RNGs are derived serially via `spawn_child_rngs` and the trees are built in
+parallel via `Threads.@threads`. The forest is deterministic for fixed `rng`
+regardless of thread count or scheduling order.
+
+Used by `RPTreeForestIndex` as the build primitive and by NN-Descent's
+`init=:rptree` seeding stage. The `splitter` argument follows the
+`AbstractRPSplitter` extension point on `build_rptree`.
+"""
+function build_rptree_forest(
+    data::AbstractMatrix{T},
+    n_trees::Int,
+    leaf_cap::Int;
+    splitter::AbstractRPSplitter = TwoPointSplitter(),
+    rng::AbstractRNG = Random.default_rng(),
+) where {T<:AbstractFloat}
+    n_trees > 0 || throw(ArgumentError("n_trees must be positive"))
+    tree_rngs = spawn_child_rngs(rng, n_trees)
+    forest = Vector{RPTree{T}}(undef, n_trees)
+    Threads.@threads for t in 1:n_trees
+        forest[t] = build_rptree(data, leaf_cap; splitter = splitter, rng = tree_rngs[t])
+    end
+    return forest
+end

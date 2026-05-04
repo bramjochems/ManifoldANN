@@ -10,7 +10,7 @@ to produce the final top-k via a bounded heap. Recall scales with `n_trees`;
 trees are independent, so the build is embarrassingly parallel — same
 threading pattern as the LSH multi-table build.
 """
-mutable struct RPTreeForestIndex{T<:AbstractFloat,D} <: AbstractANNIndex
+struct RPTreeForestIndex{T<:AbstractFloat,D} <: AbstractANNIndex
     trees::Vector{RPTree{T}}
     dimension::Int
     n_points::Int
@@ -50,17 +50,8 @@ function build_index(
     n_trees > 0 || throw(ArgumentError("n_trees must be positive"))
     leaf_cap >= 1 || throw(ArgumentError("leaf_cap must be >= 1"))
 
-    tree_rngs = spawn_child_rngs(rng, n_trees)
-    trees = Vector{RPTree{T}}(undef, n_trees)
-
-    # Each tree is independent (own RNG, own output slot). Same pattern as
-    # LSHIndex's per-table build (cd1af49). Seeds are derived serially above
-    # so determinism is independent of thread scheduling.
-    Threads.@threads for idx in 1:n_trees
-        trees[idx] = build_rptree(
-            data, Int(leaf_cap); splitter = splitter, rng = tree_rngs[idx])
-    end
-
+    trees = build_rptree_forest(
+        data, Int(n_trees), Int(leaf_cap); splitter = splitter, rng = rng)
     return RPTreeForestIndex{T,D}(trees, d, n, Int(leaf_cap), distance)
 end
 
