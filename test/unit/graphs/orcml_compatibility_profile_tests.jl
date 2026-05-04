@@ -107,4 +107,23 @@ using Statistics
                                            profile=ManifoldANNDefault())
         @test e1 ≈ e2
     end
+
+    # Regression: `_eff_eps_average` previously had a `Vector{Float64}`
+    # signature, so calling `compute_effective_epsilon` with a Float32
+    # data matrix MethodError-ed (norm-of-Float32-difference returns
+    # Float32). Both compatibility profiles must work on Float32.
+    @testset "Float32 effective_epsilon regression" begin
+        Random.seed!(11)
+        n = 30
+        data = randn(Float32, 3, n)
+        index = build_index(BruteForceIndex, data)
+        graph = build_knn_graph(index, data; k=5, directed=false)
+
+        e_default = ManifoldANN.effective_epsilon(1, 2, graph, data)
+        e_orcml   = ManifoldANN.effective_epsilon(1, 2, graph, data;
+                                                  profile=OrcmlExact())
+        @test isfinite(e_default) && e_default > 0
+        @test isfinite(e_orcml)   && e_orcml   > 0
+        @test eltype([e_default]) === Float32
+    end
 end

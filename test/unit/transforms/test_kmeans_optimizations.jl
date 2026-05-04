@@ -120,4 +120,44 @@ using LinearAlgebra
             @test D[i, i] >= 0.0f0
         end
     end
+
+    @testset "Mixed eltype: Float64 query + Float32 centroids (regression)" begin
+        # Regression for a MethodError where compute_distances_euclidean
+        # required identical eltypes between query and centroid matrix.
+        # KMeansTransform's default centroid_type=Float32 + a Float64
+        # ambient dataset hit this path and failed at query time. Same
+        # constraint on pairwise_euclidean! silently demoted Lloyd's
+        # subsample-reassignment to the generic loop.
+        Random.seed!(7)
+        d, k = 8, 4
+
+        # Single-query path
+        x_f64 = rand(Float64, d)
+        centroids_f32 = rand(Float32, d, k)
+        norms_f32 = vec(sum(abs2, centroids_f32; dims=1))
+        ds = compute_distances(x_f64, centroids_f32, Distances.Euclidean(), norms_f32)
+        @test length(ds) == k
+        @test all(isfinite, ds)
+        # Reference via generic loop
+        ref = [norm(x_f64 .- centroids_f32[:, i]) for i in 1:k]
+        @test ds ≈ ref rtol=1e-5
+
+        # Pairwise / batch path
+        n = 20
+        X_f64 = rand(Float64, d, n)
+        D = Matrix{Float64}(undef, k, n)
+        pairwise_euclidean!(D, X_f64, centroids_f32)
+        for j in 1:n, i in 1:k
+            @test D[i, j] ≈ norm(X_f64[:, j] .- centroids_f32[:, i]) rtol=1e-5
+        end
+
+        # End-to-end: KMeansTransform with default centroid_type=Float32
+        # on Float64 data should now both fit and query without error.
+        t = KMeansTransform(k=k, distance=Distances.Euclidean())  # default centroid_type=Float32
+        fit!(t, X_f64)
+        q = rand(Float64, d)
+        result = transform(t, q)
+        @test length(result.assignment.distances) == k
+        @test all(isfinite, result.assignment.distances)
+    end
 end

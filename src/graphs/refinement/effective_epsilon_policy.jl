@@ -152,8 +152,11 @@ end
 
 # Average of k neighbour distances, optionally dropping the smallest
 # entry first (orcml mimics NumPy's `np.argsort(dists)[1:k+1]`).
-function _eff_eps_average(dists::Vector{Float64}, k::Int, drop_smallest::Bool)
-    isempty(dists) && return 0.0
+function _eff_eps_average(dists::AbstractVector{<:AbstractFloat}, k::Int, drop_smallest::Bool)
+    # Accept any float eltype; the previous Vector{Float64}-only signature
+    # MethodError-ed on Float32 data because `norm(::Vector{Float32}-...)`
+    # returns Float32, leaving the ORC-ManL pipeline unusable in Float32.
+    isempty(dists) && return zero(eltype(dists))
     if drop_smallest
         sorted = sort(dists)
         lo = 2
