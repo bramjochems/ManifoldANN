@@ -1,3 +1,5 @@
+using Random
+
 """
     RandomProjectionTransform{T} <: AbstractTransform
 
@@ -37,7 +39,8 @@ end
 
 RandomProjectionTransform(; kwargs...) = RandomProjectionTransform{Float64}(; kwargs...)
 
-function fit!(transform::RandomProjectionTransform{T}, X::AbstractMatrix) where {T}
+function fit!(transform::RandomProjectionTransform{T}, X::AbstractMatrix;
+              rng::AbstractRNG=Random.default_rng()) where {T}
     ambient_dim = size(X, 1)
 
     if transform.target_dim > ambient_dim
@@ -45,9 +48,9 @@ function fit!(transform::RandomProjectionTransform{T}, X::AbstractMatrix) where 
     end
 
     if transform.projection_type == :gaussian
-        transform.projection = _generate_gaussian_projection(T, transform.target_dim, ambient_dim)
+        transform.projection = _generate_gaussian_projection(T, transform.target_dim, ambient_dim; rng=rng)
     elseif transform.projection_type == :sparse
-        transform.projection = _generate_sparse_projection(T, transform.target_dim, ambient_dim, transform.density)
+        transform.projection = _generate_sparse_projection(T, transform.target_dim, ambient_dim, transform.density; rng=rng)
     end
 
     transform.fitted = true
@@ -63,18 +66,20 @@ end
 target_dimension(transform::RandomProjectionTransform) = transform.target_dim
 preserves_data(::RandomProjectionTransform) = false
 
-function _generate_gaussian_projection(::Type{T}, target_dim::Int, ambient_dim::Int) where {T}
+function _generate_gaussian_projection(::Type{T}, target_dim::Int, ambient_dim::Int;
+                                        rng::AbstractRNG=Random.default_rng()) where {T}
     scale = one(T) / sqrt(T(target_dim))
-    randn(T, target_dim, ambient_dim) .* scale
+    randn(rng, T, target_dim, ambient_dim) .* scale
 end
 
-function _generate_sparse_projection(::Type{T}, target_dim::Int, ambient_dim::Int, density::Float64) where {T}
+function _generate_sparse_projection(::Type{T}, target_dim::Int, ambient_dim::Int, density::Float64;
+                                      rng::AbstractRNG=Random.default_rng()) where {T}
     projection = zeros(T, target_dim, ambient_dim)
     scale = sqrt(one(T) / (T(density) * T(target_dim)))
 
     for i in 1:target_dim
         for j in 1:ambient_dim
-            r = rand()
+            r = rand(rng)
             if r < density / 2
                 projection[i, j] = scale
             elseif r < density

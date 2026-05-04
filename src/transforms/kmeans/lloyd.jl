@@ -70,7 +70,10 @@ function lloyd!(
             cluster_sizes[cluster] += 1
         end
 
-        # Handle empty clusters by assigning them to the farthest point
+        # Handle empty clusters by assigning them to the farthest point.
+        # When ≥2 clusters become empty in the same iteration we must guard
+        # against picking the same data point twice; mark the chosen point's
+        # distance column with -Inf so the next farthest scan skips it.
         for i in 1:k
             if cluster_sizes[i] == 0
                 # Find point farthest from its assigned centroid
@@ -88,6 +91,11 @@ function lloyd!(
                 # Reassign this point to the empty cluster
                 new_centroids[:, i] = X[:, farthest_idx]
                 cluster_sizes[i] = 1
+                # Prevent re-promotion of the same point in this iteration's
+                # empty-cluster pass. Using -Inf in the distance row that
+                # `assignments[farthest_idx]` indexes guarantees the next
+                # farthest scan picks a different point.
+                D[assignments[farthest_idx], farthest_idx] = -Inf
             else
                 # Normalize by cluster size to get mean
                 new_centroids[:, i] ./= cluster_sizes[i]

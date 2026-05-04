@@ -7,19 +7,19 @@ using Distances
 using LinearAlgebra
 
 """
-    init_random(X::Matrix, k::Int; rng::AbstractRNG=Random.GLOBAL_RNG)
+    init_random(X::Matrix, k::Int; rng::AbstractRNG=Random.default_rng())
 
 Initialize k centroids by randomly selecting k points from X.
 
 # Arguments
 - `X`: Data matrix (d × n) where each column is a data point
 - `k`: Number of clusters
-- `rng`: Random number generator (default: GLOBAL_RNG)
+- `rng`: Random number generator (default: `Random.default_rng()`)
 
 # Returns
 - Matrix (d × k) where each column is an initial centroid
 """
-function init_random(X::Matrix, k::Int; rng::AbstractRNG=Random.GLOBAL_RNG)
+function init_random(X::Matrix, k::Int; rng::AbstractRNG=Random.default_rng())
     d, n = size(X)
     @assert k <= n "Cannot initialize $k clusters with only $n points"
 
@@ -31,7 +31,7 @@ function init_random(X::Matrix, k::Int; rng::AbstractRNG=Random.GLOBAL_RNG)
 end
 
 """
-    init_kmeans_plus_plus(X::Matrix, k::Int, distance::SemiMetric; rng::AbstractRNG=Random.GLOBAL_RNG)
+    init_kmeans_plus_plus(X::Matrix, k::Int, distance::SemiMetric; rng::AbstractRNG=Random.default_rng())
 
 Initialize k centroids using KMeans++ algorithm.
 
@@ -45,7 +45,7 @@ The KMeans++ algorithm:
 - `X`: Data matrix (d × n) where each column is a data point
 - `k`: Number of clusters
 - `distance`: Distance function from Distances.jl
-- `rng`: Random number generator (default: GLOBAL_RNG)
+- `rng`: Random number generator (default: `Random.default_rng()`)
 
 # Returns
 - Matrix (d × k) where each column is an initial centroid
@@ -57,7 +57,7 @@ function init_kmeans_plus_plus(
     X::Matrix,
     k::Int,
     distance::SemiMetric;
-    rng::AbstractRNG=Random.GLOBAL_RNG
+    rng::AbstractRNG=Random.default_rng()
 )
     d, n = size(X)
     @assert k <= n "Cannot initialize $k clusters with only $n points"
