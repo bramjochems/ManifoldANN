@@ -62,9 +62,9 @@ include(joinpath(@__DIR__, "..", "..", "..", "docs", "examples", "geodesic", "to
 # Configuration
 # ==============================================================================
 
-const RESULTS_DIR = joinpath(
-    @__DIR__, "..", "..", "..", "..", "..", "docs", "thesis", "results", "orc_results"
-)
+const RESULTS_DIR = !isempty(get(ENV, "RESULTS_DIR_OVERRIDE", "")) ?
+    ENV["RESULTS_DIR_OVERRIDE"] :
+    joinpath(@__DIR__, "..", "..", "..", "..", "..", "docs", "thesis", "results", "orc_results")
 
 # Manifold selection
 const MANIFOLD = let m = get(ENV, "MANIFOLD", "")
@@ -77,10 +77,11 @@ const T_MIN   = 1.5π
 const T_RANGE = 3π
 const H_SCALE = 10.0
 
-# Torus parameters (R2r1 only per plan)
-const TORUS_R = 2.0
-const TORUS_r = 1.0
-const TORUS_KEY = "R2r1"
+# Torus parameters (default R2r1; override via TORUS_R / TORUS_r env vars)
+const TORUS_R = !isempty(get(ENV, "TORUS_R", "")) ? parse(Float64, ENV["TORUS_R"]) : 2.0
+const TORUS_r = !isempty(get(ENV, "TORUS_r", "")) ? parse(Float64, ENV["TORUS_r"]) : 1.0
+const TORUS_KEY = !isempty(get(ENV, "TORUS_KEY", "")) ? ENV["TORUS_KEY"] :
+    "R$(replace(string(TORUS_R), "."=>"_"))r$(replace(string(TORUS_r), "."=>"_"))"
 const GEODESIC_N_GRID = 100
 
 # Shortcut ratio thresholds (for labelling — AUROC computed in analysis at multiple τ)

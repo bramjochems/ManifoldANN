@@ -51,6 +51,17 @@ FIGURES_DIR = os.path.join(SCRIPT_DIR, "..", "..", "..", "..", "..", "docs", "th
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(FIGURES_DIR, exist_ok=True)
 
+# Mutable container so command-line overrides take effect without rewriting every call site
+_OUTPUT_OVERRIDES = {"figures_dir": None}
+
+
+def _fig_out(name):
+    """Return the full path for a figure; honours --figures-out-dir."""
+    base = _OUTPUT_OVERRIDES["figures_dir"] or FIGURES_DIR
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, name)
+
+
 # ── Style ──────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
     "font.family":       "serif",
@@ -403,7 +414,7 @@ def fig_frac_shortcuts(df, manifold_key, n_grid, k_grid):
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     fig.suptitle(f"Shortcut fraction ($\\tau={tau}$, standard ORC)", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_frac_shortcuts_heatmap.pdf")
+    out = _fig_out("orc_frac_shortcuts_heatmap.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -463,7 +474,7 @@ def fig_auroc_vs_k(auroc_df, n_grid, k_grid, manifold_n=None):
         ax.legend(fontsize=7, loc="lower right")
 
     fig.suptitle(f"AUROC vs $k$ ($\\tau={tau}$, $\\sigma=0$)", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_auroc_vs_k.pdf")
+    out = _fig_out("orc_auroc_vs_k.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -555,7 +566,7 @@ def fig_roc_curves(df_edges, n_grid, k_grid, manifold_n=None):
 
     fig.suptitle(r"ROC Curves — shortcut detection ($\tau=" + f"{tau}$, $\\sigma=0$)",
                  fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_auroc_roc_curves.pdf")
+    out = _fig_out("orc_auroc_roc_curves.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -594,7 +605,7 @@ def fig_kappa_separation(df, k_grid):
 
     fig.suptitle(r"Mean $\kappa$ for shortcut vs non-shortcut edges ($\sigma=0$, $\tau=" +
                  f"{tau}$)", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_kappa_separation.pdf")
+    out = _fig_out("orc_kappa_separation.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -641,7 +652,7 @@ def fig_runtime(df_all, n_grid, k_grid):
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     fig.suptitle("Computation time comparison", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_runtime.pdf")
+    out = _fig_out("orc_runtime.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -658,14 +669,18 @@ def fig_pruning_oracle(oracle_dfs, n_grid, k_grid, manifold_n=None):
     default_n = max(n_grid)
     k_vals = [k for k in k_grid if k >= 10]
 
+    # Use sharey=False so each manifold panel can tighten its y-axis to its own
+    # data range (Swiss-roll MRE is ~10x smaller than torus, so a shared axis
+    # crushes the Swiss-roll curves and hides per-k differences).
     fig, axes = plt.subplots(1, len(manifolds), figsize=(5 * len(manifolds), 4),
-                             constrained_layout=True, sharey=True)
+                             constrained_layout=True, sharey=False)
     if len(manifolds) == 1:
         axes = [axes]
 
     for mi, m in enumerate(manifolds):
         ax = axes[mi]
         sel_n = manifold_n.get(m, default_n) if manifold_n else default_n
+        panel_vals = []
         for var in ORC_VARIANTS:
             for k in k_vals:
                 sub = oracle_dfs[(oracle_dfs["manifold"] == m) &
@@ -679,6 +694,14 @@ def fig_pruning_oracle(oracle_dfs, n_grid, k_grid, manifold_n=None):
                         marker="o", markersize=4, linewidth=1.5,
                         color=VAR_COLORS[var], linestyle=VAR_LS[var],
                         label=f"{VAR_LABELS[var]}, $k={k}$")
+                panel_vals.extend(sub["mean_rel_error"].values)
+
+        # Tighten y-axis to this panel's data range plus ~10% margin so the
+        # per-k curves are visually distinguishable.
+        if panel_vals:
+            lo, hi = float(np.nanmin(panel_vals)), float(np.nanmax(panel_vals))
+            pad = max((hi - lo) * 0.10, 1e-4)
+            ax.set_ylim(max(0.0, lo - pad), hi + pad)
 
         ax.set_xlabel(r"Shortcut threshold $\tau$")
         ax.set_ylabel("Mean relative error (MRE)")
@@ -686,7 +709,7 @@ def fig_pruning_oracle(oracle_dfs, n_grid, k_grid, manifold_n=None):
         ax.legend(fontsize=7)
 
     fig.suptitle("Oracle pruning: MRE after removing ground-truth shortcuts", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_pruning_oracle.pdf")
+    out = _fig_out("orc_pruning_oracle.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -705,8 +728,10 @@ def fig_pruning_rank_comparison(rank_dfs, random_dfs, n_grid, k_grid, manifold_n
         "gabriel": "*",
     }
 
+    # sharey=False: torus MRE band sits at ~0.05 while Swiss spans 0.05-0.25,
+    # so a shared y-axis squashes the torus panel into invisibility.
     fig, axes = plt.subplots(1, len(manifolds), figsize=(6 * len(manifolds), 4.5),
-                             constrained_layout=True, sharey=True)
+                             constrained_layout=True, sharey=False)
     if len(manifolds) == 1:
         axes = [axes]
 
@@ -721,7 +746,8 @@ def fig_pruning_rank_comparison(rank_dfs, random_dfs, n_grid, k_grid, manifold_n
                            (rank_dfs["k"] == k_select) &
                            (rank_dfs["noise_std"] == noise) &
                            (rank_dfs["variant"] == "orcml") &
-                           (rank_dfs["method"] == method)].sort_values("fraction")
+                           (rank_dfs["method"] == method) &
+                           (rank_dfs["fraction"] <= 0.21)].sort_values("fraction")
             if len(sub) == 0:
                 continue
             marker = METHOD_MARKERS.get(method, "o")
@@ -745,15 +771,19 @@ def fig_pruning_rank_comparison(rank_dfs, random_dfs, n_grid, k_grid, manifold_n
                 ax.fill_between(rand_agg["fraction"] * 100,
                                 rand_agg["mean"] - rand_agg["std"],
                                 rand_agg["mean"] + rand_agg["std"],
-                                alpha=0.15, color="gray")
+                                alpha=0.08, color="gray")
 
         ax.set_xlabel("Fraction removed (%)")
         ax.set_ylabel("Mean relative error (MRE)")
         ax.set_title(f"{MANIFOLD_LABELS.get(m, m)}\n$k={k_select}$, $n={sel_n}$, $\\sigma=0$")
         ax.legend(fontsize=6, loc="best")
+        # Some pruning methods (e.g. Gabriel single-shot) can remove ~80% of
+        # edges; restrict the x-axis to the comparable rank/random regime so
+        # the meaningful 0–20% range is not visually compressed.
+        ax.set_xlim(0, 21)
 
     fig.suptitle("Pruning method comparison (ORC-ManL)", fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_pruning_rank_comparison.pdf")
+    out = _fig_out("orc_pruning_rank_comparison.pdf")
     fig.savefig(out)
     plt.close(fig)
     print(f"  Saved {out}")
@@ -813,8 +843,220 @@ def fig_pruning_mre_vs_fraction(rank_dfs, random_dfs, n_grid, k_grid, manifold_n
 
     fig.suptitle(f"ORC rank-based pruning: MRE vs edge removal ($\\sigma=0$)",
                  fontsize=11)
-    out = os.path.join(FIGURES_DIR, "orc_pruning_mre_vs_fraction.pdf")
+    out = _fig_out("orc_pruning_mre_vs_fraction.pdf")
     fig.savefig(out)
+    plt.close(fig)
+    print(f"  Saved {out}")
+
+
+# ==============================================================================
+# Additional thesis figures (Chapter 5: torus-only and clean-Swiss-roll views)
+# ==============================================================================
+
+# Map manifold key -> R/r ratio for torus rows. Both `R3r2`/`R4r1` and the
+# float-stringified naming `R1_5r1_0`/`R4_0r1_0` are recognised.
+TORUS_RATIO_KEYS = {
+    "R3r2":     1.5,   # R/r = 3/2
+    "R1_5r1_0": 1.5,   # R/r = 1.5/1.0 (float-stringified naming)
+    "R2r1":     2.0,
+    "R4r1":     4.0,
+    "R4_0r1_0": 4.0,   # R/r = 4.0/1.0 (float-stringified naming)
+    "R8r2":     4.0,
+}
+
+
+def _torus_keys_present(df):
+    """Return torus manifold keys present in df, sorted by their R/r ratio."""
+    keys = [m for m in df["manifold"].unique() if m in TORUS_RATIO_KEYS or m.startswith("R")]
+    return sorted(keys, key=lambda m: TORUS_RATIO_KEYS.get(m, 99.0))
+
+
+def _torus_label(key):
+    if key in TORUS_RATIO_KEYS:
+        return rf"Torus $R/r={TORUS_RATIO_KEYS[key]:g}$"
+    return f"Torus {key}"
+
+
+def fig_torus_frac_shortcuts_heatmap(df_torus, n_grid, k_grid):
+    """Per-(R/r) torus shortcut-fraction heatmap.
+
+    One row per torus aspect ratio present in the data; columns: σ=0, σ=0.5.
+    Mirrors the layout of fig_frac_shortcuts but stacks rows instead of
+    multiplexing manifolds into a single row.
+    """
+    tau = PRIMARY_TAU
+    noises = [0.0, 0.5]
+    torus_keys = _torus_keys_present(df_torus)
+    if not torus_keys:
+        print("  [skip] No torus manifold keys present — skipping torus shortcut heatmap")
+        return
+
+    # Shared color scale across all panels
+    all_vals = []
+    for m in torus_keys:
+        for noise in noises:
+            sub = df_torus[(df_torus["manifold"] == m) &
+                           (df_torus["noise_std"] == noise) & (df_torus["tau"] == tau) &
+                           (df_torus["variant"] == "standard")]
+            if len(sub) > 0:
+                all_vals.extend(sub["frac_shortcuts"].values)
+    vmin = 0.0
+    vmax = min(1.0, np.nanpercentile(all_vals, 98)) if all_vals else 1.0
+
+    n_rows = len(torus_keys)
+    fig, axes = plt.subplots(n_rows, len(noises),
+                             figsize=(8, 3 * n_rows),
+                             constrained_layout=True, squeeze=False)
+
+    for ri, m in enumerate(torus_keys):
+        for j, noise in enumerate(noises):
+            ax = axes[ri, j]
+            sub = df_torus[(df_torus["manifold"] == m) &
+                           (df_torus["noise_std"] == noise) & (df_torus["tau"] == tau) &
+                           (df_torus["variant"] == "standard")]
+            mat = np.full((len(n_grid), len(k_grid)), np.nan)
+            for ni, n in enumerate(n_grid):
+                for ki, k in enumerate(k_grid):
+                    cell = sub[(sub["n"] == n) & (sub["k"] == k)]
+                    if len(cell) >= 1:
+                        mat[ni, ki] = cell["frac_shortcuts"].mean()
+
+            im = ax.imshow(mat, aspect="auto", origin="upper",
+                           vmin=vmin, vmax=vmax, cmap="YlOrRd")
+            ax.set_xticks(range(len(k_grid)));  ax.set_xticklabels(k_grid)
+            ax.set_yticks(range(len(n_grid)));  ax.set_yticklabels(n_grid)
+            ax.set_xlabel("$k$");  ax.set_ylabel("$n$")
+            for ni in range(len(n_grid)):
+                for ki in range(len(k_grid)):
+                    v = mat[ni, ki]
+                    if not np.isnan(v):
+                        ax.text(ki, ni, f"{v:.2f}", ha="center", va="center",
+                                fontsize=7, color="black" if v < 0.5 * vmax + 0.5 * vmin else "white")
+            sig = f"$\\sigma={noise}$"
+            ax.set_title(f"{_torus_label(m)}, {sig}")
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    fig.suptitle(f"Torus shortcut fraction ($\\tau={tau}$, standard ORC)", fontsize=11)
+    out = _fig_out("orc_torus_frac_shortcuts_heatmap.pdf")
+    fig.savefig(out)
+    fig.savefig(out.replace(".pdf", ".png"))
+    plt.close(fig)
+    print(f"  Saved {out}")
+
+
+def fig_f1_vs_k_clean(df_swiss, k_grid):
+    """F1 (at κ=0 threshold) vs k for the clean Swiss roll, ORC vs ORC-ManL.
+
+    Two-column layout: left = standard ORC, right = ORC-ManL. F1 averaged
+    across n; individual n curves are overlaid in lighter colors.
+    """
+    tau = PRIMARY_TAU
+    noise = 0.0
+    sub = df_swiss[(df_swiss["noise_std"] == noise) & (df_swiss["tau"] == tau)]
+    if len(sub) == 0 or "f1_0" not in sub.columns:
+        print("  [skip] No f1_0 column or no clean Swiss data — skipping F1 vs k clean")
+        return
+
+    n_vals = sorted(sub["n"].unique().tolist())
+    fig, axes = plt.subplots(1, len(ORC_VARIANTS), figsize=(9, 3.5),
+                             constrained_layout=True, sharey=True)
+
+    n_colors = plt.cm.viridis(np.linspace(0.15, 0.85, max(len(n_vals), 1)))
+
+    for j, variant in enumerate(ORC_VARIANTS):
+        ax = axes[j]
+        var_sub = sub[sub["variant"] == variant]
+        for ci, n_val in enumerate(n_vals):
+            row = var_sub[var_sub["n"] == n_val].sort_values("k")
+            if len(row) == 0:
+                continue
+            ax.plot(row["k"], row["f1_0"], color=n_colors[ci],
+                    marker="o", markersize=4, linewidth=1.0, alpha=0.65,
+                    label=f"$n={n_val}$")
+        mean_curve = (var_sub.groupby("k")["f1_0"].mean().reset_index()
+                                .sort_values("k"))
+        if len(mean_curve) > 0:
+            ax.plot(mean_curve["k"], mean_curve["f1_0"],
+                    color=VAR_COLORS[variant], linestyle="-",
+                    marker="s", markersize=6, linewidth=2.0,
+                    label=f"Mean over $n$")
+        ax.set_xlabel("$k$");  ax.set_ylabel("F1 at $\\kappa=0$")
+        ax.set_xlim(k_grid[0] - 1, k_grid[-1] + 1)
+        ax.set_ylim(-0.02, 1.02)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_title(f"{VAR_LABELS[variant]}")
+        ax.legend(fontsize=7, loc="best")
+
+    fig.suptitle(r"F1 at $\kappa=0$ vs $k$ — clean Swiss roll ($\sigma=0$, $\tau=" +
+                 f"{tau}$)", fontsize=11)
+    out = _fig_out("orc_f1_vs_k_clean.pdf")
+    fig.savefig(out)
+    fig.savefig(out.replace(".pdf", ".png"))
+    plt.close(fig)
+    print(f"  Saved {out}")
+
+
+def fig_torus_kappa_separation(df_torus, k_grid):
+    """Mean κ for shortcut vs non-shortcut edges on the torus, per ORC variant.
+
+    Two-column layout: standard ORC (left) and ORC-ManL (right). When multiple
+    torus aspect ratios are present, each ratio is overlaid as its own pair of
+    curves; otherwise we degrade gracefully to a single (R/r=2) view.
+    """
+    tau = PRIMARY_TAU
+    noise = 0.0
+    torus_keys = _torus_keys_present(df_torus)
+    if not torus_keys:
+        print("  [skip] No torus data — skipping torus kappa separation")
+        return
+
+    fig, axes = plt.subplots(1, len(ORC_VARIANTS), figsize=(9, 3.5),
+                             constrained_layout=True, sharey=True)
+
+    if len(torus_keys) > 1:
+        ratio_colors = plt.cm.plasma(np.linspace(0.15, 0.75, len(torus_keys)))
+    else:
+        ratio_colors = [None]
+
+    for j, variant in enumerate(ORC_VARIANTS):
+        ax = axes[j]
+        for ri, m in enumerate(torus_keys):
+            sub = df_torus[(df_torus["manifold"] == m) &
+                           (df_torus["variant"] == variant) &
+                           (df_torus["noise_std"] == noise) & (df_torus["tau"] == tau)]
+            k_vals, sc_means, nsc_means = [], [], []
+            for k in k_grid:
+                ks = sub[sub["k"] == k]
+                if len(ks) > 0:
+                    k_vals.append(k)
+                    sc_means.append(ks["mean_kappa_shortcuts"].mean())
+                    nsc_means.append(ks["mean_kappa_non_shortcuts"].mean())
+            if not k_vals:
+                continue
+            base_color = (ratio_colors[ri] if len(torus_keys) > 1
+                          else VAR_COLORS[variant])
+            label_suffix = f" ({_torus_label(m)})" if len(torus_keys) > 1 else ""
+            ax.plot(k_vals, nsc_means, color=base_color, linestyle="-",
+                    marker="s", linewidth=1.5, markersize=5,
+                    label=f"Non-shortcut{label_suffix}")
+            ax.plot(k_vals, sc_means, color=base_color, linestyle="--",
+                    marker="o", linewidth=1.5, markersize=5,
+                    label=f"Shortcut{label_suffix}")
+            if len(torus_keys) == 1:
+                ax.fill_between(k_vals, sc_means, nsc_means,
+                                alpha=0.12, color=base_color)
+        ax.axhline(0, color="gray", linewidth=0.7, linestyle=":")
+        ax.set_xlabel("$k$");  ax.set_ylabel(r"Mean $\kappa$")
+        ax.set_xlim(k_grid[0] - 1, k_grid[-1] + 1)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_title(f"{VAR_LABELS[variant]}")
+        ax.legend(fontsize=7, loc="best")
+
+    fig.suptitle(r"Torus: mean $\kappa$ for shortcut vs non-shortcut edges ($\sigma=0$, $\tau=" +
+                 f"{tau}$)", fontsize=11)
+    out = _fig_out("orc_torus_kappa_separation.pdf")
+    fig.savefig(out)
+    fig.savefig(out.replace(".pdf", ".png"))
     plt.close(fig)
     print(f"  Saved {out}")
 
@@ -862,8 +1104,18 @@ def main():
     parser = argparse.ArgumentParser(description="ORC experiment analysis (v2)")
     parser.add_argument("--skip-figures", action="store_true", help="Skip figure generation")
     parser.add_argument("--swiss-dir", type=str, help="Swiss roll run directory")
-    parser.add_argument("--torus-dir", type=str, help="Torus run directory")
+    parser.add_argument("--torus-dir", type=str, action="append", default=None,
+                        help="Torus run directory; pass multiple times to combine "
+                             "torus runs at different R/r aspect ratios")
+    parser.add_argument("--figures-out-dir", type=str, default=None,
+                        help="Override the directory where PDFs/PNGs are written "
+                             "(default: docs/thesis/figures). Useful for comparing "
+                             "regenerated figures without overwriting the originals.")
     args = parser.parse_args()
+
+    if args.figures_out_dir:
+        _OUTPUT_OVERRIDES["figures_dir"] = os.path.abspath(args.figures_out_dir)
+        print(f"Figures output overridden -> {_OUTPUT_OVERRIDES['figures_dir']}")
 
     print("=" * 80)
     print("ORC EXPERIMENT — UNIFIED ANALYSIS (v2)")
@@ -871,7 +1123,11 @@ def main():
 
     # ── Find run directories ──────────────────────────────────────────────────
     swiss_dir = args.swiss_dir or find_latest_run_dir("swiss_roll")
-    torus_dir = args.torus_dir or find_latest_run_dir("torus")
+    if args.torus_dir:
+        torus_dirs = list(args.torus_dir)
+    else:
+        latest_torus = find_latest_run_dir("torus")
+        torus_dirs = [latest_torus] if latest_torus is not None else []
 
     df_raw_list = []
     df_edges_list = []
@@ -882,8 +1138,11 @@ def main():
     n_grids = {}
     k_grids = {}
 
-    for label, run_dir, prefix in [("Swiss roll", swiss_dir, "swiss_roll"),
-                                    ("Torus", torus_dir, "torus")]:
+    sources = [("Swiss roll", swiss_dir, "swiss_roll")]
+    for td in torus_dirs:
+        sources.append((f"Torus ({os.path.basename(td)})", td, "torus"))
+
+    for label, run_dir, prefix in sources:
         if run_dir is None:
             print(f"\n[warn] No {label} run directory found — skipping")
             continue
@@ -983,6 +1242,16 @@ def main():
             sk = k_grids.get("swiss", all_k)
             fig_frac_shortcuts(swiss_raw, "swiss", sn, sk)
             fig_kappa_separation(swiss_raw, sk)
+            # Clean Swiss roll F1 vs k (Chapter 5, Fig 5.5)
+            fig_f1_vs_k_clean(swiss_raw, sk)
+
+        # Torus-only figures (Chapter 5, Fig 5.2 and Fig 5.7)
+        torus_raw = df_all_raw[df_all_raw["manifold"].astype(str).str.startswith("R")]
+        if torus_raw is not None and len(torus_raw) > 0:
+            tn = sorted(torus_raw["n"].unique().tolist())
+            tk = sorted(torus_raw["k"].unique().tolist())
+            fig_torus_frac_shortcuts_heatmap(torus_raw, tn, tk)
+            fig_torus_kappa_separation(torus_raw, tk)
 
         if auroc_df is not None and len(auroc_df) > 0:
             fig_auroc_vs_k(auroc_df, all_n, all_k, manifold_n=manifold_n)
