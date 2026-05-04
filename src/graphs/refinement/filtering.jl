@@ -378,9 +378,23 @@ end
 """
     filter_graph(graph, data; curvature_threshold=0.0, solver=HungarianSolver(),
                  fallback_solver=GenericOTSolver(), distance_fn=nothing,
-                 min_neighbors=1, verbose=false)
+                 min_neighbors=1, use_threading=true, verbose=false)
 
 Filter a kNN graph by removing edges with curvature below threshold.
+
+This is a thin post-processing wrapper around [`compute_all_curvatures`](@ref):
+curvatures are computed once via the shared edge-enumeration path
+([`_collect_edges_to_process`](@ref)) and threaded edge processing, then a
+per-node sort-and-prune pass keeps the highest-curvature neighbors subject
+to `curvature_threshold` and `min_neighbors`.
+
+Uses [`StandardORC`](@ref) as the variant — neighborhoods include the edge
+endpoints and the cost/denominator metric defaults to Euclidean. Pass a
+custom `distance_fn` to override the metric (the same kwarg is forwarded
+to `compute_all_curvatures`).
+
+Folded with `compute_all_curvatures` in 2026-05 to eliminate a divergent
+second code path; see commit history.
 """
 function filter_graph(
     graph::KNNGraph,
@@ -390,43 +404,22 @@ function filter_graph(
     fallback_solver::AbstractOTSolver=SinkhornSolver(),
     distance_fn::Union{Nothing,Function}=nothing,
     min_neighbors::Int=1,
+    use_threading::Bool=true,
     verbose::Bool=false
 ) where {T}
     n_nodes = length(graph)
     min_neighbors >= 1 || throw(ArgumentError("min_neighbors must be >= 1"))
 
-    dist_fn = distance_fn === nothing ? (i, j) -> norm(data[:, i] - data[:, j]) : distance_fn
-
-    verbose && println("Building node neighborhoods...")
-    neighborhoods = Dict{Int,NodeNeighborhood{Float64}}(
-        i => uniform_neighborhood(i, graph[i], Float64) for i in 1:n_nodes
+    verbose && println("Computing edge curvatures (via compute_all_curvatures)...")
+    edge_curvatures = compute_all_curvatures(
+        graph, data;
+        variant = StandardORC(),
+        solver = solver,
+        fallback_solver = fallback_solver,
+        use_threading = use_threading,
+        verbose = verbose,
+        distance_fn = distance_fn,
     )
-
-    verbose && println("Computing edge curvatures...")
-    edge_curvatures = Dict{Tuple{Int,Int},CurvatureResult{Float64}}()
-
-    for x in 1:n_nodes
-        for y in graph[x]
-            haskey(edge_curvatures, (x, y)) && continue
-
-            edge_dist = dist_fn(x, y)
-            edge_view = create_edge_view(neighborhoods[x], neighborhoods[y], edge_dist)
-
-            active_solver = can_handle(solver, edge_view) ? solver : fallback_solver
-            result = compute_curvature(active_solver, edge_view, dist_fn)
-            edge_curvatures[(x, y)] = result
-
-            # `y in graph[x]` is tautological in this loop; only check
-            # the reverse direction.
-            if x in graph[y]
-                edge_curvatures[(y, x)] = CurvatureResult{Float64}(
-                    y, x, result.curvature, result.wasserstein_distance,
-                    result.edge_distance, result.solver_type
-                )
-            end
-        end
-        verbose && (x % 100 == 0) && println("  Processed $x / $n_nodes nodes")
-    end
 
     verbose && println("Filtering edges...")
     filtered_neighbors = Vector{Vector{Int}}(undef, n_nodes)
@@ -658,8 +651,26 @@ end
 """
     _create_precomputed_distance_fn(edge_view, data, dist_fn)
 
-Create a distance function with pre-computed distance matrix for the edge's neighborhood.
-This avoids redundant norm() computations during optimal transport solving.
+Create a distance function with pre-computed distance matrix for the edge's
+neighborhood. This avoids redundant norm() computations during optimal
+transport solving.
+
+The pre-computed matrix is allocated as `Matrix{T}` where `T` is the eltype
+of the [`EdgeNeighborhoodView{T}`](@ref). For Float32 graphs this avoids an
+unnecessary Float64 promotion + extra allocation.
+
+# Errors
+Raises `error(...)` if the OT solver queries a node outside the edge's
+neighborhood — by construction this cannot happen, so a query for a
+non-neighborhood node is a logic bug elsewhere (silent fallback would
+mask it as a numeric drift).
+
+# Performance follow-up (TODO_cleanup)
+The closure-allocation-per-edge cost (two `Dict` lookup tables + a
+heap-allocated closure for every edge in the graph) dominates wall time on
+large graphs. Replacing the closures with a per-edge struct that the OT
+solvers consume directly is a design change — flagged for a follow-up
+cleanup pass, not part of this mechanical fix.
 """
 function _create_precomputed_distance_fn(
     edge_view::EdgeNeighborhoodView{T},
@@ -670,19 +681,28 @@ function _create_precomputed_distance_fn(
     all_nodes_x = vcat(edge_view.shared, edge_view.unique_x)
     all_nodes_y = vcat(edge_view.shared, edge_view.unique_y)
 
-    # Pre-compute all pairwise distances
+    # Pre-compute all pairwise distances at the view's working precision
     n_x, n_y = length(all_nodes_x), length(all_nodes_y)
-    dist_matrix = Matrix{Float64}(undef, n_x, n_y)
+    dist_matrix = Matrix{T}(undef, n_x, n_y)
 
     for i in 1:n_x, j in 1:n_y
-        dist_matrix[i, j] = Float64(dist_fn(all_nodes_x[i], all_nodes_y[j]))
+        dist_matrix[i, j] = T(dist_fn(all_nodes_x[i], all_nodes_y[j]))
     end
 
     # Create lookup dictionaries for fast indexing
     x_idx_map = Dict(node => i for (i, node) in enumerate(all_nodes_x))
     y_idx_map = Dict(node => j for (j, node) in enumerate(all_nodes_y))
 
-    # Return closure that looks up pre-computed distances
+    x_id = edge_view.x_id
+    y_id = edge_view.y_id
+
+    # Return closure that looks up pre-computed distances. By construction,
+    # the OT solver only queries (node_i, node_j) with node_i in N(x) and
+    # node_j in N(y) — both must be in the lookup tables. A miss indicates
+    # a logic bug upstream; raise rather than silently falling back to the
+    # raw `dist_fn` (which would mask the bug as numeric drift, since the
+    # OT cost would be computed from a different distance than the rest of
+    # the matrix).
     return function(node_i::Int, node_j::Int)
         i = get(x_idx_map, node_i, 0)
         j = get(y_idx_map, node_j, 0)
@@ -690,8 +710,10 @@ function _create_precomputed_distance_fn(
         if i > 0 && j > 0
             return dist_matrix[i, j]
         else
-            # Fallback for nodes not in the neighborhood (shouldn't happen)
-            return dist_fn(node_i, node_j)
+            error("_create_precomputed_distance_fn: node ($node_i, $node_j) " *
+                  "is outside the neighborhood of edge ($x_id, $y_id). " *
+                  "This indicates a logic bug — the OT solver should only " *
+                  "query nodes in N(x) × N(y).")
         end
     end
 end

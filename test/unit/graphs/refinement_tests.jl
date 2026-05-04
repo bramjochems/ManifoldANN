@@ -297,4 +297,51 @@ using Random
         @test stats.n_positive == 0
         @test stats.n_negative == 0
     end
+
+    @testset "_create_precomputed_distance_fn - eltype propagation (Float32)" begin
+        # Build a Float32 EdgeNeighborhoodView and verify the precomputed
+        # distance closure returns Float32 values (not promoted to Float64).
+        x_neighbors = [3, 4, 5, 6]
+        y_neighbors = [4, 5, 7, 8]
+
+        x_nb = uniform_neighborhood(1, x_neighbors, Float32)
+        y_nb = uniform_neighborhood(2, y_neighbors, Float32)
+        edge_view = create_edge_view(x_nb, y_nb, 1.5f0)
+
+        @test edge_view isa ManifoldANN.EdgeNeighborhoodView{Float32}
+
+        # Stub data and a Float32-returning dist_fn. The precomputed matrix
+        # should be Matrix{Float32}; the closure should return Float32.
+        data = randn(Float32, 3, 10)
+        dist_fn = (i::Int, j::Int) -> norm(data[:, i] - data[:, j])
+
+        pre_fn = ManifoldANN._create_precomputed_distance_fn(edge_view, data, dist_fn)
+
+        # In-neighborhood lookups return Float32 with the matched value.
+        for ni in x_neighbors, nj in y_neighbors
+            d = pre_fn(ni, nj)
+            @test d isa Float32
+            @test d ≈ Float32(dist_fn(ni, nj))
+        end
+    end
+
+    @testset "_create_precomputed_distance_fn - errors on out-of-neighborhood node" begin
+        # The closure must raise rather than silently fall back to dist_fn,
+        # so that an upstream logic bug surfaces immediately.
+        x_nb = uniform_neighborhood(1, [3, 4], Float64)
+        y_nb = uniform_neighborhood(2, [4, 5], Float64)
+        edge_view = create_edge_view(x_nb, y_nb, 1.0)
+
+        data = randn(2, 10)
+        dist_fn = (i::Int, j::Int) -> norm(data[:, i] - data[:, j])
+
+        pre_fn = ManifoldANN._create_precomputed_distance_fn(edge_view, data, dist_fn)
+
+        # Querying a node outside the neighborhood raises.
+        @test_throws ErrorException pre_fn(99, 4)
+        @test_throws ErrorException pre_fn(3, 99)
+
+        # In-neighborhood query still works.
+        @test pre_fn(3, 4) ≈ dist_fn(3, 4)
+    end
 end

@@ -170,12 +170,22 @@ function refine_path(method::SubdivisionSmoothing,
     # Step 1: Subdivide the path
     dense_points = subdivide_path(data, path, method.subdivisions)
 
+    # Build a KDTree once for nearest-graph-node queries during smoothing.
+    # `find_local_geometry` is invoked from the inner smoothing loop with
+    # complexity O(path_length × iterations × subdivisions × n_nodes) when
+    # the lookup is a linear scan. A KDTree (Euclidean, the metric the
+    # scan uses) drops each call to ~O(log n_nodes). Falls back to `nothing`
+    # for eltypes the KDTree can't index, in which case `find_local_geometry`
+    # uses the legacy O(n) scan.
+    kdtree = _build_local_geometry_kdtree(data)
+
     # Step 2: Iteratively smooth via averaging + tangent projection
     dense_points = smooth_path_on_manifold(
         method, model, data, dense_points, path;
         max_iterations=method.max_iterations,
         tolerance=method.tolerance,
-        damping=method.damping
+        damping=method.damping,
+        kdtree=kdtree,
     )
 
     # Step 3: Compute arc length
@@ -183,6 +193,27 @@ function refine_path(method::SubdivisionSmoothing,
     distance = sum(segment_lengths)
 
     RefinedPath{T}(dense_points, distance, path, segment_lengths)
+end
+
+"""
+    _build_local_geometry_kdtree(data) -> Union{KDTreeIndex, Nothing}
+
+Build a Euclidean KDTree over the columns of `data` for use by
+[`find_local_geometry`](@ref). Returns `nothing` for eltypes the KDTree
+backend can't handle (non-`BlasFloat`), so callers can transparently
+fall back to the legacy O(n) scan.
+
+Keeps the refinement code free of an explicit `try/catch` on the build —
+the `T <: BlasFloat` gate matches the KDTreeIndex constructor's accepted
+types (and is the only failure mode that's a "type doesn't fit" rather
+than a real error).
+"""
+function _build_local_geometry_kdtree(data::AbstractMatrix{T}) where {T}
+    if T <: LinearAlgebra.BlasFloat
+        return build_index(KDTreeIndex, data)
+    else
+        return nothing
+    end
 end
 
 """
@@ -230,7 +261,8 @@ function smooth_path_on_manifold(method::SubdivisionSmoothing,
                                   original_path::Vector{Int};
                                   max_iterations::Int=20,
                                   tolerance::Float64=1e-4,
-                                  damping::Float64=0.5) where T
+                                  damping::Float64=0.5,
+                                  kdtree=nothing) where T
     n = length(points)
     if n < 3
         return points  # Nothing to smooth
@@ -245,7 +277,7 @@ function smooth_path_on_manifold(method::SubdivisionSmoothing,
         # Smooth interior points only (keep endpoints fixed)
         for i in 2:n-1
             # Find local tangent plane (interpolate from nearby graph nodes)
-            geom = find_local_geometry(model, data, points[i])
+            geom = find_local_geometry(model, data, points[i]; kdtree=kdtree)
 
             if supports_projection(geom)
                 # Unwrap if EstimatedGeometry
@@ -294,28 +326,50 @@ function smooth_path_on_manifold(method::SubdivisionSmoothing,
 end
 
 """
-    find_local_geometry(model, data, query_point)
+    find_local_geometry(model, data, query_point; kdtree=nothing)
 
 Find or interpolate local geometry at a query point.
 
 Uses the nearest graph node's geometry as an approximation.
+
+# Performance
+
+If `kdtree` is supplied (a [`KDTreeIndex`](@ref) over `data`), the nearest
+graph node is found via a single `query(kdtree, data, q, 1)` call, giving
+~O(log n) lookup. Otherwise this falls back to a linear O(n) scan. The
+public `refine_path` entry points build a KDTree once and pass it through
+to avoid the quadratic blow-up of repeated linear scans inside the
+smoothing loop.
+
+The KDTree is Euclidean (matches the metric the legacy scan uses); the
+nearest-neighbor result is identical up to ties (which `node_geometry` is
+indifferent to).
 """
 function find_local_geometry(model::GeodesicDistanceModel,
                               data::AbstractMatrix{T},
-                              query_point::AbstractVector{T}) where T
-    # Find nearest node in the graph
+                              query_point::AbstractVector{T};
+                              kdtree=nothing) where T
     wg = model.weighted_graph
 
-    # Simple approach: find nearest among all graph nodes
-    nearest_idx = 1
-    min_dist = norm(query_point - data[:, 1])
-
-    for i in 2:length(wg)
-        d = norm(query_point - data[:, i])
-        if d < min_dist
-            min_dist = d
-            nearest_idx = i
+    nearest_idx = if kdtree !== nothing
+        # Fast path: KDTree lookup. Top-1 query returns the global nearest
+        # graph node under Euclidean distance — the same metric the linear
+        # scan uses below.
+        result = query(kdtree, data, query_point, 1)
+        isempty(result) ? 1 : result[1].id
+    else
+        # Fallback: linear scan over all graph nodes (kept for non-BlasFloat
+        # data eltypes that the KDTreeIndex cannot index).
+        idx = 1
+        min_dist = norm(query_point - data[:, 1])
+        for i in 2:length(wg)
+            d = norm(query_point - data[:, i])
+            if d < min_dist
+                min_dist = d
+                idx = i
+            end
         end
+        idx
     end
 
     return node_geometry(wg, nearest_idx)
@@ -435,6 +489,11 @@ function refine_path(method::CurvatureCorrectedDistance,
                      kwargs...) where T
     wg = model.weighted_graph
 
+    # Build a KDTree once for nearest-graph-node queries used in
+    # per-segment curvature estimation (same motivation as in
+    # SubdivisionSmoothing.refine_path).
+    kdtree = _build_local_geometry_kdtree(data)
+
     # Step 1: Apply base refinement if specified
     if !isnothing(method.base_refinement)
         base_refined = refine_path(method.base_refinement, model, data, path)
@@ -464,7 +523,7 @@ function refine_path(method::CurvatureCorrectedDistance,
         # Find nearest graph node to segment midpoint for geometry
         if i < length(points)
             midpoint = (points[i] + points[i+1]) / 2
-            geom = find_local_geometry(model, data, midpoint)
+            geom = find_local_geometry(model, data, midpoint; kdtree=kdtree)
 
             # Estimate dimensionless curvature indicator
             κ_indicator = estimate_local_curvature(geom)
