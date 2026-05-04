@@ -10,6 +10,9 @@ The build process:
 3. Returns a fully constructed MultiLevelIndex ready for querying
 """
 
+using Random: AbstractRNG
+import Random
+
 # Import transform utilities
 using ...ManifoldANN:
     has_bucketing,
@@ -17,7 +20,8 @@ using ...ManifoldANN:
     apply_transform_batch,
     default_distance,
     preserves_data,
-    take_pending_assignments!
+    take_pending_assignments!,
+    spawn_child_rngs
 
 """
     build_index(
@@ -60,9 +64,12 @@ function build_index(
     config::TransformedConfig;
     merge_strategy::AbstractMergeStrategy = SimpleMerge(),
     distance::D = default_distance,
+    rng::AbstractRNG = Random.default_rng(),
 ) where {D}
-    # Build the root TransformedIndex recursively
-    root = _build_transformed(X, config)
+    # Build the root TransformedIndex recursively. The rng is threaded so
+    # that KMeansTransform / RandomProjectionTransform fits become
+    # reproducible and re-entrant under threaded child builds.
+    root = _build_transformed(X, config; rng = rng)
 
     # Wrap in MultiLevelIndex with merge strategy and fallback distance
     return MultiLevelIndex(root, merge_strategy, distance)
@@ -87,13 +94,18 @@ This function:
 # Returns
 - TransformedIndex with fitted transform and constructed children
 """
-function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
+function _build_transformed(X::AbstractMatrix, config::TransformedConfig;
+                            rng::AbstractRNG = Random.default_rng())
     # Step 1: Treat config.transform as an immutable prototype. Make a fresh
     # copy and fit it; the user's config object is never mutated by build.
     # This is what gives each TransformedIndex its own fitted state and lets
     # us share `config.child_config` across worker tasks without races.
     transform = deepcopy(config.transform)
-    ManifoldANN.fit!(transform, X)
+    # Pass rng to fit! so KMeans / RandomProjection are reproducible. fit!
+    # methods that don't accept the kwarg ignore it via the generic
+    # AbstractTransform fallback path; transforms that recently grew an
+    # `rng` kwarg (KMeansTransform, RandomProjectionTransform) consume it.
+    _fit_transform!(transform, X, rng)
 
     # Step 2: Check if transform produces bucketing
     # Sample one point to check assignment type
@@ -148,8 +160,14 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
         children_buf = Vector{Any}(undef, n_children)
         stored_child_data = preserves ? nothing : Vector{typeof(child_inputs[1])}(undef, n_children)
 
+        # Derive per-child RNGs serially, then build children in parallel.
+        # Same pattern as RPTreeForestIndex / PCATreeForestIndex: this keeps
+        # the build deterministic regardless of thread count or scheduling.
+        child_rngs = spawn_child_rngs(rng, n_children)
+
         Threads.@threads for idx in 1:n_children
-            children_buf[idx] = _build_from_config(child_inputs[idx], config.child_config)
+            children_buf[idx] = _build_from_config(child_inputs[idx], config.child_config;
+                                                   rng = child_rngs[idx])
             if !preserves
                 stored_child_data[idx] = child_inputs[idx]
             end
@@ -185,7 +203,7 @@ function _build_transformed(X::AbstractMatrix, config::TransformedConfig)
         end
 
         # Step 3b: Build single child with transformed data
-        children = [_build_from_config(child_input, config.child_config)]
+        children = [_build_from_config(child_input, config.child_config; rng = rng)]
 
         # Step 4: Create TransformedIndex without ID mappings and with transformed data
         return TransformedIndex(
@@ -211,9 +229,13 @@ Build a terminal index from a TerminalConfig.
 # Returns
 - Constructed terminal index of type I
 """
-function _build_from_config(X::AbstractMatrix, config::TerminalConfig{I}) where I
-    # Build terminal index using the specified type and parameters
-    # Convert NamedTuple to keyword arguments
+function _build_from_config(X::AbstractMatrix, config::TerminalConfig{I};
+                            rng::AbstractRNG = Random.default_rng()) where I
+    # Build terminal index using the specified type and parameters.
+    # Convert NamedTuple to keyword arguments. The `rng` kwarg is accepted
+    # for API uniformity at the recursion site but is not forwarded to
+    # terminal builders, which use their own rng plumbing (config.params
+    # may already supply one if the caller wants determinism).
     return build_index(config.index_type, X; config.params...)
 end
 
@@ -229,10 +251,23 @@ Recursive case: build a TransformedIndex from a TransformedConfig.
 # Returns
 - TransformedIndex (recursively built)
 """
-function _build_from_config(X::AbstractMatrix, config::TransformedConfig)
+function _build_from_config(X::AbstractMatrix, config::TransformedConfig;
+                            rng::AbstractRNG = Random.default_rng())
     # Recursive case: build another TransformedIndex
-    return _build_transformed(X, config)
+    return _build_transformed(X, config; rng = rng)
 end
+
+# Dispatch helper: only forward `rng` to `fit!` for transforms whose
+# `fit!` actually accepts an `rng` kwarg. Transforms without rng (e.g.
+# PCATransform) fall through to the rng-free overload. This keeps the
+# multilevel builder backwards-compatible with transforms that haven't
+# adopted explicit rng plumbing.
+@inline _fit_transform!(t, X::AbstractMatrix, ::AbstractRNG) =
+    ManifoldANN.fit!(t, X)
+@inline _fit_transform!(t::ManifoldANN.KMeansTransform, X::AbstractMatrix, rng::AbstractRNG) =
+    ManifoldANN.fit!(t, X; rng = rng)
+@inline _fit_transform!(t::ManifoldANN.RandomProjectionTransform, X::AbstractMatrix, rng::AbstractRNG) =
+    ManifoldANN.fit!(t, X; rng = rng)
 
 @inline function _materialize_partition(X::AbstractMatrix, ids::Vector{Int})
     # Materialize a contiguous Matrix rather than a non-strided SubArray.
