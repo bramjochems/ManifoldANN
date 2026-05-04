@@ -47,6 +47,13 @@ Requirements:
 - Equal neighborhood sizes: |N(x)| = |N(y)|
 - Uniform distributions: all probabilities equal
 
+Edges that don't satisfy the requirements are routed to `fallback_solver`.
+Under `ORCManL`, asymmetric endpoint exclusion makes unequal neighborhood
+sizes the common case (~80% of edges fall back), so picking `HungarianSolver`
+as the primary solver only accelerates the equal-size minority. Pair it with
+a sensible `fallback_solver` (e.g. `ClpSolver()`) — or pick the fallback as
+primary — when running ORCManL.
+
 Complexity: O(k³) where k is neighborhood size
 
 Performance: 9x faster than wrapper version by calling Hungarian.jl directly.
