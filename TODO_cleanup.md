@@ -269,62 +269,82 @@ explicitly handling the strided/non-strided fork inside
 
 ### Benchmark harness fairness (`benchmarking/`)
 
-Cross-library numbers from the general harness are now defensible after
-the JIT-warmup, thread-control, data-marshalling, and native-batch-query
-fixes (see git log for `d19aaad` and `f9765dc`). Two fairness gaps
-remain:
+The harness is now thesis-defensible for breadth comparisons after the
+fairness pass on top of the earlier JIT-warmup, thread-control,
+data-marshalling, and native-batch-query fixes (`d19aaad`, `f9765dc`).
+Specific QPS claims in the thesis still come from focused fair-compare
+scripts in `scripts/perf/`, not this harness — `--reps` median + IQR
+here is for breadth-stability, not headline numbers.
 
-- **Single-shot timing produces unstable per-algorithm QPS for noisy
-  query variants.** At small batch sizes, between-query variance
-  dominates the timed window; reproductions on pruned-deferred NN-Descent
-  span ~2500-13500 qps across runs. **Fix shape:** `--reps N` CLI flag
-  (default 1, preserves current behaviour for development sweeps);
-  thesis-grade runs use `--reps 3` or `--reps 5` with median + IQR
-  reporting. Force `gc.collect()` and `jl.GC.gc()` between reps and
-  between algorithms.
+What landed in the fairness pass:
 
-- **Cross-library parameter sets are not automatically apples-to-apples.**
-  Each algorithm in `benchmarking/configs/*.yaml` gets its own params
-  block; some parameters mean the same thing across libraries (`k`,
-  `max_iterations`), others look similar but dial recall at different
-  rates (`ef_search` vs `max_candidates` — see "Apples-to-apples" in
-  Working principles). The harness has no automated check that parameter
-  sets correspond for cross-library pairs. **Fix shape:** a "comparable
-  groups" YAML section that names which configs are meant to be
-  cross-library apples-to-apples, plus either a check that shared
-  parameters match or a comment block in each config explaining the
-  equivalence.
+- `--reps N` CLI flag with median + IQR reporting on QPS and recall.
+  Default `--reps 1` preserves single-shot behaviour for development
+  sweeps. Full Python + Julia GC (`gc.collect()`, `jl.GC.gc()`,
+  `jl.GC.gc(true)`) between reps AND between algorithms; one collection
+  runs immediately before each timed window so a stale GC pause never
+  gets charged to the rep.
+- Build-path JIT warmup at the *actual* config (not the prior 8-query
+  stub) for Julia builders (HNSW, NN-Descent) and for PyNNDescent
+  (numba JIT). Costs seconds once per (algo, dim), not per-rep.
+- Query-path warmup uses the actual `k` and batch size, going through
+  `query_batch_raw` so the id-conversion path JITs too.
+- Result id-conversion (Julia 1-based -> Python 0-based) moved out of
+  the timed region: wrappers expose `query_batch_raw` (timed,
+  algorithm-side only) and `finalize_batch_ids` (untimed, marshalling
+  only) via the base-class contract. Updated in `manifoldann.py` and
+  `julia_external.py`. ManifoldANN batch results now go via a
+  Julia-side `Matrix{Int}` so the whole batch crosses the boundary as
+  one numpy view.
+- KDTree batch path no longer loops singletons from Python -- the
+  generic `AbstractANNIndex` matrix dispatch handles it threaded
+  Julia-side.
+- Per-library effective-thread-count snapshot at run start (Julia
+  `Threads.nthreads()`, `BLAS.get_num_threads()`,
+  `faiss.omp_get_max_threads()`, `OMP_NUM_THREADS`,
+  `JULIA_NUM_THREADS`). Catches silent oversubscription and warns
+  loudly when `--threads` disagrees with `JULIA_NUM_THREADS`.
+- Memory reporting: peak RSS delta during build and during query phases
+  via `psutil`; new CSV columns `build_rss_delta_mb`,
+  `query_rss_delta_mb_max`. Library-reported `memory_usage()` hook
+  exposed on the wrapper base; populated nowhere yet (see open items).
+- `comparable_groups:` YAML section in dataset configs names
+  cross-library apples-to-apples sets. Harness validates members'
+  recall ranges overlap (warns when spread > 0.10) and emits a
+  `headtohead_<group>.csv` per group when `--save-output` is on (one
+  row per algorithm at the configured params; not a Pareto frontier
+  — see open item below). Initial groups in `fashion-mnist.yaml`:
+  HNSW (MANN/HNSWlib/HNSW-jl), KDTree (MANN/SciPy/NN.jl), NN-Descent
+  (MANN/NND.jl/PyNNDescent).
+- PyNNDescent re-enabled in the registry, `algorithms.yaml`, and
+  `fashion-mnist.yaml` (Python 3.13.5 install works; the
+  Python-<3.10 comment was stale).
+- NearestNeighbors.jl KDTree enabled in `fashion-mnist.yaml` (the
+  KDTree comparable group needs it). No BallTree wrapper exists or is
+  planned.
 
-**Lower-priority:**
+Open / lower-priority:
 
-- Query result conversion (Julia → 0-indexed Python ids) charged to
-  Julia only — inside the `query_batch` timed region.
-  `manifoldann.py:78-86,134-156`.
-- pynndescent build (numba JIT) not warmed at the actual config — the
-  8-query warmup helps the query path, not the BUILD path. First
-  `NNDescent(...)` call still pays numba JIT inside the timed `fit()`.
-  Currently moot (PyNNDescent excluded from configs); becomes relevant
-  once enabled.
-- No memory / allocation reporting — only wall time. Thesis claims
-  about index footprint are not backed by harness output.
-- KDTree query falls through to a Python loop in
-  `manifoldann.py:324-326`. Now partially addressed by the
-  AbstractANNIndex generic batch query (KDTree gets threaded batch via
-  Julia-side dispatch). Remaining gap to SciPy's vectorised
-  `cKDTree.query` is a Julia-side algorithm question, not a harness
-  issue.
-
-**Two ann-benchmarks-style additions worth folding in:**
-
-- **Re-enable PyNNDescent in the benchmark runner.** Wrapper exists at
-  `benchmarking/benchmarking/wrappers/pynndescent.py` but excluded from
-  `benchmarking/configs/algorithms.yaml` with a stale comment about
-  Python <3.10. Recent install on Python 3.13.5 succeeded; drop the
-  comment and re-enable.
-
-- **Enable NearestNeighbors.jl in configs.** A wrapper for
-  `NearestNeighbors.KDTree` exists at `julia_external.py` and is
-  registered, but not enabled in any config. No BallTree wrapper at all.
+- `headtohead_<group>.csv` reflects a single parameter set per
+  algorithm at run time; the genuine recall-vs-qps Pareto sweep
+  belongs in focused scripts (`scripts/perf/hnsw_fair_compare.py`,
+  etc.). The harness CSV is a single-point sanity check, not the
+  thesis Pareto curve.
+- Comparable-groups validation uses point recall (or IQR if
+  `--reps>1`), not a symbolic-parameter check on shared knobs (`M`,
+  `ef_construction`, etc.). A symbolic check would catch a config
+  typo that the recall-spread heuristic misses; deferred pending real
+  false-positives.
+- Library-reported `memory_usage()` is a no-op default on every
+  wrapper; the `index_mb` CSV column is empty. Build/query peak-RSS
+  delta is populated and is sufficient for thesis-grade footprint
+  claims, but a true per-library index-footprint number would be
+  more rigorous.
+- Comparable groups defined for `fashion-mnist.yaml` only; replicate
+  to the other dataset configs as they get used for cross-library
+  claims.
+- KDTree gap to SciPy's vectorised `cKDTree.query` is a Julia-side
+  algorithm question, not a harness issue.
 
 ### Repository hygiene
 

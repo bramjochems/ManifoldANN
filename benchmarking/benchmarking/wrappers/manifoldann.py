@@ -44,9 +44,31 @@ class ManifoldANNWrapper(BaseANNWrapper):
         if not ManifoldANNWrapper._julia_initialized:
             jl.seval(f'using Pkg; Pkg.activate("{MANIFOLDANN_PATH}")')
             jl.seval("using ManifoldANN")
+            jl.seval("using LinearAlgebra")
             # Create conversion functions once
             ManifoldANNWrapper._to_matrix = jl.seval("x -> Matrix{Float32}(x)")
             ManifoldANNWrapper._to_vector = jl.seval("x -> Vector{Float32}(x)")
+            # Helper that converts a batch of Vector{Neighbor} into a
+            # Matrix{Int} of shape (k, n_queries). This lets us pull the
+            # entire batch over to Python in one numpy view via juliacall,
+            # rather than iterating Julia objects through Python `for`
+            # loops. Used in `finalize_batch_ids` (called OUTSIDE the
+            # timed region — see base.py for the contract).
+            jl.seval("""
+                function _mann_bench_neighbors_to_id_matrix(batches)
+                    n = length(batches)
+                    n == 0 && return Matrix{Int}(undef, 0, 0)
+                    k = length(batches[1])
+                    out = Matrix{Int}(undef, k, n)
+                    @inbounds for j in 1:n
+                        b = batches[j]
+                        for i in 1:k
+                            out[i, j] = b[i].id
+                        end
+                    end
+                    return out
+                end
+            """)
             ManifoldANNWrapper._julia_initialized = True
 
         self._index = None
@@ -88,15 +110,71 @@ class ManifoldANNWrapper(BaseANNWrapper):
         query so dim-specialised code paths compile."""
         pass
 
+    def warmup_build(self, dim: int, n: int = 200) -> None:
+        """Build at the *actual* config on a small synthetic dataset.
+
+        Subclasses override and call `fit()` on a small Julia matrix so
+        Julia's build-path JIT specialises on the actual integer
+        parameters (M, ef_construction, nlist, ...). Costs a few seconds
+        once per (algorithm, dim), independent of `--reps`.
+
+        Default fall-through to the cheap dim-only warmup is fine for
+        algorithms whose builders don't change shape with their config.
+        """
+        kind = type(self)._warmup_kind
+        if kind is None:
+            return
+        key = ("warmup_build", kind, int(dim), self._signature_for_warmup())
+        if key in ManifoldANNWrapper._warmed_keys:
+            return
+        try:
+            self._warmup_build_actual(dim, n)
+        except Exception as exc:
+            print(f"  ⚠ {kind} build-warmup at dim={dim} failed: {exc}")
+        ManifoldANNWrapper._warmed_keys.add(key)
+
+    def _signature_for_warmup(self):
+        """Override to include config knobs that change codegen shape."""
+        return ()
+
+    def _warmup_build_actual(self, dim: int, n: int) -> None:
+        """Subclasses implement: build the index on `randn(Float32, dim, n)`
+        with the wrapper's actual config, then run one batch query.
+        """
+        return None
+
     def _neighbors_to_ids(self, jl_neighbors):
         """Convert Julia neighbor structs to 0-indexed Python ids."""
         ids = jl.ManifoldANN.neighbor_ids(jl_neighbors)
         return [int(idx) - 1 for idx in ids]
 
     def _batch_neighbors_to_ids(self, jl_neighbor_batches):
-        """Convert Julia neighbor batches to 0-indexed Python ids."""
-        id_batches = jl.ManifoldANN.neighbor_ids(jl_neighbor_batches)
-        return [[int(idx) - 1 for idx in batch] for batch in id_batches]
+        """Convert Julia neighbor batches to 0-indexed Python ids.
+
+        Goes through a Julia-side `Matrix{Int}` (k × n_queries) so we
+        cross the Julia↔Python boundary once with a contiguous block,
+        then numpy-vectorise the 1-based-to-0-based shift.
+        """
+        id_matrix_jl = jl.seval("Main._mann_bench_neighbors_to_id_matrix")(
+            jl_neighbor_batches
+        )
+        idxs_np = np.asarray(id_matrix_jl, dtype=np.int64)
+        # idxs_np has shape (k, n_queries); transpose for per-query rows.
+        return (idxs_np - 1).T.tolist()
+
+    def set_num_threads(self, n: int) -> None:
+        """Pin BLAS threads on the Julia side so cross-library timings see
+        the same threading regime.
+
+        Julia's own thread pool is fixed at process start by
+        JULIA_NUM_THREADS; this hook only handles the BLAS-thread knob,
+        which several Julia algorithms (k-means inside IVF, linear-algebra
+        in spectral preprocessors) read at runtime.
+        """
+        try:
+            jl.seval(f"using LinearAlgebra; BLAS.set_num_threads({int(n)})")
+        except Exception:
+            pass
 
     def _get_distance_function(self):
         """Get the appropriate Julia distance function for the metric.
@@ -144,16 +222,22 @@ class ManifoldANNWrapper(BaseANNWrapper):
         `prepare_queries` (or a numpy array, which we convert as a
         fallback). The Python↔Julia boundary is crossed once.
         """
+        results_jl = self.query_batch_raw(queries, n)
+        return self.finalize_batch_ids(results_jl)
+
+    # Split-timing hooks: keep the timed region focused on the Julia
+    # `query` call. `finalize_batch_ids` (id conversion, numpy marshalling)
+    # runs OUTSIDE the timed region per the base-class contract.
+    def query_batch_raw(self, queries, n):
         if isinstance(queries, np.ndarray):
             queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
             queries_jl = self._to_matrix(queries_fortran)
         else:
             queries_jl = queries
+        return jl.query(self._index, self._data, queries_jl, n)
 
-        # Call Julia batch query function - crosses boundary only ONCE
-        results_jl = jl.query(self._index, self._data, queries_jl, n)
-
-        return self._batch_neighbors_to_ids(results_jl)
+    def finalize_batch_ids(self, raw):
+        return self._batch_neighbors_to_ids(raw)
 
     @staticmethod
     def is_available():
@@ -386,23 +470,9 @@ class ManifoldANN_KDTree(ManifoldANNWrapper):
             axis_selector=axis_symbol,
         )
 
-    def query_batch(self, queries, n):
-        """KDTreeIndex exposes only scalar queries; batch in Python.
-
-        Accepts numpy or already-prepared Julia matrix. We always loop in
-        Python anyway so the prepared Julia matrix is unused for this
-        algorithm — fall back to numpy iteration.
-        """
-        if not isinstance(queries, np.ndarray):
-            # Caller handed us a Julia matrix; we don't currently expose a
-            # cheap way to iterate Julia columns from Python, so this path
-            # is best avoided. Fall through with the assumption that the
-            # caller saved the original numpy array.
-            raise TypeError(
-                "ManifoldANN_KDTree.query_batch requires the original numpy "
-                "queries (no Julia matrix path); use a numpy array."
-            )
-        return [self.query(q, n) for q in queries]
+    # KDTreeIndex now reaches batch via the generic AbstractANNIndex
+    # matrix-dispatch path (threaded internally), so we use the inherited
+    # `query_batch_raw` — no Python-side loop.
 
     def __str__(self):
         return f"ManifoldANN-KDTree(axis_selector={self._axis_selector})"
@@ -463,6 +533,21 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
             except Exception:
                 pass
 
+    def _signature_for_warmup(self):
+        return (self._M, self._ef_construction, self._neighbor_policy)
+
+    def _warmup_build_actual(self, dim: int, n: int) -> None:
+        data = jl.seval(f"randn(Float32, {dim}, {n})")
+        qs = jl.seval(f"randn(Float32, {dim}, 16)")
+        idx = jl.build_index(
+            jl.HNSWIndex, data,
+            M=self._M, ef_construction=self._ef_construction,
+            ef_search=self._ef_search,
+            neighbor_policy=jl.Symbol(self._neighbor_policy),
+            distance=self._get_distance_function(),
+        )
+        jl.query(idx, data, qs, 5, ef_search=self._ef_search)
+
     def fit(self, X):
         """Build the HNSW index. `X` is the prepared Julia matrix."""
         self._data = X
@@ -490,17 +575,16 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
 
         return self._neighbors_to_ids(result)
 
-    def query_batch(self, queries, n):
+    def query_batch_raw(self, queries, n):
         """Batch HNSW query, respecting `ef_search`."""
         if isinstance(queries, np.ndarray):
             queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
             queries_jl = self._to_matrix(queries_fortran)
         else:
             queries_jl = queries
-        results_jl = jl.query(
+        return jl.query(
             self._index, self._data, queries_jl, n, ef_search=self._ef_search
         )
-        return self._batch_neighbors_to_ids(results_jl)
 
     def __str__(self):
         return (
@@ -667,14 +751,13 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
         result = jl.query(self._index, self._data, query_jl, n, nprobe=self._nprobe)
         return self._neighbors_to_ids(result)
 
-    def query_batch(self, queries, n):
+    def query_batch_raw(self, queries, n):
         if isinstance(queries, np.ndarray):
             queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
             queries_jl = self._to_matrix(queries_fortran)
         else:
             queries_jl = queries
-        results = jl.query(self._index, self._data, queries_jl, n, nprobe=self._nprobe)
-        return self._batch_neighbors_to_ids(results)
+        return jl.query(self._index, self._data, queries_jl, n, nprobe=self._nprobe)
 
     def __str__(self):
         return (
@@ -746,6 +829,27 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
                 except Exception:
                     pass
 
+    def _signature_for_warmup(self):
+        return (
+            self._k, self._max_iterations, self._symmetry_policy,
+            self._apply_symmetry_continuously,
+        )
+
+    def _warmup_build_actual(self, dim: int, n: int) -> None:
+        data = jl.seval(f"randn(Float32, {dim}, {n})")
+        qs = jl.seval(f"randn(Float32, {dim}, 16)")
+        sampling = jl.ManifoldANN.UniformPairSampling(self._sample_rate)
+        idx = jl.build_index(
+            jl.NNDescentIndex, data,
+            k=self._k, max_iterations=self._max_iterations,
+            convergence_threshold=self._convergence_threshold,
+            sampling_policy=sampling,
+            symmetry_policy=jl.Symbol(self._symmetry_policy),
+            apply_symmetry_continuously=self._apply_symmetry_continuously,
+            distance=self._get_distance_function(),
+        )
+        jl.query(idx, data, qs, 5, ef_search=self._ef_search)
+
     def fit(self, X):
         """Build the NN-Descent index. `X` is the prepared Julia matrix."""
         self._data = X
@@ -780,21 +884,20 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         )
         return self._neighbors_to_ids(result)
 
-    def query_batch(self, queries, n):
+    def query_batch_raw(self, queries, n):
         """Batch query variant that respects ef_search."""
         if isinstance(queries, np.ndarray):
             queries_fortran = np.asfortranarray(queries.T, dtype=np.float32)
             queries_jl = self._to_matrix(queries_fortran)
         else:
             queries_jl = queries
-        results = jl.query(
+        return jl.query(
             self._index,
             self._data,
             queries_jl,
             n,
             ef_search=self._ef_search,
         )
-        return self._batch_neighbors_to_ids(results)
 
     def __str__(self):
         symmetry_mode = "continuous" if self._apply_symmetry_continuously else "deferred"

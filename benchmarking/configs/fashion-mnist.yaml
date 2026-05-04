@@ -88,15 +88,13 @@ algorithms:
   SciPy-KDTree:
     leafsize: 32
 
-  # PyNNDescent - EXCLUDED (requires Python <3.10)
-  # To re-enable: uncomment below and add back to registry.py
-  # PyNNDescent:
-  #   n_neighbors: 30
-  #   diversify_prob: 1.0
-  #   pruning_degree_multiplier: 1.5
+  PyNNDescent:
+    n_neighbors: 30
+    diversify_prob: 1.0
+    pruning_degree_multiplier: 1.5
 
-  # NearestNeighbors-KDTree:
-  #   leafsize: 10
+  NearestNeighbors-KDTree:
+    leafsize: 10
 
   HNSW-jl:
     M: 16
@@ -110,3 +108,28 @@ algorithms:
     sample_rate: 0.5
     precision: 0.01
     max_candidates: 64
+
+# Comparable groups: cross-library configs that are intended to be
+# apples-to-apples (same algorithm class, comparable parameters). The
+# harness validates that recall ranges overlap across the group and
+# emits a head-to-head CSV per group (one row per algorithm at the
+# configured params — not a Pareto frontier; see TODO_cleanup.md).
+# Mismatched recall ranges trigger a loud warning. Add/remove members
+# as relevant.
+comparable_groups:
+  HNSW:
+    members:
+      - MANN-HNSW-diversified
+      - HNSWlib
+      - HNSW-jl
+  KDTree:
+    members:
+      - MANN-KDTree
+      - SciPy-KDTree
+      - NearestNeighbors-KDTree
+  NNDescent:
+    members:
+      - MANN-NNDescent-pruned-deferred
+      - MANN-NNDescent-full-deferred
+      - NearestNeighborDescent-jl
+      - PyNNDescent

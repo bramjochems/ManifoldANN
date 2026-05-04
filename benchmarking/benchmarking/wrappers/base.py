@@ -86,6 +86,58 @@ class BaseANNWrapper(ABC):
         """
         pass
 
+    # ------------------------------------------------------------------
+    # Optional split-timing hooks
+    # ------------------------------------------------------------------
+    #
+    # Some wrappers can do meaningful post-processing on the result of a
+    # batch query that is NOT part of the algorithm's actual work — most
+    # notably converting Julia 1-indexed neighbor structs to 0-indexed
+    # Python lists. For fairness, the harness times only the
+    # algorithm-side work and finalises ids afterwards. Wrappers that want
+    # to opt in implement `query_batch_raw` (returns an opaque object —
+    # whatever the underlying library/runtime returned) and
+    # `finalize_batch_ids` (converts that object to `List[List[int]]`).
+    # Wrappers that don't override these inherit a default that just
+    # routes through the existing `query_batch` (back-compat: nothing
+    # moves out of the timed region).
+
+    def query_batch_raw(self, queries, n):
+        """Run the batch query and return the library-native result.
+
+        Default: call `query_batch` (which already produces Python ids);
+        the matching default `finalize_batch_ids` is a no-op. Override to
+        push id-conversion / type-marshalling out of the timed region.
+        """
+        if hasattr(self, "query_batch"):
+            return self.query_batch(queries, n)
+        return [self.query(q, n) for q in queries]
+
+    def finalize_batch_ids(self, raw):
+        """Convert the result of `query_batch_raw` to `List[List[int]]`.
+
+        Default: assume `raw` is already a list-of-lists.
+        """
+        return raw
+
+    def warmup_build(self, dim: int, n: int = 200) -> None:
+        """Optional: build the index once at the actual config on a tiny
+        synthetic dataset of dim `dim` to flush build-path JIT/codegen
+        before the timed `fit()`.
+
+        Default: no-op. Wrappers backing JIT'd or staged-compilation
+        builders (Julia-via-juliacall, numba-backed PyNNDescent) override
+        this. Costs seconds once per (algorithm, dim), not per-rep.
+        """
+        return None
+
+    def memory_usage(self):
+        """Index footprint in bytes, if the underlying library exposes it.
+
+        Default: `None` (caller falls back to peak-RSS delta).
+        """
+        return None
+
     @abstractmethod
     def __str__(self) -> str:
         """Return string representation of the algorithm configuration."""
