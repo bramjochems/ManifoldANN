@@ -69,6 +69,8 @@ end
 end
 @inline _axis_contrib(m::Distances.WeightedEuclidean, e::S, axis::Int) where {S} =
     @inbounds S(m.weights[axis]) * e * e
+@inline _axis_contrib(m::Distances.WeightedCityblock, e::S, axis::Int) where {S} =
+    @inbounds S(m.weights[axis]) * e
 @inline function _axis_contrib(m::Distances.WeightedMinkowski, e::S, axis::Int) where {S}
     p = S(m.p)
     @inbounds return S(m.weights[axis]) * e^p
@@ -84,6 +86,7 @@ end
     return w^p
 end
 @inline _worst_threshold(::Distances.WeightedEuclidean, w::S) where {S} = w * w
+@inline _worst_threshold(::Distances.WeightedCityblock, w::S) where {S} = w
 @inline function _worst_threshold(m::Distances.WeightedMinkowski, w::S) where {S}
     p = S(m.p)
     return w^p
@@ -98,6 +101,7 @@ end
 @inline _kdtree_use_rolling_bound(::Distances.Cityblock)         = true
 @inline _kdtree_use_rolling_bound(::Distances.Minkowski)         = true
 @inline _kdtree_use_rolling_bound(::Distances.WeightedEuclidean) = true
+@inline _kdtree_use_rolling_bound(::Distances.WeightedCityblock) = true
 @inline _kdtree_use_rolling_bound(::Distances.WeightedMinkowski) = true
 @inline _kdtree_use_rolling_bound(_) = false
 

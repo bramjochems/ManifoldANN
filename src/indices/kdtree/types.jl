@@ -64,15 +64,14 @@ supports_mutation(::KDTreeIndex) = false
 # `SqEuclidean` is on the safe list: the query path uses an incremental
 # rolling cell-distance bound (FBF77) computed in the metric's prune units
 # (squared for L2/SqL2, linear for L1/Minkowski), so the prune compare is
-# unit-consistent. `WeightedEuclidean` and `WeightedMinkowski` are also on
-# the rolling-bound path: per-axis contribution is `w[axis] * excess^p`,
-# so weights < 1 are handled correctly (the legacy `axis_distance <= worst`
-# prune over-prunes when weights < 1 and is no longer used for them). See
+# unit-consistent. `WeightedEuclidean`, `WeightedCityblock`, and
+# `WeightedMinkowski` are also on the rolling-bound path: per-axis
+# contribution is `w[axis] * excess^p`, so weights < 1 are handled
+# correctly (the legacy `axis_distance <= worst` prune over-prunes when
+# weights < 1 and is no longer used for them). See
 # `_kdtree_use_rolling_bound` in `query.jl` for the metrics that take the
-# rolling-bound path. Chebyshev and `WeightedCityblock` currently still
-# fall back to the legacy linear-axis prune; for `WeightedCityblock` the
-# legacy prune over-prunes when weights < 1 (latent bug — unused today;
-# rolling-bound extension is straightforward but out of scope here).
+# rolling-bound path. Chebyshev currently still falls back to the legacy
+# linear-axis prune.
 @inline _kdtree_safe_metric(::Distances.Euclidean) = true
 @inline _kdtree_safe_metric(::Distances.SqEuclidean) = true
 @inline _kdtree_safe_metric(::Distances.Cityblock) = true
