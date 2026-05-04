@@ -3,8 +3,8 @@
 
 Single random-projection tree wrapped as an `AbstractANNIndex`. Routes a
 query to its leaf bucket and brute-force scans the bucket. Recall is
-inherently lower than the forest variant; this type is the per-tree
-primitive that a future `RPTreeForestIndex` will compose.
+inherently lower than the forest variant (`RPTreeForestIndex`); this
+type is the per-tree primitive the forest composes.
 """
 mutable struct RPTreeIndex{T<:AbstractFloat,D} <: AbstractANNIndex
     tree::RPTree{T}
