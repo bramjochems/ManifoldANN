@@ -65,26 +65,34 @@ This uses highly optimized GEMM (matrix multiplication) from BLAS, which is
 3. Compute centroids' * X using BLAS GEMM (the expensive part, but highly optimized)
 4. Combine: D[i,j] = sqrt(||c_i||² + ||x_j||² - 2*dot(c_i, x_j))
 """
-function pairwise_euclidean!(D::Matrix{T}, X::Matrix{T}, centroids::Matrix{T}) where {T}
+function pairwise_euclidean!(D::Matrix{TD}, X::Matrix{TX}, centroids::Matrix{TC}) where {TD<:Real, TX<:Real, TC<:Real}
+    # Allow mixed eltypes between the output buffer D, the data matrix X,
+    # and the centroid matrix; promote internally and write the result back
+    # into D. Without this relaxation a Float32 D combined with a Float64 X
+    # would MethodError back into pairwise_generic! and silently bypass BLAS.
     k, n = size(D)
     d = size(X, 1)
 
+    T = promote_type(TX, TC)
+    XT = TX === T ? X : convert(Matrix{T}, X)
+    CT = TC === T ? centroids : convert(Matrix{T}, centroids)
+
     # Compute squared norms of centroids (k values)
-    centroid_sq_norms = vec(sum(abs2, centroids; dims=1))  # 1 × k -> k
+    centroid_sq_norms = vec(sum(abs2, CT; dims=1))  # 1 × k -> k
 
     # Compute squared norms of data points (n values)
-    data_sq_norms = vec(sum(abs2, X; dims=1))  # 1 × n -> n
+    data_sq_norms = vec(sum(abs2, XT; dims=1))  # 1 × n -> n
 
-    # Compute dot products: centroids' * X using BLAS GEMM
-    # Result is k × n matrix where result[i,j] = dot(centroids[:,i], X[:,j])
-    mul!(D, centroids', X)  # BLAS GEMM - highly optimized!
+    # GEMM into a workspace of the promoted type, then write into D
+    # (which may have a different eltype).
+    DT = TD === T ? D : Matrix{T}(undef, k, n)
+    mul!(DT, CT', XT)
 
     # Combine: ||a-b||² = ||a||² + ||b||² - 2(a·b)
-    # Then take sqrt for Euclidean distance
     @inbounds for j in 1:n
         data_norm_sq = data_sq_norms[j]
         for i in 1:k
-            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * D[i, j]
+            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
             # Clamp to avoid sqrt of negative due to floating point errors
             D[i, j] = sqrt(max(sq_dist, zero(T)))
         end
@@ -98,22 +106,26 @@ end
 
 BLAS-optimized squared Euclidean distance (same as pairwise_euclidean! but without sqrt).
 """
-function pairwise_sqeuclidean!(D::Matrix{T}, X::Matrix{T}, centroids::Matrix{T}) where {T}
+function pairwise_sqeuclidean!(D::Matrix{TD}, X::Matrix{TX}, centroids::Matrix{TC}) where {TD<:Real, TX<:Real, TC<:Real}
+    # See pairwise_euclidean!: relaxed eltype constraints with internal
+    # promotion so mixed-precision callers still hit the BLAS path.
     k, n = size(D)
     d = size(X, 1)
 
-    # Compute squared norms
-    centroid_sq_norms = vec(sum(abs2, centroids; dims=1))
-    data_sq_norms = vec(sum(abs2, X; dims=1))
+    T = promote_type(TX, TC)
+    XT = TX === T ? X : convert(Matrix{T}, X)
+    CT = TC === T ? centroids : convert(Matrix{T}, centroids)
 
-    # Compute dot products using BLAS GEMM
-    mul!(D, centroids', X)
+    centroid_sq_norms = vec(sum(abs2, CT; dims=1))
+    data_sq_norms = vec(sum(abs2, XT; dims=1))
 
-    # Combine: ||a-b||² = ||a||² + ||b||² - 2(a·b)
+    DT = TD === T ? D : Matrix{T}(undef, k, n)
+    mul!(DT, CT', XT)
+
     @inbounds for j in 1:n
         data_norm_sq = data_sq_norms[j]
         for i in 1:k
-            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * D[i, j]
+            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
             D[i, j] = max(sq_dist, zero(T))  # Clamp to avoid negative
         end
     end
@@ -190,23 +202,29 @@ BLAS-optimized Euclidean distance for a single query point to all centroids.
 Uses GEMV (matrix-vector multiply) for optimal performance.
 """
 function compute_distances_euclidean(
-    x::AbstractVector{T},
-    centroids::Matrix{T},
-    centroid_norms::Union{Nothing, AbstractVector{T}}=nothing,
-) where {T}
-    k = size(centroids, 2)
+    x::AbstractVector{Tx},
+    centroids::Matrix{Tc},
+    centroid_norms::Union{Nothing, AbstractVector{<:Real}}=nothing,
+) where {Tx<:Real, Tc<:Real}
+    # Promote so a Float64 query against Float32 centroids (or vice
+    # versa) routes through the BLAS path instead of MethodError-ing.
+    T = promote_type(Tx, Tc)
+    xT = Tx === T ? x : convert(AbstractVector{T}, x)
+    cT = Tc === T ? centroids : convert(Matrix{T}, centroids)
+    nT = centroid_norms === nothing ? nothing : convert(AbstractVector{T}, centroid_norms)
+
+    k = size(cT, 2)
     distances = Vector{T}(undef, k)
 
     # Compute ||x||²
-    x_norm_sq = sum(abs2, x)
+    x_norm_sq = sum(abs2, xT)
 
     # Compute centroids' * x using BLAS GEMV
-    # This computes all dot products at once: [c1·x, c2·x, ..., ck·x]
-    dots = centroids' * x  # BLAS GEMV - very fast!
+    dots = cT' * xT
 
     # Compute distances: ||ci - x||² = ||ci||² + ||x||² - 2(ci·x)
     @inbounds for i in 1:k
-        centroid_norm_sq = centroid_norms === nothing ? sum(abs2, view(centroids, :, i)) : centroid_norms[i]
+        centroid_norm_sq = nT === nothing ? sum(abs2, view(cT, :, i)) : nT[i]
         sq_dist = centroid_norm_sq + x_norm_sq - 2 * dots[i]
         distances[i] = sqrt(max(sq_dist, zero(T)))
     end
@@ -220,18 +238,24 @@ end
 BLAS-optimized squared Euclidean distance for a single query point.
 """
 function compute_distances_sqeuclidean(
-    x::AbstractVector{T},
-    centroids::Matrix{T},
-    centroid_norms::Union{Nothing, AbstractVector{T}}=nothing,
-) where {T}
-    k = size(centroids, 2)
+    x::AbstractVector{Tx},
+    centroids::Matrix{Tc},
+    centroid_norms::Union{Nothing, AbstractVector{<:Real}}=nothing,
+) where {Tx<:Real, Tc<:Real}
+    # See compute_distances_euclidean for the eltype-promotion rationale.
+    T = promote_type(Tx, Tc)
+    xT = Tx === T ? x : convert(AbstractVector{T}, x)
+    cT = Tc === T ? centroids : convert(Matrix{T}, centroids)
+    nT = centroid_norms === nothing ? nothing : convert(AbstractVector{T}, centroid_norms)
+
+    k = size(cT, 2)
     distances = Vector{T}(undef, k)
 
-    x_norm_sq = sum(abs2, x)
-    dots = centroids' * x  # BLAS GEMV
+    x_norm_sq = sum(abs2, xT)
+    dots = cT' * xT
 
     @inbounds for i in 1:k
-        centroid_norm_sq = centroid_norms === nothing ? sum(abs2, view(centroids, :, i)) : centroid_norms[i]
+        centroid_norm_sq = nT === nothing ? sum(abs2, view(cT, :, i)) : nT[i]
         sq_dist = centroid_norm_sq + x_norm_sq - 2 * dots[i]
         distances[i] = max(sq_dist, zero(T))
     end
