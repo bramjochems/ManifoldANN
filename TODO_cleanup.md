@@ -144,20 +144,14 @@ unless LSH becomes a more central thesis comparison.
 KDTree is reference-only for the thesis (the contribution lives in the
 manifold-aware graph machinery, not the KD-tree). Leaf-bucket layer +
 router-only internal nodes landed (5bae18d / 8aa89ff); distance-metric
-safety gate landed (f4d1acd / 1a9b0b4) excluding non-componentwise-monotone
-metrics from the build API.
-
-**Latent correctness issue worth fixing properly:**
-
-- **Pruning is in mixed units.** `query.jl:60` compares linear
-  `axis_distance = abs(q_val - split_value)` against `worst`, but for
-  squared metrics `worst` is in squared units. We currently work
-  around this by excluding `SqEuclidean` from the safe-metric list.
-  The clean fix is the **incremental rolling-bound distance**
-  (Friedman-Bentley-Finkel 1977): maintain `q-to-cell` squared
-  distance through descent, update one axis's contribution at the
-  far-child gate. Compares like-for-like; would unblock SqEuclidean
-  re-admission to the safe list. ~40 LOC, gated on additive metrics.
+safety gate landed (f4d1acd / 1a9b0b4) excluding non-additive metrics
+from the build API. The query path now uses the **Friedman-Bentley-
+Finkel 1977 incremental rolling-bound prune** for Euclidean,
+SqEuclidean, Cityblock, and Minkowski — unit-consistent compare,
+SqEuclidean is back on the safe list. Chebyshev and the weighted
+variants currently fall through to the legacy `axis_distance <= worst`
+prune (still correct for those metrics; rolling-bound extension is
+straightforward but not on the critical path).
 
 **Lower-priority follow-ups:**
 
