@@ -423,4 +423,75 @@ end
     end
 end
 
+@testset "find_local_geometry - KDTree path matches O(n) scan" begin
+    # Regression test for the KDTree backing of find_local_geometry.
+    # The KDTree-backed lookup should pick the same nearest graph node as
+    # the legacy linear scan (both use Euclidean distance), so the returned
+    # geometry — and any downstream refinement output — must match.
+    Random.seed!(7)
+    n = 60
+    data = randn(3, n)
+
+    index = build_index(BruteForceIndex, data)
+    method = PCAMethod(intrinsic_dim=2)
+    model = build_geodesic_model(method, index, data; k=8)
+
+    # Build the KDTree the public refine_path entry would build.
+    kdtree = ManifoldANN._build_local_geometry_kdtree(data)
+    @test kdtree !== nothing
+
+    # Probe at a mix of graph nodes and random points off the data.
+    probes = Vector{Vector{Float64}}()
+    for i in 1:5
+        push!(probes, data[:, i])  # exact graph node
+    end
+    for _ in 1:10
+        push!(probes, randn(3))  # off-graph query
+    end
+
+    for q in probes
+        # The legacy O(n) scan: pass kdtree=nothing.
+        geom_scan = ManifoldANN.find_local_geometry(model, data, q; kdtree=nothing)
+        # KDTree-backed: identical centre by construction.
+        geom_kd = ManifoldANN.find_local_geometry(model, data, q; kdtree=kdtree)
+        @test ManifoldANN.center(geom_scan) ≈ ManifoldANN.center(geom_kd)
+    end
+
+    # End-to-end: SubdivisionSmoothing's output must be unchanged.
+    # The previous code path used the linear scan unconditionally; the new
+    # path uses the KDTree. Compare a refined path computed both ways.
+    path_result = shortest_path_with_path(model, data, 1, 30)
+    path = path_result.path
+
+    refinement = SubdivisionSmoothing(subdivisions=4, max_iterations=15, damping=0.5)
+    refined_kd = refine_path(refinement, model, data, path)
+
+    # Recreate the legacy scan-only path manually: subdivide, then run the
+    # smoothing loop without a kdtree.
+    dense = ManifoldANN.subdivide_path(data, path, refinement.subdivisions)
+    dense = ManifoldANN.smooth_path_on_manifold(
+        refinement, model, data, dense, path;
+        max_iterations=refinement.max_iterations,
+        tolerance=refinement.tolerance,
+        damping=refinement.damping,
+        kdtree=nothing,
+    )
+    seg_legacy = [norm(dense[i+1] - dense[i]) for i in 1:length(dense)-1]
+    dist_legacy = sum(seg_legacy)
+
+    # The two iterates can drift on the order of 1e-4 over ~15 smoothing
+    # iterations because the KDTree's distance evaluation and the linear
+    # scan's `norm(x - y)` are not bit-identical (different reduction order
+    # in the L2 sum), and the iteration's tangent-projection amplifies
+    # rounding noise. Tolerance reflects that the two paths agree to within
+    # smoothing convergence noise, not bit-for-bit. The strict
+    # nearest-node-equality check above is the load-bearing correctness
+    # guarantee.
+    @test length(refined_kd.points) == length(dense)
+    for i in eachindex(dense)
+        @test isapprox(refined_kd.points[i], dense[i]; atol=1e-3)
+    end
+    @test isapprox(refined_kd.distance, dist_legacy; atol=1e-3)
+end
+
 end  # @testset "Geodesic Refinement"

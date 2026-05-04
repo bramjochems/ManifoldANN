@@ -420,6 +420,22 @@ Same likely true for other ORC / refinement code (curvature solvers,
 `EdgeNeighborhoodView` construction); audit coverage broadly, not
 just the one site that bit us.
 
+### `_create_precomputed_distance_fn` per-edge allocation
+
+`compute_all_curvatures` calls `_create_precomputed_distance_fn` once
+per edge. Each call allocates two `Dict{Int,Int}` lookup tables plus a
+heap-allocated closure that captures them — and this happens inside the
+threaded edge loop, so the GC pressure scales with edges × threads.
+On large graphs this dominates curvature wall time.
+
+A mechanical fix isn't enough; the OT solver interface currently takes
+`(::AbstractOTSolver, ::EdgeNeighborhoodView, ::Function)`, so the
+closure shape is part of the contract. Replacing with a struct (or a
+small record carrying the precomputed matrix + `Vector{Int}` index maps,
+binary-searched or stored as an `OffsetVector` keyed by node id) means
+plumbing through each `compute_curvature` method. Defer until someone
+profiles a real ORC sweep and confirms this is the bottleneck.
+
 ## Strategic decisions outstanding
 
 ### Julia-ecosystem-native vs self-contained
