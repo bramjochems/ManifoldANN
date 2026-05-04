@@ -73,35 +73,7 @@ something.
 
 ## Open work
 
-### HNSW
-
-- **Pool the heap backing buffers in `_search_layer` (deferred).** The
-  pending `NeighborMinHeap` accumulates ~ef·M candidates per call (~50 KB
-  peak at ef_c=200) and reallocates as it grows; this is the dominant
-  remaining build alloc once the slab + visited-pool work landed. Profile
-  on n=20k d=128 attributes ~9% of total build time to `_growend!` on the
-  heap vector (samples in `array.jl:1131`/`1148`/`1289`), so an upper
-  bound on the win is ~10%. Skipped for now: closing it requires changing
-  `_search_layer`'s ownership model (it currently returns `state.best.data`
-  to the caller — pooling means an explicit copy or a documented
-  "valid-until-next-acquire" contract on the hot path). Worth revisiting
-  if we want to close the remaining ~1.3× gap to hnswlib at build time;
-  10% on a 1.3× gap is meaningful.
-
 ### NN-Descent
-
-- **Optional `bounded_candidates` / `max_candidates` knob for query.**
-  Investigation (see git log) showed MANN's qps gap to NND.jl at fixed
-  parameters is a recall/speed tradeoff, not a perf bug: MANN's
-  candidates queue is unbounded (delivering higher recall) while NND.jl
-  bounds at `max_candidates`. At matched recall MANN is 1.7-2.7× faster
-  across the range both can reach. Exposing a `bounded_candidates` mode
-  would let users opt into NND.jl-style faster-but-lower-recall query.
-  Default to current unbounded behaviour. Not load-bearing.
-
-- **Adaptive `max_iterations`.** Currently hardcoded at 10; PyNNDescent
-  uses `max(5, round(log2(n)))`. Cheap fix, plausibly small recall
-  improvement at large n.
 
 - **PyNNDescent as a quality oracle.** Head-to-head validation against
   PyNNDescent on identical inputs would catch creeping recall drops the
@@ -473,6 +445,16 @@ One-liners pointing at full context in commit history.
   `convergence_threshold=0.001` default — no iterations to save. Did
   improve recall (n=5000 d=32 k=15: 0.92 → 0.96, +3.6pp). Retained as
   opt-in via `init=:rptree`. See `05b91d3`.
+
+- **NN-Descent adaptive `max_iterations = max(5, round(log2(n)))`**
+  (PyNNDescent default): measured on fashion-mnist-784 at n∈{10k,60k}
+  k=32, sweep ef∈{10,20,40,80,160}. n=10k: max_iter 10 vs 13 — recall
+  delta ≤0.1pp at every ef. n=60k: max_iter 10 vs 16 — recall delta
+  ≤0.5pp at every ef (signs split, within noise). Build time difference
+  was noise (early convergence kicks in around iter ~6 on this
+  codebase's `convergence_threshold=0.001` default — same reason RP-tree
+  init didn't close the gap). Default left at 10. Sweep script:
+  `scripts/perf/nndescent_max_iter_sweep.jl`.
 
 - **Threading rework via `@sync` + `@spawn` over chunked ranges**:
   tried as a fix for "30% idle" profile result, ended 6-9% slower. The

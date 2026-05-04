@@ -7,6 +7,7 @@ function query(
     q::AbstractVector{T},
     k::Integer;
     ef_search::Union{Nothing,Integer} = nothing,
+    bounded_candidates::Union{Nothing,Integer} = nothing,
     rng::AbstractRNG = Random.default_rng(),
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_dimensions(index, data, q)
@@ -17,6 +18,7 @@ function query(
 
     beam = ef_search === nothing ? max(actual_k, index.k) : max(actual_k, Int(ef_search))
     beam > 0 || (beam = actual_k)
+    cand_cap = bounded_candidates === nothing ? typemax(Int) : max(Int(bounded_candidates), actual_k)
 
     start_ids = _pick_entry_points(index.n_points, min(index.k, beam), rng)
     first_id = start_ids[1]
@@ -52,6 +54,13 @@ function query(
             visited[neighbor_id] && continue
             visited[neighbor_id] = true
             neighbor_dist = index.distance(view(data, :, neighbor_id), q)
+            # bounded_candidates: NND.jl-style frontier prune. When the result
+            # buffer is already at the candidate cap and this neighbor cannot
+            # improve it, skip the push entirely. Default (cand_cap=typemax)
+            # is bit-equal to the unbounded path.
+            if length(best) >= cand_cap && neighbor_dist >= best[end].dist
+                continue
+            end
             push!(
                 candidates,
                 NeighborCandidate{dist_type}(neighbor_id, neighbor_dist),
@@ -120,6 +129,7 @@ function _query_pooled!(
     k::Integer,
     ef_search::Union{Nothing,Integer},
     rng::AbstractRNG,
+    bounded_candidates::Union{Nothing,Integer} = nothing,
 ) where {T<:LinearAlgebra.BlasFloat,S<:AbstractFloat}
     validate_index_dimensions(index, data, q)
     k <= 0 && return Neighbor{S}[]
@@ -128,6 +138,7 @@ function _query_pooled!(
 
     beam = ef_search === nothing ? max(actual_k, index.k) : max(actual_k, Int(ef_search))
     beam > 0 || (beam = actual_k)
+    cand_cap = bounded_candidates === nothing ? typemax(Int) : max(Int(bounded_candidates), actual_k)
 
     fill!(scratch.visited, false)
     empty!(scratch.pending_data)
@@ -163,6 +174,9 @@ function _query_pooled!(
             scratch.visited[neighbor_id] && continue
             scratch.visited[neighbor_id] = true
             neighbor_dist = S(index.distance(view(data, :, neighbor_id), q))
+            if length(best) >= cand_cap && neighbor_dist >= best[end].dist
+                continue
+            end
             push!(candidates, NeighborCandidate{S}(neighbor_id, neighbor_dist))
         end
     end
@@ -192,12 +206,14 @@ function _nndescent_batch_worker!(
     parent_seed::UInt64,
     ::Type{S},
     beam_hint::Int,
+    bounded_candidates::Union{Nothing,Integer},
 ) where {T<:LinearAlgebra.BlasFloat,S<:AbstractFloat}
     scratch = NNDescentBatchScratch{S}(index.n_points, beam_hint)
     for i in work
         results[i] = _query_pooled!(
             scratch, index, data, view(queries, :, i),
             k, ef_search, query_child_rng(parent_seed, i),
+            bounded_candidates,
         )
     end
     return nothing
@@ -209,6 +225,7 @@ function query(
     queries::AbstractMatrix{T},
     k::Integer;
     ef_search::Union{Nothing,Integer} = nothing,
+    bounded_candidates::Union{Nothing,Integer} = nothing,
     rng::AbstractRNG = Random.default_rng(),
 ) where {T<:LinearAlgebra.BlasFloat}
     validate_index_query_matrix(index, queries)
@@ -233,6 +250,7 @@ function query(
             results[i] = _query_pooled!(
                 scratch, index, data, view(queries, :, i), k, ef_search,
                 query_child_rng(parent_seed, i),
+                bounded_candidates,
             )
         end
         return results
@@ -249,7 +267,7 @@ function query(
     for w in 1:nworkers
         workers[w] = Threads.@spawn _nndescent_batch_worker!(
             results, work, index, data, queries, k, ef_search, parent_seed,
-            S, beam_hint,
+            S, beam_hint, bounded_candidates,
         )
     end
     foreach(wait, workers)
