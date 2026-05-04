@@ -148,10 +148,14 @@ safety gate landed (f4d1acd / 1a9b0b4) excluding non-additive metrics
 from the build API. The query path now uses the **Friedman-Bentley-
 Finkel 1977 incremental rolling-bound prune** for Euclidean,
 SqEuclidean, Cityblock, and Minkowski — unit-consistent compare,
-SqEuclidean is back on the safe list. Chebyshev and the weighted
-variants currently fall through to the legacy `axis_distance <= worst`
-prune (still correct for those metrics; rolling-bound extension is
-straightforward but not on the critical path).
+SqEuclidean is back on the safe list. `WeightedEuclidean` and
+`WeightedMinkowski` are now on the rolling-bound path as well (per-axis
+contribution `w[axis] * excess^p`); the legacy `axis_distance <= worst`
+prune over-pruned them when weights < 1 — fixed. Chebyshev and
+`WeightedCityblock` remain on the legacy prune (Chebyshev is correct
+there; `WeightedCityblock` carries the same latent over-prune as the
+other weighted variants but is not exercised by the package today —
+rolling-bound extension is mechanical when needed).
 
 **Lower-priority follow-ups:**
 

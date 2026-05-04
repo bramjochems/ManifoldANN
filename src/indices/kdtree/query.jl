@@ -56,12 +56,22 @@ end
 end
 
 # Rolling-bound contribution per axis, in the metric's prune units.
-@inline _axis_contrib(::Distances.Euclidean,    e::S) where {S} = e * e
-@inline _axis_contrib(::Distances.SqEuclidean,  e::S) where {S} = e * e
-@inline _axis_contrib(::Distances.Cityblock,    e::S) where {S} = e
-@inline function _axis_contrib(m::Distances.Minkowski, e::S) where {S}
+# The `axis::Int` argument is required by the weighted-metric dispatches
+# (which index into `m.weights[axis]`); unweighted dispatches ignore it
+# and the unused argument is dead-code-eliminated under concrete-type
+# specialisation, so there is no perf cost on the unweighted path.
+@inline _axis_contrib(::Distances.Euclidean,    e::S, axis::Int) where {S} = e * e
+@inline _axis_contrib(::Distances.SqEuclidean,  e::S, axis::Int) where {S} = e * e
+@inline _axis_contrib(::Distances.Cityblock,    e::S, axis::Int) where {S} = e
+@inline function _axis_contrib(m::Distances.Minkowski, e::S, axis::Int) where {S}
     p = S(m.p)
     return e^p
+end
+@inline _axis_contrib(m::Distances.WeightedEuclidean, e::S, axis::Int) where {S} =
+    @inbounds S(m.weights[axis]) * e * e
+@inline function _axis_contrib(m::Distances.WeightedMinkowski, e::S, axis::Int) where {S}
+    p = S(m.p)
+    @inbounds return S(m.weights[axis]) * e^p
 end
 
 # Convert the heap's `worst` (in metric-returned units) to the prune
@@ -73,15 +83,22 @@ end
     p = S(m.p)
     return w^p
 end
+@inline _worst_threshold(::Distances.WeightedEuclidean, w::S) where {S} = w * w
+@inline function _worst_threshold(m::Distances.WeightedMinkowski, w::S) where {S}
+    p = S(m.p)
+    return w^p
+end
 
 # Whether the rolling-bound (sum-of-axis-contribs) path is the one used.
 # Metrics not in this set fall back to the legacy per-axis prune in the
 # query, which is correct only for `axis_distance <= worst`-compatible
 # metrics (the previous safe list minus the squared / power case).
-@inline _kdtree_use_rolling_bound(::Distances.Euclidean)   = true
-@inline _kdtree_use_rolling_bound(::Distances.SqEuclidean) = true
-@inline _kdtree_use_rolling_bound(::Distances.Cityblock)   = true
-@inline _kdtree_use_rolling_bound(::Distances.Minkowski)   = true
+@inline _kdtree_use_rolling_bound(::Distances.Euclidean)         = true
+@inline _kdtree_use_rolling_bound(::Distances.SqEuclidean)       = true
+@inline _kdtree_use_rolling_bound(::Distances.Cityblock)         = true
+@inline _kdtree_use_rolling_bound(::Distances.Minkowski)         = true
+@inline _kdtree_use_rolling_bound(::Distances.WeightedEuclidean) = true
+@inline _kdtree_use_rolling_bound(::Distances.WeightedMinkowski) = true
 @inline _kdtree_use_rolling_bound(_) = false
 
 # --- Descent driver ------------------------------------------------------
@@ -150,7 +167,7 @@ function _search_kdtree_rolling!(
 
     @inbounds saved_lo = cell_lo[axis]
     @inbounds saved_hi = cell_hi[axis]
-    old_axis_contrib = _axis_contrib(metric, _axis_excess(q_val, saved_lo, saved_hi))
+    old_axis_contrib = _axis_contrib(metric, _axis_excess(q_val, saved_lo, saved_hi), axis)
 
     # --- Near child: clip cell on split axis, axis contribution does not
     # increase (q is on the near side of the split, so excess to the near
@@ -160,7 +177,7 @@ function _search_kdtree_rolling!(
     else
         @inbounds cell_lo[axis] = max(saved_lo, split_value)
     end
-    new_near_contrib = _axis_contrib(metric, _axis_excess(q_val, cell_lo[axis], cell_hi[axis]))
+    new_near_contrib = _axis_contrib(metric, _axis_excess(q_val, cell_lo[axis], cell_hi[axis]), axis)
     near_cell_dist = cell_dist - old_axis_contrib + new_near_contrib
     _search_kdtree_rolling!(index, near_child, data, q, heap,
                             cell_lo, cell_hi, near_cell_dist)
@@ -175,7 +192,7 @@ function _search_kdtree_rolling!(
     else
         @inbounds cell_hi[axis] = min(saved_hi, split_value)
     end
-    @inbounds new_far_contrib = _axis_contrib(metric, _axis_excess(q_val, cell_lo[axis], cell_hi[axis]))
+    @inbounds new_far_contrib = _axis_contrib(metric, _axis_excess(q_val, cell_lo[axis], cell_hi[axis]), axis)
     far_cell_dist = cell_dist - old_axis_contrib + new_far_contrib
 
     not_full = length(heap) < heap.capacity

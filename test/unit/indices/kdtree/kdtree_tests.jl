@@ -152,6 +152,65 @@ end
     end
 end
 
+@testset "KDTreeIndex WeightedEuclidean rolling bound" begin
+    rng = MersenneTwister(42424)
+    dimension = 5
+    data = randn(rng, dimension, 60)
+    # A heterogeneous weight vector with at least one entry < 1 — under the
+    # legacy `axis_distance <= worst` prune this would over-prune (the cell
+    # really sits at distance `sqrt(w * axis_dist^2) < axis_dist`).
+    weights = [0.5, 1.0, 0.25, 2.0, 1.0]
+    metric = WeightedEuclidean(weights)
+    kd = build_index(KDTreeIndex, data; distance = metric)
+    brute = build_index(BruteForceIndex, data; distance = metric)
+    for k in 1:5, _ in 1:15
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd, data, q, k)) ==
+              neighbor_ids(query(brute, data, q, k))
+    end
+end
+
+@testset "KDTreeIndex WeightedMinkowski rolling bound" begin
+    rng = MersenneTwister(13131)
+    dimension = 4
+    data = randn(rng, dimension, 50)
+    weights = [0.5, 1.0, 1.5, 0.75]
+    metric = WeightedMinkowski(weights, 3.0)
+    kd = build_index(KDTreeIndex, data; distance = metric)
+    brute = build_index(BruteForceIndex, data; distance = metric)
+    for k in 1:4, _ in 1:12
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd, data, q, k)) ==
+              neighbor_ids(query(brute, data, q, k))
+    end
+end
+
+@testset "KDTreeIndex weighted metrics with all-ones weights match unweighted" begin
+    rng = MersenneTwister(98765)
+    dimension = 4
+    data = randn(rng, dimension, 50)
+    ones_w = ones(dimension)
+
+    # WeightedEuclidean with weights == 1 must give the same neighbour IDs
+    # as plain Euclidean.
+    kd_w = build_index(KDTreeIndex, data; distance = WeightedEuclidean(ones_w))
+    kd_u = build_index(KDTreeIndex, data; distance = Euclidean())
+    for _ in 1:10
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd_w, data, q, 5)) ==
+              neighbor_ids(query(kd_u, data, q, 5))
+    end
+
+    # Same for WeightedMinkowski(p=3) vs Minkowski(p=3).
+    kd_wm = build_index(KDTreeIndex, data; distance = WeightedMinkowski(ones_w, 3.0))
+    kd_um = build_index(KDTreeIndex, data; distance = Minkowski(3.0))
+    for _ in 1:10
+        q = randn(rng, dimension)
+        @test neighbor_ids(query(kd_wm, data, q, 5)) ==
+              neighbor_ids(query(kd_um, data, q, 5))
+    end
+end
+
 @testset "KDTreeIndex Float32 + SqEuclidean" begin
     rng = MersenneTwister(7777)
     data = randn(rng, Float32, 4, 40)
