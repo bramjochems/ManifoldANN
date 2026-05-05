@@ -91,8 +91,12 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
     git curl jq ca-certificates build-essential \
-    python3 python3-venv python3-pip \
+    python3 python3-venv python3-pip python3-dev \
     pkg-config
+# python3-dev is required because annoy ships as sdist (no wheel) and
+# compiles annoymodule.cc against Python.h at install time. Without
+# python3-dev, `uv sync --extra ann-complete` fails with:
+#   src/annoymodule.cc:17:10: fatal error: Python.h: No such file or directory
 
 # Install latest available libopenblas-dev. We don't pin a specific version
 # because pinning to a not-yet-existing-on-the-image version means every
@@ -163,6 +167,34 @@ cd benchmarking
 # reports "Skipped (library not available)" for everything.
 uv sync --extra ann-complete
 cd ..
+
+# The MANN Python wrappers do `Pkg.activate(/opt/repo)` and `using ManifoldANN`.
+# This fails if the main Julia env hasn't been instantiated against the same
+# Julia juliacall picks at runtime (juliapkg manages its own Julia, often
+# different from the juliaup default we installed above).
+#
+# The committed Manifest.toml was generated under Julia 1.12 but juliapkg
+# typically resolves to 1.11.x. Stdlib UUIDs (Statistics, etc.) differ across
+# versions, so loading a 1.12 Manifest under 1.11 fails with
+# "failed to find source of parent package: Statistics".
+#
+# Use whatever julia juliacall picked (it was added to ~/.juliaup by juliapkg)
+# and regenerate the Manifest fresh against that version.
+echo "[bootstrap] instantiating ManifoldANN Julia env (via juliacall's Julia)..."
+JULIACALL_JULIA=$(find "$HOME/.julia/juliaup" -name julia -type f -executable 2>/dev/null | head -1)
+if [ -z "$JULIACALL_JULIA" ]; then
+    JULIACALL_JULIA=$(command -v julia)
+fi
+echo "[bootstrap] using $JULIACALL_JULIA for instantiate"
+# Delete stale Manifest so Pkg resolves fresh against this Julia version.
+rm -f /opt/repo/Manifest.toml
+"$JULIACALL_JULIA" --project=/opt/repo -e '
+    using Pkg
+    Pkg.instantiate()
+    Pkg.precompile()
+    using ManifoldANN
+    println("[manifoldann] loaded OK")
+' 2>&1 | tail -30 || echo "[bootstrap] WARN: ManifoldANN instantiate had errors"
 
 # ---------- metadata snapshot ----------
 {
