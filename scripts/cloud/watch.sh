@@ -15,14 +15,15 @@ while true; do
     echo "=== $(date -u +%H:%M:%S) UTC | run: $RUN_ID ==="
     echo
     echo "--- VMs (tag run_id=$RUN_ID) ---"
-    az vm list --resource-group "$RG" \
+    # `--show-details` is needed for powerState; without it the column is empty.
+    az vm list --resource-group "$RG" --show-details \
         --query "[?tags.run_id=='$RUN_ID'].{name:name, state:powerState, shard:tags.shard_id}" \
         -o table 2>/dev/null || echo "(none)"
     echo
     echo "--- Blobs under runs/$RUN_ID/ ---"
     az storage blob list --account-name "$SA" --container-name "$CONTAINER" \
         --prefix "runs/$RUN_ID/" --auth-mode login \
-        --query "[].{name:name, size_kb:to_number(properties.contentLength)/\`1024\`}" \
+        --query "[].{name:name, bytes:properties.contentLength, modified:properties.lastModified}" \
         -o table 2>/dev/null || echo "(none yet)"
     echo
     echo "(refresh every 30s; ctrl-C to exit)"
