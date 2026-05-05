@@ -39,14 +39,13 @@ else
     AZ() { timeout 60 az "$@"; }
 fi
 
-# ---------- richer cleanup once we know SHARD_ID + container ----------
-SHARD_ID=$(echo "${SHARD_JSON:-}" | jq -r '.shard_id // "unknown"' 2>/dev/null || echo "unknown")
+# Parse the container URL up front (no jq needed for sed parsing).
 WORK_DIR=$(pwd)
-
-# Parse account + container from BLOB_CONTAINER_URL once.
-# Expected form: https://<account>.blob.core.windows.net/<container>
 SA_ACCOUNT=$(echo "$BLOB_CONTAINER_URL" | sed -E 's|https://([^.]+)\..*|\1|')
 SA_CONTAINER=$(echo "$BLOB_CONTAINER_URL" | sed -E 's|https://[^/]+/([^/]+).*|\1|')
+# SHARD_ID needs jq — set later after apt installs it. Default to a safe
+# placeholder so the upload paths under the early-exit trap don't break.
+SHARD_ID="unknown"
 
 cleanup() {
     local rc=$?
@@ -57,7 +56,7 @@ cleanup() {
     deallocate_self
 }
 # Replace the minimal trap with the full one now that we have the
-# SHARD_ID and account info needed to upload partials.
+# account info needed to upload partials.
 trap cleanup EXIT
 
 upload_artifacts() {
@@ -89,10 +88,16 @@ apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
     pkg-config
 
-# Pin libopenblas - TODO: update version before first real run.
-# Look up with: apt-cache madison libopenblas-dev
-OPENBLAS_VER="0.3.20+ds-1ubuntu0.1"
-apt-get install -y "libopenblas-dev=$OPENBLAS_VER" || apt-get install -y libopenblas-dev
+# Install latest available libopenblas-dev. We don't pin a specific version
+# because pinning to a not-yet-existing-on-the-image version means every
+# fresh VM apt-fails. Reproducibility comes from dpkg -l snapshot in
+# metadata.txt; if BLAS drift is observed across runs, pin retroactively.
+apt-get install -y libopenblas-dev
+
+# Now that jq is installed, resolve SHARD_ID from the JSON env var.
+# Falls back to "unknown" if the env var is unset/malformed.
+SHARD_ID=$(echo "${SHARD_JSON:-}" | jq -r '.shard_id // "unknown"' 2>/dev/null || echo "unknown")
+echo "[bootstrap] SHARD_ID=$SHARD_ID"
 
 # ---------- wait-and-retry first az blob op (defensive RBAC propagation) ----------
 if [ "${BOOTSTRAP_TEST:-0}" != "1" ]; then
@@ -109,18 +114,37 @@ if [ "${BOOTSTRAP_TEST:-0}" != "1" ]; then
 fi
 
 # ---------- juliaup + Julia 1.10.5 ----------
-if ! command -v juliaup >/dev/null 2>&1; then
+# install.julialang.org modifies shell rc files but does NOT add to the
+# current shell's PATH. We add absolute path explicitly and verify the
+# install actually succeeded before depending on it.
+JULIAUP_BIN="$HOME/.juliaup/bin"
+if [ ! -x "$JULIAUP_BIN/juliaup" ]; then
+    echo "[bootstrap] installing juliaup..."
     curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.10.5
-    export PATH="$HOME/.juliaup/bin:$PATH"
 fi
+if [ ! -x "$JULIAUP_BIN/juliaup" ]; then
+    echo "[bootstrap] FATAL: juliaup install failed; $JULIAUP_BIN/juliaup not found"
+    ls -la "$HOME/.juliaup" 2>&1 || true
+    exit 1
+fi
+export PATH="$JULIAUP_BIN:$PATH"
 juliaup add 1.10.5 || true
 juliaup default 1.10.5 || true
+echo "[bootstrap] julia version: $(julia --version 2>&1 || echo unknown)"
 
 # ---------- uv + Python deps ----------
-if ! command -v uv >/dev/null 2>&1; then
+UV_BIN="$HOME/.local/bin"
+if [ ! -x "$UV_BIN/uv" ]; then
+    echo "[bootstrap] installing uv..."
     curl -fsSL https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
 fi
+if [ ! -x "$UV_BIN/uv" ]; then
+    echo "[bootstrap] FATAL: uv install failed; $UV_BIN/uv not found"
+    ls -la "$UV_BIN" 2>&1 || true
+    exit 1
+fi
+export PATH="$UV_BIN:$PATH"
+echo "[bootstrap] uv version: $(uv --version 2>&1 || echo unknown)"
 
 cd benchmarking
 uv sync
@@ -139,8 +163,8 @@ cd ..
     (cd benchmarking && uv pip list) 2>&1 || true
     echo "=== shard json ==="; echo "$SHARD_JSON"
     echo "=== run id ==="; echo "$RUN_ID"
-    echo "=== git sha ==="; git rev-parse HEAD
-} > metadata.txt 2>&1
+    echo "=== git sha ==="; git rev-parse HEAD 2>&1 || echo "(not a git repo)"
+} > metadata.txt 2>&1 || true
 
 # ---------- dataset download via datasets.lock ----------
 DATASETS_LOCK="scripts/cloud/datasets.lock"
