@@ -23,24 +23,6 @@ algorithms:
     ef_search: 64
     neighbor_policy: diversified
 
-  MANN-NNDescent-pruned-deferred:
-    k: 32
-    max_iterations: 5
-    convergence_threshold: 0.01
-    sample_rate: 0.5
-    symmetry_policy: pruned
-    apply_symmetry_continuously: false
-    ef_search: 64
-
-  MANN-NNDescent-full-continuous:
-    k: 32
-    max_iterations: 5
-    convergence_threshold: 0.01
-    sample_rate: 0.5
-    symmetry_policy: full
-    apply_symmetry_continuously: true
-    ef_search: 64
-
   MANN-NNDescent-full-deferred:
     k: 32
     max_iterations: 5
@@ -61,15 +43,3 @@ algorithms:
   FAISS-IVF:
     nlist: 200
     nprobe: 16
-
-  HNSW-jl:
-    M: 16
-    ef_construction: 200
-    ef: 50
-
-  NearestNeighborDescent-jl:
-    k: 32
-    max_iterations: 5
-    sample_rate: 0.5
-    precision: 0.01
-    max_candidates: 64
