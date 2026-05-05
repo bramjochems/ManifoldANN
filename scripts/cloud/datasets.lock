@@ -1,0 +1,14 @@
+{
+  "_comment": "Pin HuggingFace dataset revisions before first real run. Replace 'main' with concrete commit SHAs from `huggingface-cli` or the dataset's HF page.",
+  "datasets": {
+    "fashion-mnist-784-euclidean": { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "mnist-784-euclidean":         { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "lastfm-64-dot":               { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "glove-25-angular":            { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "glove-50-angular":            { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "glove-100-angular":           { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "nytimes-256-angular":         { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "sift-128-euclidean":          { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" },
+    "gist-960-euclidean":          { "repo": "ann-benchmarks/ann-benchmarks", "revision": "main" }
+  }
+}

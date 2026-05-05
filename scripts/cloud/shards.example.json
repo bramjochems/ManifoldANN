@@ -1,0 +1,23 @@
+[
+  {
+    "shard_id": "fashion-mnist",
+    "kind": "ann-benchmark",
+    "config_name": "fashion-mnist",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "sift",
+    "kind": "ann-benchmark",
+    "config_name": "sift",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-100",
+    "kind": "ann-benchmark",
+    "config_name": "glove-100",
+    "threads": 16,
+    "reps": 3
+  }
+]
