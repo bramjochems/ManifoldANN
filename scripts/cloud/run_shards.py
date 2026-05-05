@@ -98,8 +98,9 @@ write_files:
       trap 'timeout 60 az vm deallocate --ids $(timeout 30 curl -s -H Metadata:true "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq -r .compute.resourceId) --no-wait || true' EXIT
 
       timeout 120 az login --identity --resource-id "$UAMI_RESOURCE_ID"
-      git clone "$REPO_URL" /opt/repo
+      [ -d /opt/repo/.git ] || git clone "$REPO_URL" /opt/repo
       cd /opt/repo
+      git fetch --quiet origin
       git checkout "$GIT_SHA"
       exec bash scripts/cloud/bootstrap.sh
 runcmd:

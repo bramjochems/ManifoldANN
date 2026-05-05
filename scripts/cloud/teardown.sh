@@ -58,15 +58,22 @@ done <<< "$ALL"
 delete_bucket() {
     local label=$1
     local arr_name=$2
-    # Indirect array expansion (bash 4.3+) so empty arrays don't expand to "".
-    local -n arr_ref="$arr_name"
-    [ ${#arr_ref[@]} -eq 0 ] && return 0
-    echo "==> [$label] deleting ${#arr_ref[@]} resource(s)"
+    # Read the array via eval to avoid nameref + `set -u` "unbound" trap when
+    # the named array is undeclared. `${arr[@]}` on a never-declared array
+    # is treated as unbound under `set -u`, even with the indirection trick.
+    local -a ids=()
+    eval "ids=(\"\${${arr_name}[@]:-}\")"
+    # eval with `:-` may leave a literal empty string element; strip it.
+    if [ ${#ids[@]} -eq 1 ] && [ -z "${ids[0]}" ]; then
+        ids=()
+    fi
+    [ ${#ids[@]} -eq 0 ] && return 0
+    echo "==> [$label] deleting ${#ids[@]} resource(s)"
     if [ "$DRY_RUN" = "1" ]; then
-        for i in "${arr_ref[@]}"; do echo "  (dry-run) $i"; done
+        for i in "${ids[@]}"; do echo "  (dry-run) $i"; done
         return 0
     fi
-    az resource delete --ids "${arr_ref[@]}" 2>&1 | tail -3 || true
+    az resource delete --ids "${ids[@]}" 2>&1 | tail -3 || true
 }
 
 # Delete in dependency order.
