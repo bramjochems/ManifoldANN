@@ -1,5 +1,5 @@
 #!/bin/bash
-# bootstrap.sh — runs on each Azure VM after cloud-init clones the repo.
+# bootstrap.sh - runs on each Azure VM after cloud-init clones the repo.
 # Env vars expected (set by cloud-init): SHARD_JSON, RUN_ID, BLOB_CONTAINER_URL,
 # UAMI_RESOURCE_ID, KIND.
 # For local Docker testing: set BOOTSTRAP_TEST=1 to mock all `az` calls as echo.
@@ -74,7 +74,7 @@ apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
     pkg-config
 
-# Pin libopenblas — TODO: update version before first real run.
+# Pin libopenblas - TODO: update version before first real run.
 # Look up with: apt-cache madison libopenblas-dev
 OPENBLAS_VER="0.3.20+ds-1ubuntu0.1"
 apt-get install -y "libopenblas-dev=$OPENBLAS_VER" || apt-get install -y libopenblas-dev

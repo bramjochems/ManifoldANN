@@ -23,7 +23,7 @@ def run(cmd, check=True, capture=True):
 
 
 def validate_sha_pushed(sha):
-    # `git ls-remote origin <sha>` doesn't actually work — ls-remote lists
+    # `git ls-remote origin <sha>` doesn't actually work - ls-remote lists
     # refs, not arbitrary SHAs. Use `branch -r --contains` instead, which
     # reads from local refs/remotes/. Run `git fetch` first so this reflects
     # the actual remote state, not a stale local view.
@@ -62,7 +62,7 @@ def cloud_init_for(shard, run_id, container_url, git_sha, uami_id, repo_url):
     shard_json = json.dumps(shard)
     # `packages:` runs before `runcmd`, so jq/curl/git/azure-cli are in PATH
     # by the time the trap can fire. azure-cli is in the official Microsoft
-    # apt repo via the `apt-transport-https` trick — but cloud-init's
+    # apt repo via the `apt-transport-https` trick - but cloud-init's
     # `apt:` source stanza handles this without us shelling out.
     return f"""#cloud-config
 apt:
@@ -94,7 +94,7 @@ write_files:
       # Pre-bootstrap deallocate trap. By the time runcmd executes, az/jq/curl
       # are installed (via cloud-init `packages:` stanza above), so this trap
       # can always reach them. Only fails to deallocate if `az login --identity`
-      # itself fails — the auto-shutdown schedule is the final backstop.
+      # itself fails - the auto-shutdown schedule is the final backstop.
       trap 'timeout 60 az vm deallocate --ids $(timeout 30 curl -s -H Metadata:true "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq -r .compute.resourceId) --no-wait || true' EXIT
 
       timeout 120 az login --identity --username "$UAMI_RESOURCE_ID"
@@ -131,7 +131,7 @@ def az_auto_shutdown_cmd(rg, vm_name, location, minutes_ahead=90):
     # of now to avoid race against ~5 min VM provisioning lag where a 60
     # min ahead schedule could lapse before the VM finishes provisioning.
     # Trade-off: a successfully completing shard might bill an extra ~30
-    # min if the trap-based deallocate fails — acceptable for the safety.
+    # min if the trap-based deallocate fails - acceptable for the safety.
     from datetime import timedelta
     t = datetime.now(timezone.utc) + timedelta(minutes=minutes_ahead)
     return [
