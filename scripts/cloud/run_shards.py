@@ -97,7 +97,7 @@ write_files:
       # itself fails - the auto-shutdown schedule is the final backstop.
       trap 'timeout 60 az vm deallocate --ids $(timeout 30 curl -s -H Metadata:true "http://169.254.169.254/metadata/instance?api-version=2021-02-01" | jq -r .compute.resourceId) --no-wait || true' EXIT
 
-      timeout 120 az login --identity --username "$UAMI_RESOURCE_ID"
+      timeout 120 az login --identity --resource-id "$UAMI_RESOURCE_ID"
       git clone "$REPO_URL" /opt/repo
       cd /opt/repo
       git checkout "$GIT_SHA"
