@@ -6,6 +6,12 @@
 
 set -eo pipefail
 
+# Cloud-init runcmd doesn't set $HOME — running as root with $HOME unset
+# means $HOME/.juliaup/bin etc. resolve to "/.juliaup/bin", which doesn't
+# exist. Pin HOME and USER explicitly before anything depends on them.
+export HOME="${HOME:-/root}"
+export USER="${USER:-root}"
+
 # Register the deallocate trap FIRST, before anything that could fail.
 # This is the safety net: even if a downstream step crashes, we still
 # deallocate the VM so the user doesn't pay for an idle host.
@@ -119,6 +125,10 @@ fi
 # install actually succeeded before depending on it.
 JULIAUP_BIN="$HOME/.juliaup/bin"
 if [ ! -x "$JULIAUP_BIN/juliaup" ]; then
+    # The Azure Ubuntu image sometimes ships with a stale ~/.julia/juliaup
+    # config from prior provisioning, which makes the installer abort with
+    # "Please remove the existing Juliaup configuration file". Wipe it.
+    rm -rf "$HOME/.julia/juliaup" "$HOME/.juliaup"
     echo "[bootstrap] installing juliaup..."
     curl -fsSL https://install.julialang.org | sh -s -- -y --default-channel 1.10.5
 fi
