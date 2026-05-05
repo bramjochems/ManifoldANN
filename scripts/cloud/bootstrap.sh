@@ -6,6 +6,30 @@
 
 set -eo pipefail
 
+# Register the deallocate trap FIRST, before anything that could fail.
+# This is the safety net: even if a downstream step crashes, we still
+# deallocate the VM so the user doesn't pay for an idle host.
+deallocate_self() {
+    if [ "${BOOTSTRAP_TEST:-0}" = "1" ]; then
+        echo "[bootstrap] BOOTSTRAP_TEST=1, skipping deallocate"
+        return
+    fi
+    local rid
+    rid=$(timeout 30 curl -s -H Metadata:true \
+        "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
+        | jq -r .compute.resourceId 2>/dev/null || true)
+    if [ -n "$rid" ]; then
+        timeout 60 az vm deallocate --ids "$rid" --no-wait || true
+    fi
+}
+cleanup_minimal() {
+    local rc=$?
+    set +e
+    echo "[bootstrap] cleanup_minimal (rc=$rc) - deallocate only"
+    deallocate_self
+}
+trap cleanup_minimal EXIT
+
 # ---------- az shim (mock under BOOTSTRAP_TEST=1) ----------
 if [ "${BOOTSTRAP_TEST:-0}" = "1" ]; then
     az() { echo "[mock-az] $*"; }
@@ -15,8 +39,8 @@ else
     AZ() { timeout 60 az "$@"; }
 fi
 
-# ---------- self-deallocate trap (uploads partials first) ----------
-SHARD_ID=$(echo "${SHARD_JSON:-{}}" | jq -r '.shard_id // "unknown"')
+# ---------- richer cleanup once we know SHARD_ID + container ----------
+SHARD_ID=$(echo "${SHARD_JSON:-}" | jq -r '.shard_id // "unknown"' 2>/dev/null || echo "unknown")
 WORK_DIR=$(pwd)
 
 # Parse account + container from BLOB_CONTAINER_URL once.
@@ -30,19 +54,10 @@ cleanup() {
     echo "[bootstrap] cleanup (rc=$rc), uploading partials..."
     cd "$WORK_DIR" || true
     upload_artifacts || true
-
-    if [ "${BOOTSTRAP_TEST:-0}" = "1" ]; then
-        echo "[bootstrap] BOOTSTRAP_TEST=1, skipping deallocate"
-        return
-    fi
-    local rid
-    rid=$(timeout 30 curl -s -H Metadata:true \
-        "http://169.254.169.254/metadata/instance?api-version=2021-02-01" \
-        | jq -r .compute.resourceId 2>/dev/null || true)
-    if [ -n "$rid" ]; then
-        timeout 60 az vm deallocate --ids "$rid" --no-wait || true
-    fi
+    deallocate_self
 }
+# Replace the minimal trap with the full one now that we have the
+# SHARD_ID and account info needed to upload partials.
 trap cleanup EXIT
 
 upload_artifacts() {
