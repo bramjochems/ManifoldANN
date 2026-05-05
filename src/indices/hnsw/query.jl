@@ -372,7 +372,14 @@ function _search_layer_pooled(
     while should_continue(policy, state)
         current = pop_pending!(policy, state)
         worst = worst_distance(policy, state)
-        if current.dist > worst
+        # Mirror hnswlib's stopping condition: only stop when the result set is
+        # full AND the next candidate is farther than the worst result.
+        # The `size == ef` guard prevents premature termination for non-metric
+        # distances (e.g. cosine) where the triangle inequality does not hold.
+        # Build path (_search_layer) uses the simpler `> worst` condition
+        # intentionally — the sparser graph during construction benefits from
+        # the tighter exit.
+        if current.dist > worst && length(state.best) >= policy.ef_search
             break
         end
         @inbounds for neighbor in layer_neighbors(adj, current.id)
