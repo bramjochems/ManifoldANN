@@ -49,6 +49,15 @@ class BaseANNWrapper(ABC):
         """
         return Q
 
+    def set_query_params(self, **params) -> None:
+        """Update query-time params on an already-built index.
+
+        Wrappers with tunable query-time parameters override this to update
+        the index without rebuilding. Default is a no-op for build-time-only
+        methods.
+        """
+        return None
+
     def set_num_threads(self, n: int) -> None:
         """Set library-specific build/query thread count.
 

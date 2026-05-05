@@ -210,6 +210,17 @@ class HNSW_jl(JuliaExternalWrapper):
     def _matrix_form(self):
         return "vector_of_vectors"
 
+    def set_query_params(self, **params) -> None:
+        # HNSW.jl exposes `ef` via `set_ef!` on the built index.
+        if "ef" in params:
+            self.ef = int(params["ef"])
+            if self._index is not None:
+                jl.seval("set_ef!")(self._index, self.ef)
+        if "ef_search" in params:
+            self.ef = int(params["ef_search"])
+            if self._index is not None:
+                jl.seval("set_ef!")(self._index, self.ef)
+
     def _warmup(self, dim: int) -> None:
         data_mat = jl.seval(f"randn(Float32, {dim}, 128)")
         data_vov = jl.matrix_to_vector_of_vectors(data_mat)
@@ -312,6 +323,19 @@ class NearestNeighborDescent_jl(JuliaExternalWrapper):
 
     def _matrix_form(self):
         return "vector_of_vectors"
+
+    def set_query_params(self, **params) -> None:
+        # NND.jl takes `max_candidates` per query call. We do NOT alias
+        # `ef_search` here: NND's max_candidates and HNSW's ef are not the
+        # same knob and silently mapping one to the other would produce
+        # misleading head-to-head plots.
+        if "ef_search" in params:
+            raise ValueError(
+                "NearestNeighborDescent_jl: use `max_candidates` in query_sweep, "
+                "not `ef_search` (they are different parameters)."
+            )
+        if "max_candidates" in params:
+            self.max_candidates = int(params["max_candidates"])
 
     def _warmup(self, dim: int) -> None:
         data_mat = jl.seval(f"randn(Float32, {dim}, 128)")

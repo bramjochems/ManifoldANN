@@ -565,6 +565,10 @@ class ManifoldANN_HNSW(ManifoldANNWrapper):
             distance=distance_fn,
         )
 
+    def set_query_params(self, **params) -> None:
+        if "ef_search" in params:
+            self._ef_search = int(params["ef_search"])
+
     def query(self, v, n):
         """Query for nearest neighbors with HNSW."""
         query_vec = np.asfortranarray(v, dtype=np.float32)
@@ -744,6 +748,10 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
             centroid_metric=kmeans_metric,
         )
 
+    def set_query_params(self, **params) -> None:
+        if "nprobe" in params:
+            self._nprobe = int(params["nprobe"])
+
     def query(self, v, n):
         """Query IVF-Flat."""
         query_vec = np.asfortranarray(v, dtype=np.float32)
@@ -888,6 +896,10 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             self._data,
             **build_kwargs,
         )
+
+    def set_query_params(self, **params) -> None:
+        if "ef_search" in params:
+            self._ef_search = int(params["ef_search"])
 
     def query(self, v, n):
         """Query for nearest neighbors with NN-Descent."""

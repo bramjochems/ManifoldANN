@@ -1,0 +1,7 @@
+algorithm,qps,recall@10,build_time,status,error,reps,qps_q25,qps_q75,recall_q25,recall_q75,build_rss_delta_mb,query_rss_delta_mb_max,index_mb
+MANN-BruteForce,1731.80,1.0000,0.00,success,,3,1730.94,1732.03,1.0000,1.0000,,0.9,
+MANN-KDTree,1099.63,1.0000,0.07,success,,3,1081.65,1118.51,1.0000,1.0000,,,
+SciPy-KDTree,260.06,1.0000,0.05,success,,3,251.70,272.60,1.0000,1.0000,15.3,,
+MANN-HNSW-diversified,16529.32,0.9994,1.06,success,,3,16454.06,16992.10,0.9994,0.9994,12.6,,
+HNSWlib,15791.33,0.9994,0.77,success,,3,15639.60,16028.23,0.9994,0.9994,0.7,0.1,
+FAISS-IVF,9059.68,0.9988,0.08,success,,3,8902.59,9221.54,0.9988,0.9988,1.0,,

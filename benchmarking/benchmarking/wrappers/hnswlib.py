@@ -30,6 +30,12 @@ class HNSWlib(BaseANNWrapper):
         """Store thread count; applied during fit/query."""
         self._num_threads = int(n)
 
+    def set_query_params(self, **params) -> None:
+        if "ef_search" in params:
+            self.ef_search = int(params["ef_search"])
+            if self.index is not None:
+                self.index.set_ef(self.ef_search)
+
     def prepare_data(self, X: np.ndarray) -> np.ndarray:
         """Charge dtype/layout coercion outside the timed region."""
         return np.ascontiguousarray(X, dtype=np.float32)

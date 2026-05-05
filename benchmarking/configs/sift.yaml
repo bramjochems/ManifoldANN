@@ -9,7 +9,7 @@ algorithms:
 
   MANN-LSH:
     n_tables: 20
-    hash_length: 8
+    hash_length: 10
 
   # MANN-HNSW-heuristic:
   #   M: 16
@@ -18,10 +18,12 @@ algorithms:
   #   neighbor_policy: heuristic
 
   MANN-HNSW-diversified:
-    M: 16
-    ef_construction: 200
-    ef_search: 50
-    neighbor_policy: diversified
+    build:
+      M: 16
+      ef_construction: 200
+      neighbor_policy: diversified
+    query_sweep:
+      ef_search: [25, 50, 100, 200]
 
   MANN-IVF-HNSW:
     nlist: 64
@@ -52,6 +54,7 @@ algorithms:
     apply_symmetry_continuously: false
     ef_search: 64
     threaded: true
+    init: rptree
 
   MANN-NNDescent-full-continuous:
     k: 32
@@ -62,6 +65,7 @@ algorithms:
     apply_symmetry_continuously: true
     ef_search: 64
     threaded: true
+    init: rptree
 
   MANN-NNDescent-full-deferred:
     k: 32
@@ -72,9 +76,10 @@ algorithms:
     apply_symmetry_continuously: false
     ef_search: 64
     threaded: true
+    init: rptree
 
   Annoy:
-    n_trees: 10
+    n_trees: 100
 
   HNSWlib:
     M: 16

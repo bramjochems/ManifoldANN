@@ -33,6 +33,12 @@ class FAISS_IVF(BaseANNWrapper):
         except ImportError:
             self._num_threads = int(n)
 
+    def set_query_params(self, **params) -> None:
+        if "nprobe" in params:
+            self.nprobe = int(params["nprobe"])
+            if self.index is not None:
+                self.index.nprobe = self.nprobe
+
     def prepare_data(self, X: np.ndarray) -> np.ndarray:
         """Coerce to float32 contiguous and (for angular) L2-normalise.
 

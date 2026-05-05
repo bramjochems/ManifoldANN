@@ -1,0 +1,22 @@
+# Smoke test for query_sweep refactor — confirms one build is reused
+# across multiple ef_search values.
+dataset: fashion-mnist-784-euclidean
+metric: euclidean
+n_train: 5000
+n_test: 500
+
+algorithms:
+  MANN-HNSW-diversified:
+    build:
+      M: 16
+      ef_construction: 200
+      neighbor_policy: diversified
+    query_sweep:
+      ef_search: [25, 50, 100, 200]
+
+  HNSWlib:
+    build:
+      M: 16
+      ef_construction: 200
+    query_sweep:
+      ef_search: [25, 50, 100, 200]

@@ -61,6 +61,7 @@ if "PYTHON_JULIACALL_HANDLE_SIGNALS" not in os.environ:
 # Now safe to import other modules
 import time
 import argparse
+import itertools
 import json
 import csv
 import gc
@@ -275,6 +276,7 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
             "qps_q25", "qps_q75",
             "recall_q25", "recall_q75",
             "build_rss_delta_mb", "query_rss_delta_mb_max", "index_mb",
+            "query_params",
         ])
 
         for r in results:
@@ -294,13 +296,14 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
                 _mb(r.get("build_rss_delta_bytes")),
                 _mb(r.get("query_rss_delta_bytes_max")),
                 _mb(r.get("index_bytes")),
+                json.dumps(r.get("query_params", {}), sort_keys=True),
             ])
 
         for failed in failed_algorithms:
             writer.writerow([
                 failed["name"], "N/A", "N/A", "N/A",
                 "failed", failed.get("error", "Unknown error"),
-                "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "", "", "",
             ])
 
     print(f"✓ Saved results to {csv_path}")
@@ -458,12 +461,25 @@ def _validate_comparable_groups(comparable_groups: dict, results: list):
     With a single param set per algorithm we don't have a recall *range*
     per member; we use the IQR if --reps>1, otherwise the point recall.
     Signal: members differ by > 0.10 in recall.
+
+    Skip the group if any member has a non-empty query_sweep — head-to-head
+    semantics aren't defined when one side is a curve.
     """
     if not comparable_groups:
         return
-    by_name = {r["name"]: r for r in results}
+    # Members with sweeps appear as multiple rows; collapse by-name picks the
+    # last sweep combo silently. Detect and skip rather than mislead.
+    sweep_names = {
+        r["name"] for r in results
+        if r.get("query_params") and r["query_params"] != {}
+    }
+    by_name = {r["name"]: r for r in results if r["name"] not in sweep_names}
     for group_name, body in comparable_groups.items():
         members = body.get("members", [])
+        if any(m in sweep_names for m in members):
+            print(f"⚠️  comparable_group '{group_name}' skipped: members use "
+                  f"query_sweep (head-to-head requires a single combo per member)")
+            continue
         present = [by_name[m] for m in members if m in by_name]
         missing = [m for m in members if m not in by_name]
         if missing:
@@ -486,6 +502,42 @@ def _validate_comparable_groups(comparable_groups: dict, results: list):
                 f"✓ comparable_group '{group_name}' recall spread = {spread:.3f} "
                 f"(members within 0.10 — apples-to-apples)"
             )
+
+
+def _parse_algo_entry(entry, algo_name=None):
+    """Split a YAML algorithm entry into (build_params, query_sweep).
+
+    New form: dict with `build:` and/or `query_sweep:` keys.
+    Old (flat) form: any other dict — treated entirely as build params, no
+    sweep.
+
+    Stray keys alongside `build`/`query_sweep` are silently ignored — warn
+    so the user notices a typo before trusting the run.
+    """
+    if not entry:
+        return {}, {}
+    if isinstance(entry, dict) and ("build" in entry or "query_sweep" in entry):
+        build = dict(entry.get("build") or {})
+        sweep = dict(entry.get("query_sweep") or {})
+        stray = set(entry) - {"build", "query_sweep"}
+        if stray:
+            label = f" in {algo_name}" if algo_name else ""
+            print(f"⚠️  ignoring stray keys {sorted(stray)}{label} "
+                  f"(use `build:` block for parameters)")
+        return build, sweep
+    return dict(entry), {}
+
+
+def _sweep_combos(query_sweep):
+    """Cartesian product of sweep dimensions, deterministic ordering."""
+    if not query_sweep:
+        return [{}]
+    keys = sorted(query_sweep.keys())
+    value_lists = [sorted(query_sweep[k]) for k in keys]
+    combos = []
+    for vals in itertools.product(*value_lists):
+        combos.append(dict(zip(keys, vals)))
+    return combos
 
 
 def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train: int = None, n_test: int = None, save_output: bool = False, threads: int = None, reps: int = 1):
@@ -568,14 +620,17 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     failed_algorithms = []
 
     # Iterate through configured algorithms
-    for algo_name, algo_params in config["algorithms"].items():
+    for algo_name, algo_entry in config["algorithms"].items():
         print(f"\n{'─' * 80}")
         print(f"Algorithm: {algo_name}")
         print(f"{'─' * 80}")
 
+        build_params, query_sweep = _parse_algo_entry(algo_entry, algo_name)
+        sweep_combos = _sweep_combos(query_sweep)
+
         # Create algorithm instance
         try:
-            algo = create_algorithm(algo_name, metric, algo_params or {})
+            algo = create_algorithm(algo_name, metric, build_params or {})
         except ValueError as e:
             print(f"✗ Error: {e}")
             failed_algorithms.append({
@@ -638,115 +693,116 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
                   + (f" (+{build_rss_delta/1e6:.1f} MB RSS)"
                      if build_rss_delta is not None else ""))
 
-            # Warm the query path at the *actual* k and batch size used
-            # in the timed run. We want shape-specialised codegen
-            # (numba JITs on first call at this k; juliacall caches the
-            # conversion path at this n_queries) to land before any
-            # timed rep starts.
-            try:
-                if hasattr(algo, "query_batch_raw"):
-                    raw_warm = algo.query_batch_raw(prepared_test, k)
-                    algo.finalize_batch_ids(raw_warm)
-                elif hasattr(algo, "query_batch"):
-                    algo.query_batch(prepared_test, k)
-                else:
-                    for q in test:
-                        algo.query(q, k)
-            except Exception as exc:
-                print(f"⚠️  query warmup at config failed: {exc}")
-
-            # Reps: time the query path only (build is one-shot).
-            qps_samples = []
-            recall_samples = []
-            query_time_samples = []
-            rss_query_samples = []
-            predictions = None
-            for rep_i in range(reps):
-                # GC right before the timed window so a pause inside
-                # doesn't get charged to this rep.
-                _full_gc()
-                rss_q_before = _peak_rss_bytes()
-                print(
-                    f"Querying {n_test} test points "
-                    f"(rep {rep_i + 1}/{reps})..."
-                )
-                query_start = time.perf_counter()
-                if hasattr(algo, "query_batch_raw"):
-                    raw = algo.query_batch_raw(prepared_test, k)
-                    query_time = time.perf_counter() - query_start
-                    # Id-conversion / numpy marshalling lives OUTSIDE the
-                    # timed region — fairness fix versus the earlier
-                    # implementation that charged Julia-only result
-                    # conversion to the timed query. See base.py for the
-                    # contract.
-                    predictions = algo.finalize_batch_ids(raw)
-                elif hasattr(algo, "query_batch"):
-                    try:
-                        predictions = algo.query_batch(prepared_test, k)
-                    except TypeError:
-                        predictions = algo.query_batch(test, k)
-                    query_time = time.perf_counter() - query_start
-                else:
-                    predictions = [algo.query(q, k) for q in test]
-                    query_time = time.perf_counter() - query_start
-                rss_q_after = _peak_rss_bytes()
-                qps_i = n_test / query_time if query_time > 0 else float("inf")
-                recall_i = compute_recall_batch(predictions, ground_truth, k)
-                qps_samples.append(qps_i)
-                recall_samples.append(recall_i)
-                query_time_samples.append(query_time)
-                if rss_q_before is not None and rss_q_after is not None:
-                    rss_query_samples.append(rss_q_after - rss_q_before)
-                print(
-                    f"  rep {rep_i + 1}: query={query_time:.2f}s, "
-                    f"qps={qps_i:.0f}, recall@{k}={recall_i:.4f}"
-                )
-
-            qps_med, qps_q25, qps_q75 = _quartiles(qps_samples)
-            recall_med, recall_q25, recall_q75 = _quartiles(recall_samples)
-            qt_med, _qt_q25, _qt_q75 = _quartiles(query_time_samples)
-            print(f"✓ Query time (median): {qt_med:.2f}s "
-                  f"(qps median={qps_med:.0f} [IQR {qps_q25:.0f}–{qps_q75:.0f}])")
-            print(f"✓ Recall@{k} (median): {recall_med:.4f} "
-                  f"[IQR {recall_q25:.4f}–{recall_q75:.4f}]")
-
-            # Get metadata for this algorithm (with prefix matching for variants)
-            metadata = get_algorithm_metadata(algo_name, algo_metadata)
-
-            # Library-reported index footprint, if exposed.
+            # Library-reported index footprint, if exposed (depends only
+            # on build, so probe once outside the sweep).
             try:
                 index_bytes = algo.memory_usage()
             except Exception:
                 index_bytes = None
 
-            # Store results — keep legacy fields (`qps`, `recall`,
-            # `query_time`) populated with the median so existing
-            # single-rep consumers keep working; add per-rep + IQR
-            # fields for thesis-grade reporting.
-            results.append({
-                "name": algo_name,
-                "display": str(algo),
-                "source": metadata.get("source", "Unknown"),
-                "type": metadata.get("type", "unknown"),
-                "build_time": build_time,
-                "query_time": qt_med,
-                "qps": qps_med,
-                "recall": recall_med,
-                "qps_q25": qps_q25,
-                "qps_q75": qps_q75,
-                "recall_q25": recall_q25,
-                "recall_q75": recall_q75,
-                "qps_samples": qps_samples,
-                "recall_samples": recall_samples,
-                "query_time_samples": query_time_samples,
-                "reps": reps,
-                "build_rss_delta_bytes": build_rss_delta,
-                "query_rss_delta_bytes_max": (
-                    max(rss_query_samples) if rss_query_samples else None
-                ),
-                "index_bytes": index_bytes,
-                "params": algo_params or {},
-            })
+            # Get metadata for this algorithm (with prefix matching for variants)
+            metadata = get_algorithm_metadata(algo_name, algo_metadata)
+
+            # Sweep over query-time parameter combinations, reusing the
+            # single built index. Each combo runs its own warmup + reps.
+            for combo in sweep_combos:
+                if combo:
+                    print(f"\n  Query params: {combo}")
+                    try:
+                        algo.set_query_params(**combo)
+                    except Exception as exc:
+                        print(f"⚠️  set_query_params({combo}) failed: {exc}")
+
+                # Warm the query path at the *actual* k, batch size, and
+                # current query-param combo. Re-warm per combo so cache
+                # state is fresh for the timed reps.
+                try:
+                    if hasattr(algo, "query_batch_raw"):
+                        raw_warm = algo.query_batch_raw(prepared_test, k)
+                        algo.finalize_batch_ids(raw_warm)
+                    elif hasattr(algo, "query_batch"):
+                        algo.query_batch(prepared_test, k)
+                    else:
+                        for q in test:
+                            algo.query(q, k)
+                except Exception as exc:
+                    print(f"⚠️  query warmup at config failed: {exc}")
+
+                # Reps: time the query path only (build is one-shot).
+                qps_samples = []
+                recall_samples = []
+                query_time_samples = []
+                rss_query_samples = []
+                predictions = None
+                for rep_i in range(reps):
+                    _full_gc()
+                    rss_q_before = _peak_rss_bytes()
+                    print(
+                        f"Querying {n_test} test points "
+                        f"(rep {rep_i + 1}/{reps})..."
+                    )
+                    query_start = time.perf_counter()
+                    if hasattr(algo, "query_batch_raw"):
+                        raw = algo.query_batch_raw(prepared_test, k)
+                        query_time = time.perf_counter() - query_start
+                        predictions = algo.finalize_batch_ids(raw)
+                    elif hasattr(algo, "query_batch"):
+                        try:
+                            predictions = algo.query_batch(prepared_test, k)
+                        except TypeError:
+                            predictions = algo.query_batch(test, k)
+                        query_time = time.perf_counter() - query_start
+                    else:
+                        predictions = [algo.query(q, k) for q in test]
+                        query_time = time.perf_counter() - query_start
+                    rss_q_after = _peak_rss_bytes()
+                    qps_i = n_test / query_time if query_time > 0 else float("inf")
+                    recall_i = compute_recall_batch(predictions, ground_truth, k)
+                    qps_samples.append(qps_i)
+                    recall_samples.append(recall_i)
+                    query_time_samples.append(query_time)
+                    if rss_q_before is not None and rss_q_after is not None:
+                        rss_query_samples.append(rss_q_after - rss_q_before)
+                    print(
+                        f"  rep {rep_i + 1}: query={query_time:.2f}s, "
+                        f"qps={qps_i:.0f}, recall@{k}={recall_i:.4f}"
+                    )
+
+                qps_med, qps_q25, qps_q75 = _quartiles(qps_samples)
+                recall_med, recall_q25, recall_q75 = _quartiles(recall_samples)
+                qt_med, _qt_q25, _qt_q75 = _quartiles(query_time_samples)
+                print(f"✓ Query time (median): {qt_med:.2f}s "
+                      f"(qps median={qps_med:.0f} [IQR {qps_q25:.0f}–{qps_q75:.0f}])")
+                print(f"✓ Recall@{k} (median): {recall_med:.4f} "
+                      f"[IQR {recall_q25:.4f}–{recall_q75:.4f}]")
+
+                results.append({
+                    "name": algo_name,
+                    "display": str(algo),
+                    "source": metadata.get("source", "Unknown"),
+                    "type": metadata.get("type", "unknown"),
+                    "build_time": build_time,
+                    "query_time": qt_med,
+                    "qps": qps_med,
+                    "recall": recall_med,
+                    "qps_q25": qps_q25,
+                    "qps_q75": qps_q75,
+                    "recall_q25": recall_q25,
+                    "recall_q75": recall_q75,
+                    "qps_samples": qps_samples,
+                    "recall_samples": recall_samples,
+                    "query_time_samples": query_time_samples,
+                    "reps": reps,
+                    "build_rss_delta_bytes": build_rss_delta,
+                    "query_rss_delta_bytes_max": (
+                        max(rss_query_samples) if rss_query_samples else None
+                    ),
+                    "index_bytes": index_bytes,
+                    "build_params": build_params or {},
+                    "query_params": dict(combo),
+                    # `params` kept as alias for legacy summary/print code.
+                    "params": build_params or {},
+                })
 
             # Drop the algorithm/index reference and force a full GC so
             # the next algorithm starts from a clean slate.
@@ -842,9 +898,15 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
         if comparable_groups:
             print(f"\n--- Comparable groups ---")
             _validate_comparable_groups(comparable_groups, results)
-            by_name = {r["name"]: r for r in results}
+            sweep_names = {
+                r["name"] for r in results
+                if r.get("query_params") and r["query_params"] != {}
+            }
+            by_name = {r["name"]: r for r in results if r["name"] not in sweep_names}
             for group_name, body in comparable_groups.items():
                 members = body.get("members", [])
+                if any(m in sweep_names for m in members):
+                    continue
                 rows = [by_name[m] for m in members if m in by_name]
                 if len(rows) >= 2:
                     _emit_headtohead_csv(output_dir, group_name, rows, k)

@@ -1,0 +1,29 @@
+# Minimal config for refactor validation — fast subset of fashion-mnist
+dataset: fashion-mnist-784-euclidean
+metric: euclidean
+n_train: 5000
+n_test: 500
+
+algorithms:
+  MANN-BruteForce: {}
+
+  MANN-HNSW-diversified:
+    M: 16
+    ef_construction: 200
+    ef_search: 50
+    neighbor_policy: diversified
+
+  MANN-KDTree:
+    axis_selector: variance
+
+  HNSWlib:
+    M: 16
+    ef_construction: 200
+    ef_search: 50
+
+  FAISS-IVF:
+    nlist: 50
+    nprobe: 10
+
+  SciPy-KDTree:
+    leafsize: 32
