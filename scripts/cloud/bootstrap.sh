@@ -157,7 +157,11 @@ export PATH="$UV_BIN:$PATH"
 echo "[bootstrap] uv version: $(uv --version 2>&1 || echo unknown)"
 
 cd benchmarking
-uv sync
+# `--extra ann-complete` pulls hnswlib, faiss-cpu, scipy, annoy, pynndescent
+# (all the comparison libraries the harness's wrappers expect). Without
+# this, every ANN wrapper's is_available() returns False and the harness
+# reports "Skipped (library not available)" for everything.
+uv sync --extra ann-complete
 cd ..
 
 # ---------- metadata snapshot ----------
