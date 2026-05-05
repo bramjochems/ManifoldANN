@@ -30,6 +30,13 @@ algorithms:
     type: tree
     description: Space partitioning tree
 
+  MANN-RPForest:
+    name: RP-Tree Forest
+    source: ManifoldANN
+    language: Julia
+    type: tree
+    description: Random projection tree forest with brute-force scoring of leaf union
+
   MANN-HNSW:
     name: HNSW
     source: ManifoldANN

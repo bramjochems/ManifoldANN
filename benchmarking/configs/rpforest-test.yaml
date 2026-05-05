@@ -1,0 +1,18 @@
+# Smoke test for MANN-RPForest wrapper.
+dataset: fashion-mnist-784-euclidean
+metric: euclidean
+n_train: 5000
+n_test: 500
+
+algorithms:
+  MANN-BruteForce: {}
+
+  MANN-RPForest:
+    build:
+      n_trees: 8
+      leaf_cap: 32
+
+  MANN-RPForest-heavy:
+    build:
+      n_trees: 16
+      leaf_cap: 64

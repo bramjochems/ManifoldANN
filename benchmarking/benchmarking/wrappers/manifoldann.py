@@ -482,6 +482,51 @@ class ManifoldANN_KDTree(ManifoldANNWrapper):
         return "ManifoldANN-KDTree"
 
 
+class ManifoldANN_RPForest(ManifoldANNWrapper):
+    """Wrapper for ManifoldANN RPTreeForestIndex.
+
+    Random-projection tree forest: build n_trees independent trees, query
+    by visiting all trees and brute-force scoring the union of leaf buckets.
+    No query-time tunable knobs — candidate set size is fixed at build by
+    n_trees × leaf_cap.
+    """
+
+    _warmup_kind = "RPTreeForestIndex"
+
+    def __init__(self, metric, n_trees=8, leaf_cap=32):
+        super().__init__(metric)
+        self._n_trees = int(n_trees)
+        self._leaf_cap = int(leaf_cap)
+
+    def _warmup(self, dim: int) -> None:
+        data = _warm_data(dim)
+        qs = _warm_queries(dim)
+        distance_fn = self._get_distance_function()
+        idx = jl.build_index(
+            jl.RPTreeForestIndex, data,
+            n_trees=4, leaf_cap=8,
+            distance=distance_fn,
+        )
+        jl.query(idx, data, qs, 5)
+
+    def fit(self, X):
+        self._data = X
+        distance_fn = self._get_distance_function()
+        self._index = jl.build_index(
+            jl.RPTreeForestIndex, self._data,
+            n_trees=self._n_trees,
+            leaf_cap=self._leaf_cap,
+            distance=distance_fn,
+        )
+
+    def __str__(self):
+        return f"ManifoldANN-RPForest(n_trees={self._n_trees}, leaf_cap={self._leaf_cap})"
+
+    @staticmethod
+    def get_name():
+        return "ManifoldANN-RPForest"
+
+
 class ManifoldANN_HNSW(ManifoldANNWrapper):
     """Wrapper for ManifoldANN HNSWIndex."""
 
