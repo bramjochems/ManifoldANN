@@ -184,19 +184,31 @@ CONFIG_YAML="benchmarking/configs/${CONFIG_NAME}.yaml"
 if [ -f "$CONFIG_YAML" ]; then
     DATASET_NAME=$(grep -E "^dataset:" "$CONFIG_YAML" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
     if [ -n "$DATASET_NAME" ]; then
-        REVISION=$(jq -r ".datasets[\"$DATASET_NAME\"].revision // \"main\"" "$DATASETS_LOCK")
-        REPO=$(jq -r ".datasets[\"$DATASET_NAME\"].repo // \"ann-benchmarks/ann-benchmarks\"" "$DATASETS_LOCK")
-        echo "=== dataset pin ===" >> metadata.txt
-        echo "name=$DATASET_NAME repo=$REPO revision=$REVISION" >> metadata.txt
-        # The benchmark harness downloads on demand; here we just pre-warm via
-        # the HF hub if the repo wants. One retry, then proceed (harness will
-        # also try). Skip in test mode.
+        echo "=== dataset ===" >> metadata.txt
+        echo "name=$DATASET_NAME source=blob://$SA_ACCOUNT/datasets/${DATASET_NAME}.hdf5" >> metadata.txt
+        # Fetch the HDF5 from our own blob (uploaded once from laptop) into
+        # benchmarking/data/<name>.hdf5 so the harness short-circuits its
+        # built-in downloader. ann-benchmarks.com rate-limits/403s Azure
+        # outbound IPs; HuggingFace ann-benchmarks repo requires auth. Blob
+        # storage is the only path we control end-to-end.
         if [ "${BOOTSTRAP_TEST:-0}" != "1" ]; then
-            for i in 1 2; do
-                python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$REPO', repo_type='dataset', revision='$REVISION', allow_patterns=['*${DATASET_NAME}*'])" && break
-                echo "[bootstrap] dataset prefetch try $i failed"
-                sleep 10
-            done || true
+            mkdir -p benchmarking/data
+            DEST="benchmarking/data/${DATASET_NAME}.hdf5"
+            for i in 1 2 3; do
+                if AZ storage blob download --auth-mode login \
+                       --account-name "$SA_ACCOUNT" --container-name datasets \
+                       --name "${DATASET_NAME}.hdf5" --file "$DEST" \
+                       --no-progress; then
+                    echo "[bootstrap] dataset cached: $DEST"
+                    break
+                fi
+                echo "[bootstrap] dataset download try $i failed"
+                sleep 15
+            done
+            if [ ! -f "$DEST" ]; then
+                echo "[bootstrap] FATAL: dataset $DATASET_NAME not found in blob after retries"
+                exit 1
+            fi
         fi
     fi
 fi
