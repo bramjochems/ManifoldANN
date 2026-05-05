@@ -786,6 +786,10 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         symmetry_policy="pruned",
         apply_symmetry_continuously=False,
         ef_search=None,
+        threaded=True,
+        init="random",
+        n_trees=None,
+        leaf_cap=None,
     ):
         """Initialize NN-Descent wrapper.
 
@@ -807,6 +811,10 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         self._symmetry_policy = symmetry_policy
         self._apply_symmetry_continuously = bool(apply_symmetry_continuously)
         self._ef_search = ef_search if ef_search is not None else max(self._k, 2 * self._k)
+        self._threaded = bool(threaded)
+        self._init = str(init)
+        self._n_trees = None if n_trees is None else int(n_trees)
+        self._leaf_cap = None if leaf_cap is None else int(leaf_cap)
 
     def _warmup(self, dim: int) -> None:
         data = _warm_data(dim, n=128)
@@ -859,9 +867,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
         symmetry_symbol = jl.Symbol(self._symmetry_policy)
         distance_fn = self._get_distance_function()
 
-        self._index = jl.build_index(
-            jl.NNDescentIndex,
-            self._data,
+        build_kwargs = dict(
             k=self._k,
             max_iterations=self._max_iterations,
             convergence_threshold=self._convergence_threshold,
@@ -869,6 +875,18 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             symmetry_policy=symmetry_symbol,
             apply_symmetry_continuously=self._apply_symmetry_continuously,
             distance=distance_fn,
+            threaded=self._threaded,
+            init=jl.Symbol(self._init),
+        )
+        if self._n_trees is not None:
+            build_kwargs["n_trees"] = self._n_trees
+        if self._leaf_cap is not None:
+            build_kwargs["leaf_cap"] = self._leaf_cap
+
+        self._index = jl.build_index(
+            jl.NNDescentIndex,
+            self._data,
+            **build_kwargs,
         )
 
     def query(self, v, n):
@@ -906,7 +924,7 @@ class ManifoldANN_NNDescent(ManifoldANNWrapper):
             f"k={self._k}, max_iterations={self._max_iterations}, "
             f"convergence_threshold={self._convergence_threshold}, "
             f"sample_rate={self._sample_rate}, symmetry={self._symmetry_policy} ({symmetry_mode}), "
-            f"ef_search={self._ef_search})"
+            f"ef_search={self._ef_search}, threaded={self._threaded}, init={self._init})"
         )
 
     @staticmethod

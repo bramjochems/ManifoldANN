@@ -11,12 +11,6 @@ algorithms:
     n_tables: 12
     hash_length: 5
 
-  # MANN-HNSW-heuristic:
-  #   M: 16
-  #   ef_construction: 200
-  #   ef_search: 50
-  #   neighbor_policy: heuristic
-
   MANN-HNSW-diversified:
     M: 16
     ef_construction: 200
@@ -31,41 +25,38 @@ algorithms:
     ef_search: 64
     neighbor_policy: diversified
 
-  # MANN-NNDescent-pruned-continuous:
-  #   k: 32
-  #   max_iterations: 5
-  #   convergence_threshold: 0.01
-  #   sample_rate: 0.5
-  #   symmetry_policy: pruned
-  #   apply_symmetry_continuously: true
-  #   ef_search: 64
-
   MANN-NNDescent-pruned-deferred:
     k: 32
-    max_iterations: 5
+    max_iterations: 15
     convergence_threshold: 0.01
-    sample_rate: 0.5
+    sample_rate: 1.0
     symmetry_policy: pruned
     apply_symmetry_continuously: false
     ef_search: 64
+    threaded: true
+    init: rptree
 
   MANN-NNDescent-full-continuous:
     k: 32
-    max_iterations: 5
+    max_iterations: 15
     convergence_threshold: 0.01
-    sample_rate: 0.5
+    sample_rate: 1.0
     symmetry_policy: full
     apply_symmetry_continuously: true
     ef_search: 64
+    threaded: true
+    init: rptree
 
   MANN-NNDescent-full-deferred:
     k: 32
-    max_iterations: 5
+    max_iterations: 15
     convergence_threshold: 0.01
-    sample_rate: 0.5
+    sample_rate: 1.0
     symmetry_policy: full
     apply_symmetry_continuously: false
     ef_search: 64
+    threaded: true
+    init: rptree
 
   Annoy:
     n_trees: 10
@@ -86,7 +77,7 @@ algorithms:
 
   NearestNeighborDescent-jl:
     k: 32
-    max_iterations: 5
-    sample_rate: 0.5
+    max_iterations: 15
+    sample_rate: 1.0
     precision: 0.01
     max_candidates: 64

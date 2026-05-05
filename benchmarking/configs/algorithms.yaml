@@ -55,6 +55,7 @@ algorithms:
     language: Julia
     type: graph
     description: Nearest Neighbor Descent graph construction
+    threaded: true
 
   MANN-NNDescent-pruned-continuous:
     name: NN-Descent (pruned, continuous)
@@ -62,6 +63,7 @@ algorithms:
     language: Julia
     type: graph
     description: NN-Descent with pruned symmetry applied continuously
+    threaded: true
 
   MANN-NNDescent-pruned-deferred:
     name: NN-Descent (pruned, deferred)
@@ -69,6 +71,7 @@ algorithms:
     language: Julia
     type: graph
     description: NN-Descent with pruned symmetry applied at end
+    threaded: true
 
   MANN-NNDescent-full-continuous:
     name: NN-Descent (full, continuous)
@@ -76,6 +79,7 @@ algorithms:
     language: Julia
     type: graph
     description: NN-Descent with full symmetry applied continuously
+    threaded: true
 
   MANN-NNDescent-full-deferred:
     name: NN-Descent (full, deferred)
@@ -83,6 +87,7 @@ algorithms:
     language: Julia
     type: graph
     description: NN-Descent with full symmetry applied at end
+    threaded: true
 
   Annoy:
     name: Annoy
