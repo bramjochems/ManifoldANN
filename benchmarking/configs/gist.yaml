@@ -7,7 +7,7 @@ n_test: 1000
 algorithms:
   MANN-LSH:
     n_tables: 20
-    hash_length: 8
+    hash_length: 10
 
   MANN-HNSW-diversified:
     M: 16
@@ -32,9 +32,10 @@ algorithms:
     apply_symmetry_continuously: false
     ef_search: 64
     threaded: true
+    init: rptree
 
   Annoy:
-    n_trees: 10
+    n_trees: 100
 
   HNSWlib:
     M: 16

@@ -4,12 +4,6 @@ julia_version = "1.12.1"
 manifest_format = "2.0"
 project_hash = "bd366433fbbc176784923a3823afa8b28cee8330"
 
-[[deps.AMD]]
-deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse_jll"]
-git-tree-sha1 = "45a1272e3f809d36431e57ab22703c6896b8908f"
-uuid = "14f7f29c-3bd6-536c-9a0b-7339e30b5a3e"
-version = "0.5.3"
-
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
 git-tree-sha1 = "7e35fca2bdfba44d797c53dfe63a51fabf39bfc0"
@@ -85,6 +79,18 @@ weakdeps = ["SparseArrays"]
     [deps.ChainRulesCore.extensions]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
 
+[[deps.Clp]]
+deps = ["Clp_jll", "LinearAlgebra", "MathOptInterface", "OpenBLAS32_jll", "PrecompileTools"]
+git-tree-sha1 = "3d13efbe93df73bfc046b73ced9fc2c164fa919e"
+uuid = "e2554f3b-3117-50c0-817c-e040a3ddf72d"
+version = "1.2.2"
+
+[[deps.Clp_jll]]
+deps = ["Artifacts", "CoinUtils_jll", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "METIS_jll", "MUMPS_seq_jll", "OpenBLAS32_jll", "Osi_jll", "Pkg"]
+git-tree-sha1 = "51861cd16c6c4e0018ad401b2afb36e51c7d4bcd"
+uuid = "06985876-5285-5a41-9fcb-8948a742cc53"
+version = "100.1700.700+1"
+
 [[deps.CodecBzip2]]
 deps = ["Bzip2_jll", "TranscodingStreams"]
 git-tree-sha1 = "84990fa864b7f2b4901901ca12736e45ee79068c"
@@ -96,6 +102,12 @@ deps = ["TranscodingStreams", "Zlib_jll"]
 git-tree-sha1 = "962834c22b66e32aa10f7611c08c8ca4e20749a9"
 uuid = "944b1d66-785c-5afd-91f1-9de20f533193"
 version = "0.7.8"
+
+[[deps.CoinUtils_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS32_jll", "Pkg"]
+git-tree-sha1 = "5e9852361e31af66143665e780535df262fa3407"
+uuid = "be027038-0da8-5614-b30d-e42594cb92df"
+version = "200.1100.600+0"
 
 [[deps.CommonMark]]
 deps = ["PrecompileTools"]
@@ -204,16 +216,6 @@ deps = ["Distances", "Distributions", "FillArrays", "LinearAlgebra", "MathOptInt
 git-tree-sha1 = "aca11e5cbf419be6778707f4ddc90d486bc79e92"
 uuid = "24df6009-d856-477c-ac5c-91f668376b31"
 version = "0.2.5"
-
-[[deps.ExprTools]]
-git-tree-sha1 = "27415f162e6028e81c72b82ef756bf321213b6ec"
-uuid = "e2ba6199-217a-4e67-a87a-7c52f15ade04"
-version = "0.1.10"
-
-[[deps.FastClosures]]
-git-tree-sha1 = "acebe244d53ee1b461970f8910c235b259e772ef"
-uuid = "9aa1b823-49e4-5ca5-8b0f-3971ec8bab6a"
-version = "0.3.2"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
@@ -417,18 +419,6 @@ version = "0.9.39"
     LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
-[[deps.Krylov]]
-deps = ["LinearAlgebra", "Printf", "SparseArrays"]
-git-tree-sha1 = "09895a8e17b0aa97df8964ed13c94d1b6d9de666"
-uuid = "ba0b0d4f-ebba-5204-a429-3ac8c609bfb7"
-version = "0.10.3"
-
-[[deps.LDLFactorizations]]
-deps = ["AMD", "LinearAlgebra", "SparseArrays", "Test"]
-git-tree-sha1 = "70f582b446a1c3ad82cf87e62b878668beef9d13"
-uuid = "40e66cde-538c-5869-a4ad-c39174c6795b"
-version = "0.10.1"
-
 [[deps.LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]
 uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
@@ -474,28 +464,6 @@ deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 version = "1.12.0"
 
-[[deps.LinearOperators]]
-deps = ["FastClosures", "LinearAlgebra", "Printf", "Requires", "SparseArrays", "TimerOutputs"]
-git-tree-sha1 = "db137007d2c4ed948aa5f2518a2b451851ea8bda"
-uuid = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
-version = "2.11.0"
-
-    [deps.LinearOperators.extensions]
-    LinearOperatorsAMDGPUExt = "AMDGPU"
-    LinearOperatorsCUDAExt = "CUDA"
-    LinearOperatorsChainRulesCoreExt = "ChainRulesCore"
-    LinearOperatorsJLArraysExt = "JLArrays"
-    LinearOperatorsLDLFactorizationsExt = "LDLFactorizations"
-    LinearOperatorsMetalExt = "Metal"
-
-    [deps.LinearOperators.weakdeps]
-    AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
-    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-    JLArrays = "27aeb0d3-9eb9-45fb-866b-73c2ecf80fcb"
-    LDLFactorizations = "40e66cde-538c-5869-a4ad-c39174c6795b"
-    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
-
 [[deps.LogExpFunctions]]
 deps = ["DocStringExtensions", "IrrationalConstants", "LinearAlgebra"]
 git-tree-sha1 = "13ca9e2586b89836fd20cccf56e57e2b9ae7f38f"
@@ -540,13 +508,19 @@ git-tree-sha1 = "e214f2a20bdd64c04cd3e4ff62d3c9be7e969a59"
 uuid = "f1f71cc9-e9ae-5b93-9b94-4fe0e1ad3748"
 version = "5.5.4+0"
 
+[[deps.MUMPS_seq_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "METIS_jll", "libblastrampoline_jll"]
+git-tree-sha1 = "eb4f9c84cbe9139594752e3e5b71b2ed4be140b8"
+uuid = "d7ed1dd3-d0ae-5e8e-bfb4-87a502085b8d"
+version = "500.900.0+0"
+
 [[deps.MacroTools]]
 git-tree-sha1 = "1e0228a030642014fe5cfe68c2c0a818f9e3f522"
 uuid = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 version = "0.5.16"
 
 [[deps.ManifoldANN]]
-deps = ["Distances", "HiGHS", "Hungarian", "JuMP", "JuliaFormatter", "LinearAlgebra", "OptimalTransport", "Random", "Statistics", "Tables", "Tulip"]
+deps = ["Clp", "DataStructures", "Distances", "HiGHS", "Hungarian", "JuMP", "JuliaFormatter", "LinearAlgebra", "OptimalTransport", "Random", "Statistics", "Tables"]
 path = "/home/bram/projects/mai/thesis/code/ManifoldANN"
 uuid = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
 version = "0.1.0"
@@ -686,6 +660,12 @@ git-tree-sha1 = "05868e21324cede2207c6f0f466b4bfef6d5e7ee"
 uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 version = "1.8.1"
 
+[[deps.Osi_jll]]
+deps = ["Artifacts", "CoinUtils_jll", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS32_jll", "Pkg"]
+git-tree-sha1 = "4f00d103782fb742e50886924eeea2fe722d3f7a"
+uuid = "7da25872-d9ce-5375-a4d3-7a845f58efdd"
+version = "0.10800.700+0"
+
 [[deps.PDMats]]
 deps = ["LinearAlgebra", "SparseArrays", "SuiteSparse"]
 git-tree-sha1 = "d922b4d80d1e12c658da7785e754f4796cc1d60d"
@@ -739,12 +719,6 @@ version = "1.11.0"
 git-tree-sha1 = "1d36ef11a9aaf1e8b74dacc6a731dd1de8fd493d"
 uuid = "43287f4e-b6f4-7ad1-bb20-aadabca52c3d"
 version = "1.3.0"
-
-[[deps.QPSReader]]
-deps = ["Logging", "Pkg"]
-git-tree-sha1 = "374833c0c1fd5cc623278581bf0c8259d7b35f10"
-uuid = "10f199a5-22af-520b-b891-7ce84a7b1bd0"
-version = "0.2.1"
 
 [[deps.QuadGK]]
 deps = ["DataStructures", "LinearAlgebra"]
@@ -960,28 +934,10 @@ deps = ["InteractiveUtils", "Logging", "Random", "Serialization"]
 uuid = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 version = "1.11.0"
 
-[[deps.TimerOutputs]]
-deps = ["ExprTools", "Printf"]
-git-tree-sha1 = "3748bd928e68c7c346b52125cf41fff0de6937d0"
-uuid = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
-version = "0.5.29"
-
-    [deps.TimerOutputs.extensions]
-    FlameGraphsExt = "FlameGraphs"
-
-    [deps.TimerOutputs.weakdeps]
-    FlameGraphs = "08572546-2f56-4bcf-ba4e-bab62c3a3f89"
-
 [[deps.TranscodingStreams]]
 git-tree-sha1 = "0c45878dcfdcfa8480052b6ab162cdd138781742"
 uuid = "3bb67fe8-82b1-5028-8e26-92a6c54297fa"
 version = "0.11.3"
-
-[[deps.Tulip]]
-deps = ["CodecBzip2", "CodecZlib", "Krylov", "LDLFactorizations", "LinearAlgebra", "LinearOperators", "Logging", "MathOptInterface", "Printf", "QPSReader", "SparseArrays", "SuiteSparse", "TOML", "Test", "TimerOutputs"]
-git-tree-sha1 = "d9415a833b926da3f753133a50d5ce316c51bc67"
-uuid = "6dd1b50a-3aae-11e9-10b5-ef983d2400fa"
-version = "0.9.8"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]

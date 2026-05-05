@@ -8,8 +8,8 @@ algorithms:
   MANN-BruteForce: {}
 
   MANN-LSH:
-    n_tables: 12
-    hash_length: 5
+    n_tables: 20
+    hash_length: 10
 
   MANN-HNSW-diversified:
     M: 16
@@ -59,7 +59,7 @@ algorithms:
     init: rptree
 
   Annoy:
-    n_trees: 10
+    n_trees: 100
 
   HNSWlib:
     M: 16

@@ -8,8 +8,8 @@ algorithms:
   MANN-BruteForce: {}
 
   MANN-LSH:
-    n_tables: 16
-    hash_length: 7
+    n_tables: 20
+    hash_length: 10
 
   # MANN-HNSW-heuristic:
   #   M: 16
@@ -55,6 +55,7 @@ algorithms:
     apply_symmetry_continuously: false
     ef_search: 64
     threaded: true
+    init: rptree
 
   MANN-NNDescent-full-continuous:
     k: 32
@@ -65,6 +66,7 @@ algorithms:
     apply_symmetry_continuously: true
     ef_search: 64
     threaded: true
+    init: rptree
 
   MANN-NNDescent-full-deferred:
     k: 32
@@ -75,9 +77,10 @@ algorithms:
     apply_symmetry_continuously: false
     ef_search: 64
     threaded: true
+    init: rptree
 
   Annoy:
-    n_trees: 10
+    n_trees: 100
 
   HNSWlib:
     M: 16
