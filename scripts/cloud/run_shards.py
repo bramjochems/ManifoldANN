@@ -23,9 +23,14 @@ def run(cmd, check=True, capture=True):
 
 
 def validate_sha_pushed(sha):
-    r = run(["git", "ls-remote", "origin", sha], check=False)
-    if sha not in (r.stdout or ""):
-        sys.exit(f"git SHA {sha} not found on origin. Push first.")
+    # `git ls-remote origin <sha>` doesn't actually work — ls-remote lists
+    # refs, not arbitrary SHAs. Use `branch -r --contains` instead, which
+    # reads from local refs/remotes/. Run `git fetch` first so this reflects
+    # the actual remote state, not a stale local view.
+    run(["git", "fetch", "origin", "--quiet"], check=False)
+    r = run(["git", "branch", "-r", "--contains", sha], check=False)
+    if not (r.stdout or "").strip():
+        sys.exit(f"git SHA {sha} not found on any origin branch. Push first.")
 
 
 def blob_url(account, container, path):
