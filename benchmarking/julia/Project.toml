@@ -1,20 +1,22 @@
 [deps]
 Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 HNSW = "540f64fa-c57e-11e8-081c-41422cda4629"
-ManifoldANN = "af2f42d1-71c6-4f28-91a0-50560b1f73ac"
 NearestNeighborDescent = "dd2c4c9e-a32f-5b2f-b342-08c2f244fce8"
 NearestNeighbors = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 YAML = "ddb6d928-2868-570f-bddf-ab3f9cf99eb6"
-HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+
+# This env hosts ONLY the external Julia ANN libraries (HNSW.jl, NND.jl,
+# NearestNeighbors.jl) for `julia_external.py` to activate. The MANN Python
+# wrappers (manifoldann.py) activate a different env at /opt/repo (the
+# parent repo's Project.toml), which provides ManifoldANN itself. Don't
+# add ManifoldANN as a dep here — it's a path-dep without a registry
+# entry and would force a [sources] block, which uv sync's freshly
+# generated Manifest doesn't know how to resolve cleanly under
+# juliapkg-managed Julia versions.
 
 [compat]
 HNSW = "0.1"
 NearestNeighborDescent = "0.3.7"
 NearestNeighbors = "0.4"
 julia = "1.6"
-
-[sources]
-# ManifoldANN is the local repo, two levels up. Without this, Pkg.instantiate
-# fails with "expected package ManifoldANN to be registered" because Pkg
-# tries to resolve it from the General registry.
-ManifoldANN = { path = "../.." }
