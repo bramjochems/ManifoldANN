@@ -167,7 +167,25 @@ def az_auto_shutdown_cmd(rg, vm_name, location, minutes_ahead=90):
     ]
 
 
+def _vm_exists(rg, vm_name):
+    """True if a VM with this name exists in ARM (any provisioning state)."""
+    r = run(["az", "vm", "show", "-g", rg, "-n", vm_name, "-o", "tsv",
+             "--query", "name"], check=False)
+    return r.returncode == 0 and (r.stdout or "").strip() == vm_name
+
+
 def provision(work_unit, args, container_url):
+    """Provision a VM. Retries transparently on transient ARM failures.
+
+    Failure modes we've seen:
+    - `az vm create --no-wait` can return 0 but never actually create
+      a deployment (transient control-plane drop in parallel bursts).
+    - Returncode != 0 from rate-limit / 429 in the Azure CLI itself.
+
+    Mitigation: after submission, poll `az vm show` for ~30s. If the VM
+    isn't visible, retry the create. Up to 3 attempts.
+    """
+    import time as _t
     wid = _work_unit_id(work_unit)
     cloud_init = cloud_init_for(work_unit, args.run_id, container_url,
                                 args.git_sha, args.user_assigned_identity_id,
@@ -190,11 +208,26 @@ def provision(work_unit, args, container_url):
         print(" ".join(shutdown_cmd))
         return wid, True
 
-    r = run(create_cmd, check=False)
-    if r.returncode != 0:
-        return wid, False
-    run(shutdown_cmd, check=False)
-    return wid, True
+    for attempt in range(1, 4):
+        r = run(create_cmd, check=False)
+        if r.returncode != 0:
+            print(f"[{wid}] az vm create attempt {attempt} returncode={r.returncode}")
+            print(r.stderr or "", file=sys.stderr)
+            _t.sleep(5 * attempt)
+            continue
+        # Confirm the deployment actually registered. With --no-wait, az
+        # returns 0 even when the ARM submission silently dropped. Poll
+        # for up to ~30s for the VM to become visible.
+        for _ in range(6):
+            _t.sleep(5)
+            if _vm_exists(args.resource_group, vm_name):
+                run(shutdown_cmd, check=False)
+                return wid, True
+        print(f"[{wid}] VM not visible after submit (attempt {attempt}); retrying")
+        _t.sleep(5 * attempt)
+
+    print(f"[{wid}] FAILED after 3 attempts", file=sys.stderr)
+    return wid, False
 
 
 def main():
