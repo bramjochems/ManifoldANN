@@ -1,14 +1,27 @@
 [
   {
-    "vm_id": "recovery-nytimes-hnsw-jl",
+    "vm_id": "rec-nytimes-hnsw-jl",
     "shards": [
       {"shard_id": "nytimes-tier2-hnsw-jl", "kind": "ann-benchmark", "config_name": "nytimes-tier2-hnsw-jl", "threads": 16, "reps": 3}
     ]
   },
   {
-    "vm_id": "recovery-glove25-nnd-jl",
+    "vm_id": "rec-glove25-nnd-jl",
     "shards": [
       {"shard_id": "glove-25-tier2-nnd-jl", "kind": "ann-benchmark", "config_name": "glove-25-tier2-nnd-jl", "threads": 16, "reps": 3}
+    ]
+  },
+  {
+    "vm_id": "rec-lastfm",
+    "shards": [
+      {"shard_id": "lastfm-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-lsh-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "lastfm-faiss-ivf-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-annoy-sweep", "kind": "ann-benchmark", "config_name": "lastfm-annoy-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-rpforest-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "lastfm-hnswlib-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-hnsw-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-nnd-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "lastfm-single-point-methods", "kind": "ann-benchmark", "config_name": "lastfm-single-point-methods", "threads": 16, "reps": 5}
     ]
   }
 ]
