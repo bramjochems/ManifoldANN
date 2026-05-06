@@ -205,6 +205,22 @@ rm -f /opt/repo/Manifest.toml
     println("[manifoldann] loaded OK")
 ' 2>&1 | tail -30 || echo "[bootstrap] WARN: ManifoldANN instantiate had errors"
 
+# Also instantiate benchmarking/julia/ which is the SEPARATE env that
+# julia_external.py activates for HNSW.jl, NND.jl, NearestNeighbors.jl
+# wrappers. Without this, those wrappers' is_available() fail silently
+# and tier-2 head-to-head shards (HNSW-jl, NND.jl) skip every algorithm
+# with "library not available". Same Manifest.toml drift mitigation:
+# delete and let Pkg resolve fresh against juliapkg's Julia.
+echo "[bootstrap] instantiating benchmarking/julia env (for HNSW.jl, NND.jl)..."
+rm -f /opt/repo/benchmarking/julia/Manifest.toml
+"$JULIACALL_JULIA" --project=/opt/repo/benchmarking/julia -e '
+    using Pkg
+    Pkg.instantiate()
+    Pkg.precompile()
+    using HNSW, NearestNeighborDescent, NearestNeighbors
+    println("[external-julia] loaded OK")
+' 2>&1 | tail -30 || echo "[bootstrap] WARN: benchmarking/julia instantiate had errors"
+
 # ---------- (legacy single-shard metadata removed; per-shard metadata now
 #            written inside the dispatch loop below) ----------
 
