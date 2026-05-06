@@ -1,0 +1,88 @@
+[
+  {
+    "vm_id": "vm01",
+    "shards": [
+      {
+        "shard_id": "gist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm02",
+    "shards": [
+      {
+        "shard_id": "gist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm03",
+    "shards": [
+      {
+        "shard_id": "gist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm04",
+    "shards": [
+      {
+        "shard_id": "gist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm05",
+    "shards": [
+      {
+        "shard_id": "glove-100-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm06",
+    "shards": [
+      {
+        "shard_id": "glove-100-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  }
+]

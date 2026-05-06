@@ -4,16 +4,11 @@ n_train: 0
 n_test: 0
 
 algorithms:
-  MANN-NNDescent-full-deferred:
+  NearestNeighborDescent-jl:
     build:
       k: [16, 32, 64]
       max_iterations: [10, 15]
-      symmetry_policy: full
-      apply_symmetry_continuously: false
       sample_rate: 1.0
-      convergence_threshold: 0.001
-      threaded: true
-      init: rptree
-      ef_search: 64
+      precision: 0.001
     query_sweep:
       max_candidates: [32, 64, 128]

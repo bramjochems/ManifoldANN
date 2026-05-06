@@ -1,0 +1,12 @@
+dataset: nytimes-256-angular
+metric: angular
+n_train: 0
+n_test: 0
+
+algorithms:
+  HNSW-jl:
+    build:
+      M: [8, 16, 32]
+      ef_construction: [100, 200]
+    query_sweep:
+      ef: [16, 32, 64, 100, 150, 200, 300, 400]

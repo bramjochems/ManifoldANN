@@ -1,0 +1,9 @@
+dataset: lastfm-64-dot
+metric: angular
+n_train: 0
+n_test: 0
+
+algorithms:
+  PyNNDescent:
+    build:
+      n_neighbors: [16, 32, 64]

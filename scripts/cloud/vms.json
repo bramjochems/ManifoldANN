@@ -1,131 +1,780 @@
 [
   {
-    "vm_id": "vm01-gist-mann-hnsw",
+    "vm_id": "vm01",
     "shards": [
-      {"shard_id": "gist-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "gist-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-ivf-flat-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-hnsw-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "gist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm02-gist-hnswlib-glove100-hnsw",
+    "vm_id": "vm02",
     "shards": [
-      {"shard_id": "fashion-mnist-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "fashion-mnist-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "fashion-mnist-annoy-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-annoy-sweep", "kind": "ann-benchmark", "config_name": "gist-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "gist-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-hnsw-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "gist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm03-glove25-nnd-heavy",
+    "vm_id": "vm03",
     "shards": [
-      {"shard_id": "fashion-mnist-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "fashion-mnist-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "mnist-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-tier2-nnd-mann", "kind": "ann-benchmark", "config_name": "glove-25-tier2-nnd-mann", "threads": 16, "reps": 3},
-      {"shard_id": "glove-25-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "glove-25-mann-nnd-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-tier2-nnd-jl", "kind": "ann-benchmark", "config_name": "glove-25-tier2-nnd-jl", "threads": 16, "reps": 3}
+      {
+        "shard_id": "mnist-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "fashion-mnist-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "fashion-mnist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "gist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm04-gist-singlepoint-ivfhnsw",
+    "vm_id": "vm04",
     "shards": [
-      {"shard_id": "lastfm-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "lastfm-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-annoy-sweep", "kind": "ann-benchmark", "config_name": "lastfm-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "mnist-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "gist-single-point-methods", "kind": "ann-benchmark", "config_name": "gist-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "gist-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "fashion-mnist-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-mann-ivf-flat-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-ivf-flat-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "fashion-mnist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "gist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm05-nytimes-hnswjl",
+    "vm_id": "vm05",
     "shards": [
-      {"shard_id": "fashion-mnist-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "fashion-mnist-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "mnist-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "mnist-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "mnist-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "nytimes-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "nytimes-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-annoy-sweep", "kind": "ann-benchmark", "config_name": "nytimes-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "nytimes-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-tier2-hnsw-mann", "kind": "ann-benchmark", "config_name": "nytimes-tier2-hnsw-mann", "threads": 16, "reps": 3},
-      {"shard_id": "nytimes-tier2-hnsw-jl", "kind": "ann-benchmark", "config_name": "nytimes-tier2-hnsw-jl", "threads": 16, "reps": 3}
+      {
+        "shard_id": "fashion-mnist-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "sift-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm06-glove100-nnd-ivfhnsw",
+    "vm_id": "vm06",
     "shards": [
-      {"shard_id": "mnist-annoy-sweep", "kind": "ann-benchmark", "config_name": "mnist-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "lastfm-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "lastfm-mann-nnd-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "nytimes-mann-nnd-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-nnd-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "mnist-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "gist-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-ivf-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-ivf-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "gist-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm07-sift-heavy",
+    "vm_id": "vm07",
     "shards": [
-      {"shard_id": "fashion-mnist-single-point-methods", "kind": "ann-benchmark", "config_name": "fashion-mnist-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "mnist-single-point-methods", "kind": "ann-benchmark", "config_name": "mnist-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "lastfm-single-point-methods", "kind": "ann-benchmark", "config_name": "lastfm-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "sift-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-annoy-sweep", "kind": "ann-benchmark", "config_name": "sift-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-single-point-methods", "kind": "ann-benchmark", "config_name": "sift-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-flat-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-nnd-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "sift-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "fashion-mnist-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "gist-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm08-glove-medium",
+    "vm_id": "vm08",
     "shards": [
-      {"shard_id": "nytimes-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "nytimes-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "nytimes-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "nytimes-single-point-methods", "kind": "ann-benchmark", "config_name": "nytimes-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "glove-25-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "glove-25-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-annoy-sweep", "kind": "ann-benchmark", "config_name": "glove-25-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "glove-25-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "glove-25-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "glove-25-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-25-single-point-methods", "kind": "ann-benchmark", "config_name": "glove-25-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-single-point-methods", "kind": "ann-benchmark", "config_name": "glove-50-single-point-methods", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-mann-nnd-sweep", "kind": "ann-benchmark", "config_name": "glove-50-mann-nnd-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "fashion-mnist-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-ivf-flat-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-ivf-flat-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-mann-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-mann-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "mnist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm09-glove-50-100",
+    "vm_id": "vm09",
     "shards": [
-      {"shard_id": "glove-50-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "glove-50-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "glove-50-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-annoy-sweep", "kind": "ann-benchmark", "config_name": "glove-50-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "glove-50-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-mann-hnsw-sweep", "kind": "ann-benchmark", "config_name": "glove-50-mann-hnsw-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-50-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "glove-50-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-lsh-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-lsh-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-faiss-ivf-sweep", "kind": "ann-benchmark", "config_name": "glove-100-faiss-ivf-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-annoy-sweep", "kind": "ann-benchmark", "config_name": "glove-100-annoy-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-rpforest-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-rpforest-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-ivf-flat-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "glove-100-hnswlib-sweep", "threads": 16, "reps": 5},
-      {"shard_id": "glove-100-single-point-methods", "kind": "ann-benchmark", "config_name": "glove-100-single-point-methods", "threads": 16, "reps": 5}
+      {
+        "shard_id": "lastfm-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-mann-lsh-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-mann-lsh-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "nytimes-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "mnist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "lastfm-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-mann-ivf-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-ivf-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-mann-ivf-hnsw-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-ivf-hnsw-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "sift-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
     ]
   },
   {
-    "vm_id": "vm10-sift-hnswlib",
+    "vm_id": "vm10",
     "shards": [
-      {"shard_id": "sift-hnswlib-sweep", "kind": "ann-benchmark", "config_name": "sift-hnswlib-sweep", "threads": 16, "reps": 5}
+      {
+        "shard_id": "fashion-mnist-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "fashion-mnist-mann-rpforest-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-mann-rpforest-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "lastfm-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-25-faiss-ivf-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-faiss-ivf-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-100-annoy-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-annoy-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "fashion-mnist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "fashion-mnist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "gist-mann-ivf-flat-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-mann-ivf-flat-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "glove-50-single-point-methods",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-single-point-methods",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "gist-hnswlib-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "gist-hnswlib-sweep",
+        "threads": 16,
+        "reps": 5
+      },
+      {
+        "shard_id": "sift-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-100-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-100-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 5
+      }
     ]
   }
 ]

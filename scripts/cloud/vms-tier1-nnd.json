@@ -1,0 +1,243 @@
+[
+  {
+    "vm_id": "vm01",
+    "shards": [
+      {
+        "shard_id": "glove-50-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm02",
+    "shards": [
+      {
+        "shard_id": "fashion-mnist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm03",
+    "shards": [
+      {
+        "shard_id": "fashion-mnist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "lastfm-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm04",
+    "shards": [
+      {
+        "shard_id": "lastfm-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "lastfm-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm05",
+    "shards": [
+      {
+        "shard_id": "mnist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "sift-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm06",
+    "shards": [
+      {
+        "shard_id": "fashion-mnist-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm07",
+    "shards": [
+      {
+        "shard_id": "lastfm-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "lastfm-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "mnist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "sift-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-50-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-50-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm08",
+    "shards": [
+      {
+        "shard_id": "mnist-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "fashion-mnist-nnd-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "fashion-mnist-nnd-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "sift-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-mann-nnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-mann-nnd-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  },
+  {
+    "vm_id": "vm09",
+    "shards": [
+      {
+        "shard_id": "mnist-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "mnist-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "nytimes-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "nytimes-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "glove-25-pynnd-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "glove-25-pynnd-sweep",
+        "threads": 16,
+        "reps": 3
+      },
+      {
+        "shard_id": "sift-hnsw-jl-sweep",
+        "kind": "ann-benchmark",
+        "config_name": "sift-hnsw-jl-sweep",
+        "threads": 16,
+        "reps": 3
+      }
+    ]
+  }
+]

@@ -20,15 +20,3 @@ algorithms:
       ef_construction: 200
       ef_search: 64
       neighbor_policy: diversified
-  MANN-NNDescent-full-deferred:
-    build:
-      k: 32
-      max_iterations: 15
-      convergence_threshold: 0.01
-      sample_rate: 1.0
-      symmetry_policy: full
-      apply_symmetry_continuously: false
-      ef_search: 64
-      threaded: true
-      init: rptree
-  PyNNDescent: {}
