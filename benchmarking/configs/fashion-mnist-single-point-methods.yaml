@@ -1,0 +1,34 @@
+# Auto-generated thesis shard config
+dataset: fashion-mnist-784-euclidean
+metric: euclidean
+n_train: 0
+n_test: 0
+
+algorithms:
+  MANN-BruteForce: {}
+  MANN-KDTree:
+    build:
+      axis_selector: variance
+  SciPy-KDTree:
+    build:
+      leafsize: 32
+  MANN-IVF-HNSW:
+    build:
+      nlist: 64
+      routing_k: 8
+      M: 16
+      ef_construction: 200
+      ef_search: 64
+      neighbor_policy: diversified
+  MANN-NNDescent-full-deferred:
+    build:
+      k: 32
+      max_iterations: 15
+      convergence_threshold: 0.01
+      sample_rate: 1.0
+      symmetry_policy: full
+      apply_symmetry_continuously: false
+      ef_search: 64
+      threaded: true
+      init: rptree
+  PyNNDescent: {}

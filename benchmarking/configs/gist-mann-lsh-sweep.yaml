@@ -1,0 +1,11 @@
+# Auto-generated thesis shard config
+dataset: gist-960-euclidean
+metric: euclidean
+n_train: 0
+n_test: 0
+
+algorithms:
+  MANN-LSH:
+    build:
+      n_tables: [5, 10, 20, 40]
+      hash_length: [8, 12, 16]

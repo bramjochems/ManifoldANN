@@ -1,0 +1,13 @@
+# Auto-generated thesis shard config
+dataset: glove-100-angular
+metric: angular
+n_train: 0
+n_test: 0
+
+algorithms:
+  HNSWlib:
+    build:
+      M: [8, 16, 32]
+      ef_construction: [100, 200]
+    query_sweep:
+      ef_search: [16, 32, 64, 100, 150, 200, 300, 400]

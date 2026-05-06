@@ -1,0 +1,11 @@
+# Auto-generated thesis shard config
+dataset: lastfm-64-dot
+metric: dot
+n_train: 0
+n_test: 0
+
+algorithms:
+  MANN-RPForest:
+    build:
+      n_trees: [5, 10, 20]
+      leaf_cap: [32, 64, 128]

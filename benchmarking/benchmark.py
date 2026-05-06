@@ -276,7 +276,7 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
             "qps_q25", "qps_q75",
             "recall_q25", "recall_q75",
             "build_rss_delta_mb", "query_rss_delta_mb_max", "index_mb",
-            "query_params",
+            "build_params", "query_params",
         ])
 
         for r in results:
@@ -296,6 +296,7 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
                 _mb(r.get("build_rss_delta_bytes")),
                 _mb(r.get("query_rss_delta_bytes_max")),
                 _mb(r.get("index_bytes")),
+                json.dumps(r.get("build_params", {}), sort_keys=True),
                 json.dumps(r.get("query_params", {}), sort_keys=True),
             ])
 
@@ -303,7 +304,7 @@ def save_results_csv(output_dir: Path, results: list, failed_algorithms: list, k
             writer.writerow([
                 failed["name"], "N/A", "N/A", "N/A",
                 "failed", failed.get("error", "Unknown error"),
-                "", "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "", "", "", "",
             ])
 
     print(f"✓ Saved results to {csv_path}")
@@ -505,27 +506,69 @@ def _validate_comparable_groups(comparable_groups: dict, results: list):
 
 
 def _parse_algo_entry(entry, algo_name=None):
-    """Split a YAML algorithm entry into (build_params, query_sweep).
+    """Split a YAML algorithm entry into (build_combos, query_sweep).
 
     New form: dict with `build:` and/or `query_sweep:` keys.
     Old (flat) form: any other dict — treated entirely as build params, no
     sweep.
 
+    Within `build:`, list-valued params expand into a Cartesian product of
+    builds (one index built per combination). Scalar-valued params are
+    held fixed across all combos. This lets a single YAML entry sweep
+    across (M, ef_construction, ...) without duplicating the entry.
+
+    Returns (build_combos, query_sweep) where build_combos is a list of
+    dicts (each a complete build_params for one index build).
+
     Stray keys alongside `build`/`query_sweep` are silently ignored — warn
     so the user notices a typo before trusting the run.
     """
     if not entry:
-        return {}, {}
+        return [{}], {}
     if isinstance(entry, dict) and ("build" in entry or "query_sweep" in entry):
-        build = dict(entry.get("build") or {})
+        build_raw = dict(entry.get("build") or {})
         sweep = dict(entry.get("query_sweep") or {})
         stray = set(entry) - {"build", "query_sweep"}
         if stray:
             label = f" in {algo_name}" if algo_name else ""
             print(f"⚠️  ignoring stray keys {sorted(stray)}{label} "
                   f"(use `build:` block for parameters)")
-        return build, sweep
-    return dict(entry), {}
+        build_combos = _expand_build_combos(build_raw)
+        return build_combos, sweep
+    return [dict(entry)], {}
+
+
+def _expand_build_combos(build_raw):
+    """Expand list-valued entries in `build:` into a cartesian product
+    of fully scalar build_params dicts. Non-list values are held fixed.
+
+    Example: {M: [8, 16], ef_construction: 200, neighbor_policy: "diversified"}
+        -> [{M: 8, ef_construction: 200, neighbor_policy: "diversified"},
+            {M: 16, ef_construction: 200, neighbor_policy: "diversified"}]
+
+    Strings are NOT treated as iterables — they're scalars (e.g.
+    `neighbor_policy: diversified` should not enumerate characters).
+    """
+    if not build_raw:
+        return [{}]
+    sweep_keys = []
+    sweep_values = []
+    fixed = {}
+    for k in sorted(build_raw.keys()):
+        v = build_raw[k]
+        if isinstance(v, list):
+            sweep_keys.append(k)
+            sweep_values.append(sorted(v))
+        else:
+            fixed[k] = v
+    if not sweep_keys:
+        return [fixed]
+    combos = []
+    for vals in itertools.product(*sweep_values):
+        combo = dict(fixed)
+        combo.update(dict(zip(sweep_keys, vals)))
+        combos.append(combo)
+    return combos
 
 
 def _sweep_combos(query_sweep):
@@ -619,208 +662,216 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     results = []
     failed_algorithms = []
 
-    # Iterate through configured algorithms
+    # Iterate through configured algorithms; each algorithm entry can
+    # produce multiple builds (build_sweep) and multiple queries per build
+    # (query_sweep), giving (n_build_combos × n_query_combos) result rows.
     for algo_name, algo_entry in config["algorithms"].items():
-        print(f"\n{'─' * 80}")
-        print(f"Algorithm: {algo_name}")
-        print(f"{'─' * 80}")
-
-        build_params, query_sweep = _parse_algo_entry(algo_entry, algo_name)
+        build_combos, query_sweep = _parse_algo_entry(algo_entry, algo_name)
         sweep_combos = _sweep_combos(query_sweep)
 
-        # Create algorithm instance
-        try:
-            algo = create_algorithm(algo_name, metric, build_params or {})
-        except ValueError as e:
-            print(f"✗ Error: {e}")
-            failed_algorithms.append({
-                "name": algo_name,
-                "error": str(e)
-            })
-            continue
+        for build_idx, build_params in enumerate(build_combos):
+            print(f"\n{'─' * 80}")
+            if len(build_combos) > 1:
+                print(f"Algorithm: {algo_name} [build {build_idx + 1}/{len(build_combos)}]")
+            else:
+                print(f"Algorithm: {algo_name}")
+            print(f"{'─' * 80}")
+            if build_params:
+                print(f"Build params: {build_params}")
 
-        if algo is None:
-            print(f"⚠️  Skipped (library not available)")
-            failed_algorithms.append({
-                "name": algo_name,
-                "error": "Library not available"
-            })
-            continue
-
-        print(f"Configuration: {algo}")
-
-        try:
-            # Apply thread setting (no-op for wrappers that piggy-back on
-            # JULIA_NUM_THREADS).
+            # Create algorithm instance for this specific build combo.
             try:
-                algo.set_num_threads(threads)
-            except Exception as exc:
-                print(f"⚠️  set_num_threads({threads}) failed: {exc}")
-
-            # Marshal data outside the timed region so every wrapper gets
-            # its preprocessing charged symmetrically (numpy -> Julia
-            # matrix for Julia wrappers, dtype/contiguity coercion for
-            # FAISS/hnswlib, pass-through for the rest).
-            prepared_train = algo.prepare_data(train)
-            try:
-                prepared_test = algo.prepare_queries(test)
-            except Exception:
-                prepared_test = test
-
-            # Build-path JIT warmup at the *actual* config (Julia
-            # juliacall, numba). Costs seconds once per (algo, dim);
-            # untimed.
-            try:
-                algo.warmup_build(int(train.shape[1]))
-            except Exception as exc:
-                print(f"⚠️  warmup_build failed: {exc}")
-
-            # Clean GC state right before the timed build region.
-            _full_gc()
-            rss_before_build = _peak_rss_bytes()
-
-            # Build index (single rep — deterministic at fixed seed).
-            print("Building index...")
-            build_start = time.perf_counter()
-            algo.fit(prepared_train)
-            build_time = time.perf_counter() - build_start
-            rss_after_build = _peak_rss_bytes()
-            build_rss_delta = (
-                None if (rss_before_build is None or rss_after_build is None)
-                else rss_after_build - rss_before_build
-            )
-            print(f"✓ Build time: {build_time:.2f}s"
-                  + (f" (+{build_rss_delta/1e6:.1f} MB RSS)"
-                     if build_rss_delta is not None else ""))
-
-            # Library-reported index footprint, if exposed (depends only
-            # on build, so probe once outside the sweep).
-            try:
-                index_bytes = algo.memory_usage()
-            except Exception:
-                index_bytes = None
-
-            # Get metadata for this algorithm (with prefix matching for variants)
-            metadata = get_algorithm_metadata(algo_name, algo_metadata)
-
-            # Sweep over query-time parameter combinations, reusing the
-            # single built index. Each combo runs its own warmup + reps.
-            for combo in sweep_combos:
-                if combo:
-                    print(f"\n  Query params: {combo}")
-                    try:
-                        algo.set_query_params(**combo)
-                    except Exception as exc:
-                        print(f"⚠️  set_query_params({combo}) failed: {exc}")
-
-                # Warm the query path at the *actual* k, batch size, and
-                # current query-param combo. Re-warm per combo so cache
-                # state is fresh for the timed reps.
-                try:
-                    if hasattr(algo, "query_batch_raw"):
-                        raw_warm = algo.query_batch_raw(prepared_test, k)
-                        algo.finalize_batch_ids(raw_warm)
-                    elif hasattr(algo, "query_batch"):
-                        algo.query_batch(prepared_test, k)
-                    else:
-                        for q in test:
-                            algo.query(q, k)
-                except Exception as exc:
-                    print(f"⚠️  query warmup at config failed: {exc}")
-
-                # Reps: time the query path only (build is one-shot).
-                qps_samples = []
-                recall_samples = []
-                query_time_samples = []
-                rss_query_samples = []
-                predictions = None
-                for rep_i in range(reps):
-                    _full_gc()
-                    rss_q_before = _peak_rss_bytes()
-                    print(
-                        f"Querying {n_test} test points "
-                        f"(rep {rep_i + 1}/{reps})..."
-                    )
-                    query_start = time.perf_counter()
-                    if hasattr(algo, "query_batch_raw"):
-                        raw = algo.query_batch_raw(prepared_test, k)
-                        query_time = time.perf_counter() - query_start
-                        predictions = algo.finalize_batch_ids(raw)
-                    elif hasattr(algo, "query_batch"):
-                        try:
-                            predictions = algo.query_batch(prepared_test, k)
-                        except TypeError:
-                            predictions = algo.query_batch(test, k)
-                        query_time = time.perf_counter() - query_start
-                    else:
-                        predictions = [algo.query(q, k) for q in test]
-                        query_time = time.perf_counter() - query_start
-                    rss_q_after = _peak_rss_bytes()
-                    qps_i = n_test / query_time if query_time > 0 else float("inf")
-                    recall_i = compute_recall_batch(predictions, ground_truth, k)
-                    qps_samples.append(qps_i)
-                    recall_samples.append(recall_i)
-                    query_time_samples.append(query_time)
-                    if rss_q_before is not None and rss_q_after is not None:
-                        rss_query_samples.append(rss_q_after - rss_q_before)
-                    print(
-                        f"  rep {rep_i + 1}: query={query_time:.2f}s, "
-                        f"qps={qps_i:.0f}, recall@{k}={recall_i:.4f}"
-                    )
-
-                qps_med, qps_q25, qps_q75 = _quartiles(qps_samples)
-                recall_med, recall_q25, recall_q75 = _quartiles(recall_samples)
-                qt_med, _qt_q25, _qt_q75 = _quartiles(query_time_samples)
-                print(f"✓ Query time (median): {qt_med:.2f}s "
-                      f"(qps median={qps_med:.0f} [IQR {qps_q25:.0f}–{qps_q75:.0f}])")
-                print(f"✓ Recall@{k} (median): {recall_med:.4f} "
-                      f"[IQR {recall_q25:.4f}–{recall_q75:.4f}]")
-
-                results.append({
+                algo = create_algorithm(algo_name, metric, build_params or {})
+            except ValueError as e:
+                print(f"✗ Error: {e}")
+                failed_algorithms.append({
                     "name": algo_name,
-                    "display": str(algo),
-                    "source": metadata.get("source", "Unknown"),
-                    "type": metadata.get("type", "unknown"),
-                    "build_time": build_time,
-                    "query_time": qt_med,
-                    "qps": qps_med,
-                    "recall": recall_med,
-                    "qps_q25": qps_q25,
-                    "qps_q75": qps_q75,
-                    "recall_q25": recall_q25,
-                    "recall_q75": recall_q75,
-                    "qps_samples": qps_samples,
-                    "recall_samples": recall_samples,
-                    "query_time_samples": query_time_samples,
-                    "reps": reps,
-                    "build_rss_delta_bytes": build_rss_delta,
-                    "query_rss_delta_bytes_max": (
-                        max(rss_query_samples) if rss_query_samples else None
-                    ),
-                    "index_bytes": index_bytes,
-                    "build_params": build_params or {},
-                    "query_params": dict(combo),
-                    # `params` kept as alias for legacy summary/print code.
-                    "params": build_params or {},
+                    "error": str(e)
                 })
+                continue
 
-            # Drop the algorithm/index reference and force a full GC so
-            # the next algorithm starts from a clean slate.
-            del algo, prepared_train, prepared_test, predictions
-            _full_gc()
+            if algo is None:
+                print(f"⚠️  Skipped (library not available)")
+                failed_algorithms.append({
+                    "name": algo_name,
+                    "error": "Library not available"
+                })
+                continue
 
-        except Exception as e:
-            error_msg = str(e)
-            print(f"✗ Error: {error_msg}")
-            import traceback
-            traceback.print_exc()
+            print(f"Configuration: {algo}")
 
-            # Track failed algorithm
-            failed_algorithms.append({
-                "name": algo_name,
-                "error": error_msg
-            })
-            continue
+            try:
+                # Apply thread setting (no-op for wrappers that piggy-back on
+                # JULIA_NUM_THREADS).
+                try:
+                    algo.set_num_threads(threads)
+                except Exception as exc:
+                    print(f"⚠️  set_num_threads({threads}) failed: {exc}")
+
+                # Marshal data outside the timed region so every wrapper gets
+                # its preprocessing charged symmetrically (numpy -> Julia
+                # matrix for Julia wrappers, dtype/contiguity coercion for
+                # FAISS/hnswlib, pass-through for the rest).
+                prepared_train = algo.prepare_data(train)
+                try:
+                    prepared_test = algo.prepare_queries(test)
+                except Exception:
+                    prepared_test = test
+
+                # Build-path JIT warmup at the *actual* config (Julia
+                # juliacall, numba). Costs seconds once per (algo, dim);
+                # untimed.
+                try:
+                    algo.warmup_build(int(train.shape[1]))
+                except Exception as exc:
+                    print(f"⚠️  warmup_build failed: {exc}")
+
+                # Clean GC state right before the timed build region.
+                _full_gc()
+                rss_before_build = _peak_rss_bytes()
+
+                # Build index (single rep — deterministic at fixed seed).
+                print("Building index...")
+                build_start = time.perf_counter()
+                algo.fit(prepared_train)
+                build_time = time.perf_counter() - build_start
+                rss_after_build = _peak_rss_bytes()
+                build_rss_delta = (
+                    None if (rss_before_build is None or rss_after_build is None)
+                    else rss_after_build - rss_before_build
+                )
+                print(f"✓ Build time: {build_time:.2f}s"
+                      + (f" (+{build_rss_delta/1e6:.1f} MB RSS)"
+                         if build_rss_delta is not None else ""))
+
+                # Library-reported index footprint, if exposed (depends only
+                # on build, so probe once outside the sweep).
+                try:
+                    index_bytes = algo.memory_usage()
+                except Exception:
+                    index_bytes = None
+
+                # Get metadata for this algorithm (with prefix matching for variants)
+                metadata = get_algorithm_metadata(algo_name, algo_metadata)
+
+                # Sweep over query-time parameter combinations, reusing the
+                # single built index. Each combo runs its own warmup + reps.
+                for combo in sweep_combos:
+                    if combo:
+                        print(f"\n  Query params: {combo}")
+                        try:
+                            algo.set_query_params(**combo)
+                        except Exception as exc:
+                            print(f"⚠️  set_query_params({combo}) failed: {exc}")
+
+                    # Warm the query path at the *actual* k, batch size, and
+                    # current query-param combo. Re-warm per combo so cache
+                    # state is fresh for the timed reps.
+                    try:
+                        if hasattr(algo, "query_batch_raw"):
+                            raw_warm = algo.query_batch_raw(prepared_test, k)
+                            algo.finalize_batch_ids(raw_warm)
+                        elif hasattr(algo, "query_batch"):
+                            algo.query_batch(prepared_test, k)
+                        else:
+                            for q in test:
+                                algo.query(q, k)
+                    except Exception as exc:
+                        print(f"⚠️  query warmup at config failed: {exc}")
+
+                    # Reps: time the query path only (build is one-shot).
+                    qps_samples = []
+                    recall_samples = []
+                    query_time_samples = []
+                    rss_query_samples = []
+                    predictions = None
+                    for rep_i in range(reps):
+                        _full_gc()
+                        rss_q_before = _peak_rss_bytes()
+                        print(
+                            f"Querying {n_test} test points "
+                            f"(rep {rep_i + 1}/{reps})..."
+                        )
+                        query_start = time.perf_counter()
+                        if hasattr(algo, "query_batch_raw"):
+                            raw = algo.query_batch_raw(prepared_test, k)
+                            query_time = time.perf_counter() - query_start
+                            predictions = algo.finalize_batch_ids(raw)
+                        elif hasattr(algo, "query_batch"):
+                            try:
+                                predictions = algo.query_batch(prepared_test, k)
+                            except TypeError:
+                                predictions = algo.query_batch(test, k)
+                            query_time = time.perf_counter() - query_start
+                        else:
+                            predictions = [algo.query(q, k) for q in test]
+                            query_time = time.perf_counter() - query_start
+                        rss_q_after = _peak_rss_bytes()
+                        qps_i = n_test / query_time if query_time > 0 else float("inf")
+                        recall_i = compute_recall_batch(predictions, ground_truth, k)
+                        qps_samples.append(qps_i)
+                        recall_samples.append(recall_i)
+                        query_time_samples.append(query_time)
+                        if rss_q_before is not None and rss_q_after is not None:
+                            rss_query_samples.append(rss_q_after - rss_q_before)
+                        print(
+                            f"  rep {rep_i + 1}: query={query_time:.2f}s, "
+                            f"qps={qps_i:.0f}, recall@{k}={recall_i:.4f}"
+                        )
+
+                    qps_med, qps_q25, qps_q75 = _quartiles(qps_samples)
+                    recall_med, recall_q25, recall_q75 = _quartiles(recall_samples)
+                    qt_med, _qt_q25, _qt_q75 = _quartiles(query_time_samples)
+                    print(f"✓ Query time (median): {qt_med:.2f}s "
+                          f"(qps median={qps_med:.0f} [IQR {qps_q25:.0f}–{qps_q75:.0f}])")
+                    print(f"✓ Recall@{k} (median): {recall_med:.4f} "
+                          f"[IQR {recall_q25:.4f}–{recall_q75:.4f}]")
+
+                    results.append({
+                        "name": algo_name,
+                        "display": str(algo),
+                        "source": metadata.get("source", "Unknown"),
+                        "type": metadata.get("type", "unknown"),
+                        "build_time": build_time,
+                        "query_time": qt_med,
+                        "qps": qps_med,
+                        "recall": recall_med,
+                        "qps_q25": qps_q25,
+                        "qps_q75": qps_q75,
+                        "recall_q25": recall_q25,
+                        "recall_q75": recall_q75,
+                        "qps_samples": qps_samples,
+                        "recall_samples": recall_samples,
+                        "query_time_samples": query_time_samples,
+                        "reps": reps,
+                        "build_rss_delta_bytes": build_rss_delta,
+                        "query_rss_delta_bytes_max": (
+                            max(rss_query_samples) if rss_query_samples else None
+                        ),
+                        "index_bytes": index_bytes,
+                        "build_params": build_params or {},
+                        "query_params": dict(combo),
+                        # `params` kept as alias for legacy summary/print code.
+                        "params": build_params or {},
+                    })
+
+                # Drop the algorithm/index reference and force a full GC so
+                # the next build/algorithm starts from a clean slate.
+                del algo, prepared_train, prepared_test, predictions
+                _full_gc()
+
+            except Exception as e:
+                error_msg = str(e)
+                print(f"✗ Error: {error_msg}")
+                import traceback
+                traceback.print_exc()
+
+                # Track failed algorithm
+                failed_algorithms.append({
+                    "name": algo_name,
+                    "error": error_msg
+                })
+                continue
 
     # Print summary
     print(f"\n{'=' * 80}")
