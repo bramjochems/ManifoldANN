@@ -1,0 +1,14 @@
+[
+  {
+    "vm_id": "recovery-nytimes-hnsw-jl",
+    "shards": [
+      {"shard_id": "nytimes-tier2-hnsw-jl", "kind": "ann-benchmark", "config_name": "nytimes-tier2-hnsw-jl", "threads": 16, "reps": 3}
+    ]
+  },
+  {
+    "vm_id": "recovery-glove25-nnd-jl",
+    "shards": [
+      {"shard_id": "glove-25-tier2-nnd-jl", "kind": "ann-benchmark", "config_name": "glove-25-tier2-nnd-jl", "threads": 16, "reps": 3}
+    ]
+  }
+]

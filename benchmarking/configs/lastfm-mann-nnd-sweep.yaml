@@ -1,5 +1,5 @@
 dataset: lastfm-64-dot
-metric: dot
+metric: angular
 n_train: 0
 n_test: 0
 
