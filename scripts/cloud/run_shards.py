@@ -152,11 +152,13 @@ def az_vm_create_cmd(work_unit, run_id, rg, location, vm_size, image, uami_id,
 
 
 def az_auto_shutdown_cmd(rg, vm_name, location, minutes_ahead=90):
-    # auto-shutdown takes a daily HHMM UTC time of day. Set 90 min ahead
+    # auto-shutdown takes a daily HHMM UTC time of day. Set N min ahead
     # of now to avoid race against ~5 min VM provisioning lag where a 60
     # min ahead schedule could lapse before the VM finishes provisioning.
     # Trade-off: a successfully completing shard might bill an extra ~30
     # min if the trap-based deallocate fails - acceptable for the safety.
+    # Caller can override via --shutdown-minutes for long-running shards
+    # (e.g. gist-nnd-jl ~6.7h needs ~480 min).
     from datetime import timedelta
     t = datetime.now(timezone.utc) + timedelta(minutes=minutes_ahead)
     return [
@@ -196,7 +198,8 @@ def provision(work_unit, args, container_url):
     create_cmd, vm_name = az_vm_create_cmd(
         work_unit, args.run_id, args.resource_group, args.location,
         args.vm_size, args.image, args.user_assigned_identity_id, str(ci_path))
-    shutdown_cmd = az_auto_shutdown_cmd(args.resource_group, vm_name, args.location)
+    shutdown_cmd = az_auto_shutdown_cmd(args.resource_group, vm_name, args.location,
+                                        minutes_ahead=args.shutdown_minutes)
 
     if args.dry_run:
         print(f"--- {wid} ---")
@@ -245,6 +248,9 @@ def main():
     p.add_argument("--image",
                    default="Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--shutdown-minutes", type=int, default=90,
+                   help="Auto-shutdown timer in minutes from now (default: 90). "
+                        "Bump for shards expected to exceed 90 min wall-time.")
     args = p.parse_args()
 
     if not SHARD_ID_RE.match(args.run_id):
