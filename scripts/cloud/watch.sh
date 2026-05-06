@@ -7,19 +7,27 @@
 #   …  active: has metadata.txt + run.log but no output yet (currently running)
 #   ○ pending: nothing uploaded yet (queued behind earlier shards on this VM)
 #
-# Usage: bash scripts/cloud/watch.sh <run-id>
-#        bash scripts/cloud/watch.sh <run-id> --watch   (refresh every 60s)
+# Usage: bash scripts/cloud/watch.sh <run-id> [<vms-file>] [--watch]
+#   <vms-file> defaults to scripts/cloud/vms.json. For recovery runs use
+#   scripts/cloud/vms-recovery.json (or whichever manifest you fired).
+#   --watch refreshes every 60s.
 
 set -euo pipefail
 
-RUN_ID="${1:?usage: watch.sh <run-id> [--watch]}"
+RUN_ID="${1:?usage: watch.sh <run-id> [<vms-file>] [--watch]}"
+SCRIPT_DIR="$(dirname "$0")"
+VMS_FILE="${SCRIPT_DIR}/vms.json"
 WATCH=0
-[ "${2:-}" = "--watch" ] && WATCH=1
+for arg in "${@:2}"; do
+    case "$arg" in
+        --watch) WATCH=1 ;;
+        *) [ -f "$arg" ] && VMS_FILE="$arg" ;;
+    esac
+done
 
 SA="stbram"
 CONTAINER="mai-thesis"
 RG="bram"
-VMS_FILE="$(dirname "$0")/vms.json"
 
 show_progress() {
     # Pull the full blob list once (cheaper than 79 individual queries).
