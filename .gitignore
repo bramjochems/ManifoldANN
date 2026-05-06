@@ -18,6 +18,13 @@
 /benchmark_env/
 /benchmark_results/
 
+# Cloud benchmark results downloaded from blob (post-run)
+/cloud-results/
+
+# Stray harness artifacts left at repo root by local benchmark.py invocations
+/run.log
+/metadata.txt
+
 # Python
 __pycache__/
 *.py[cod]
