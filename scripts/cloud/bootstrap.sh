@@ -221,6 +221,17 @@ rm -f /opt/repo/benchmarking/julia/Manifest.toml
     println("[external-julia] loaded OK")
 ' 2>&1 | tail -30 || echo "[bootstrap] WARN: benchmarking/julia instantiate had errors"
 
+# Force-create the juliacall-managed env by triggering one juliacall import
+# now, BEFORE any shard runs. This ensures the env exists at a known state
+# and any package extensions (StructUtilsStaticArraysCoreExt etc.) get
+# resolved while we're still in setup, not during the timed harness.
+echo "[bootstrap] warming juliacall env..."
+(cd benchmarking && .venv/bin/python -c "
+from juliacall import Main as jl
+jl.seval('using Pkg; Pkg.add(\"StaticArraysCore\"); Pkg.precompile()')
+print('[juliacall-env] precompiled OK')
+" 2>&1 | tail -20) || echo "[bootstrap] WARN: juliacall env warm had errors"
+
 # ---------- (legacy single-shard metadata removed; per-shard metadata now
 #            written inside the dispatch loop below) ----------
 
