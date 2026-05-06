@@ -1,0 +1,12 @@
+dataset: glove-25-angular
+metric: angular
+n_train: 0
+n_test: 0
+
+algorithms:
+  NearestNeighborDescent-jl:
+    build:
+      k: [16, 32, 64]
+      max_iterations: [10, 20]
+    query_sweep:
+      max_candidates: [32, 64, 128]

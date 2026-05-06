@@ -11,14 +11,6 @@ algorithms:
   SciPy-KDTree:
     build:
       leafsize: 32
-  MANN-IVF-HNSW:
-    build:
-      nlist: 64
-      routing_k: 8
-      M: 16
-      ef_construction: 200
-      ef_search: 64
-      neighbor_policy: diversified
   MANN-NNDescent-full-deferred:
     build:
       k: 32

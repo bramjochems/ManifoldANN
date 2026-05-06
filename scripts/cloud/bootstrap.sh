@@ -1,8 +1,16 @@
 #!/bin/bash
 # bootstrap.sh - runs on each Azure VM after cloud-init clones the repo.
-# Env vars expected (set by cloud-init): SHARD_JSON, RUN_ID, BLOB_CONTAINER_URL,
-# UAMI_RESOURCE_ID, KIND.
-# For local Docker testing: set BOOTSTRAP_TEST=1 to mock all `az` calls as echo.
+#
+# Env vars expected (set by cloud-init):
+#   - SHARDS_JSON: JSON array of shard objects (multi-shard mode), OR
+#   - SHARD_JSON:  single shard object (legacy single-shard mode, smoke tests)
+#   - RUN_ID, BLOB_CONTAINER_URL, UAMI_RESOURCE_ID
+#
+# In multi-shard mode, the VM runs each shard's KIND dispatcher in turn,
+# uploading per-shard artifacts before moving to the next. Install + Julia
+# env + datasets are set up ONCE; subsequent shards reuse them.
+#
+# For local Docker testing: set BOOTSTRAP_TEST=1 to mock all `az` calls.
 
 set -eo pipefail
 
@@ -49,14 +57,15 @@ fi
 WORK_DIR=$(pwd)
 SA_ACCOUNT=$(echo "$BLOB_CONTAINER_URL" | sed -E 's|https://([^.]+)\..*|\1|')
 SA_CONTAINER=$(echo "$BLOB_CONTAINER_URL" | sed -E 's|https://[^/]+/([^/]+).*|\1|')
-# SHARD_ID needs jq — set later after apt installs it. Default to a safe
-# placeholder so the upload paths under the early-exit trap don't break.
-SHARD_ID="unknown"
+# SHARD_ID is set per-shard inside the dispatch loop. Default to "init"
+# so any artifacts written before the first shard starts (e.g. from the
+# trap firing during apt install) land somewhere identifiable.
+SHARD_ID="init"
 
 cleanup() {
     local rc=$?
     set +e
-    echo "[bootstrap] cleanup (rc=$rc), uploading partials..."
+    echo "[bootstrap] cleanup (rc=$rc), uploading partials for SHARD_ID=$SHARD_ID..."
     cd "$WORK_DIR" || true
     upload_artifacts || true
     deallocate_self
@@ -196,68 +205,115 @@ rm -f /opt/repo/Manifest.toml
     println("[manifoldann] loaded OK")
 ' 2>&1 | tail -30 || echo "[bootstrap] WARN: ManifoldANN instantiate had errors"
 
-# ---------- metadata snapshot ----------
-{
-    echo "=== lscpu ==="; lscpu
-    echo "=== lsb_release ==="; lsb_release -a 2>/dev/null || cat /etc/os-release
-    echo "=== uname ==="; uname -a
-    echo "=== cpuinfo (head 30) ==="; head -30 /proc/cpuinfo
-    echo "=== blas/lapack/gomp packages ==="; dpkg -l | grep -E "blas|lapack|gomp" || true
-    echo "=== Julia BLAS config ==="
-    julia -e 'using LinearAlgebra; println(BLAS.get_config())' 2>&1 || true
-    echo "=== uv pip list ==="
-    (cd benchmarking && uv pip list) 2>&1 || true
-    echo "=== shard json ==="; echo "$SHARD_JSON"
-    echo "=== run id ==="; echo "$RUN_ID"
-    echo "=== git sha ==="; git rev-parse HEAD 2>&1 || echo "(not a git repo)"
-} > metadata.txt 2>&1 || true
+# ---------- (legacy single-shard metadata removed; per-shard metadata now
+#            written inside the dispatch loop below) ----------
 
-# ---------- dataset download via datasets.lock ----------
-DATASETS_LOCK="scripts/cloud/datasets.lock"
-CONFIG_NAME=$(echo "$SHARD_JSON" | jq -r .config_name)
-CONFIG_YAML="benchmarking/configs/${CONFIG_NAME}.yaml"
+# ---------- shard list normalisation ----------
+# Accept either SHARDS_JSON (array, multi-shard mode) or SHARD_JSON (single,
+# legacy/smoke mode). Internally we always work with an array.
+if [ -n "${SHARDS_JSON:-}" ]; then
+    SHARDS_LIST="$SHARDS_JSON"
+else
+    SHARDS_LIST=$(echo "${SHARD_JSON:-{}}" | jq -c '[.]')
+fi
+N_SHARDS=$(echo "$SHARDS_LIST" | jq 'length')
+echo "[bootstrap] received $N_SHARDS shard(s)"
 
-if [ -f "$CONFIG_YAML" ]; then
-    DATASET_NAME=$(grep -E "^dataset:" "$CONFIG_YAML" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
-    if [ -n "$DATASET_NAME" ]; then
-        echo "=== dataset ===" >> metadata.txt
-        echo "name=$DATASET_NAME source=blob://$SA_ACCOUNT/datasets/${DATASET_NAME}.hdf5" >> metadata.txt
-        # Fetch the HDF5 from our own blob (uploaded once from laptop) into
-        # benchmarking/data/<name>.hdf5 so the harness short-circuits its
-        # built-in downloader. ann-benchmarks.com rate-limits/403s Azure
-        # outbound IPs; HuggingFace ann-benchmarks repo requires auth. Blob
-        # storage is the only path we control end-to-end.
-        if [ "${BOOTSTRAP_TEST:-0}" != "1" ]; then
-            mkdir -p benchmarking/data
-            DEST="benchmarking/data/${DATASET_NAME}.hdf5"
-            for i in 1 2 3; do
-                if AZ storage blob download --auth-mode login \
-                       --account-name "$SA_ACCOUNT" --container-name datasets \
-                       --name "${DATASET_NAME}.hdf5" --file "$DEST" \
-                       --no-progress; then
-                    echo "[bootstrap] dataset cached: $DEST"
-                    break
-                fi
-                echo "[bootstrap] dataset download try $i failed"
-                sleep 15
-            done
-            if [ ! -f "$DEST" ]; then
-                echo "[bootstrap] FATAL: dataset $DATASET_NAME not found in blob after retries"
-                exit 1
-            fi
+# ---------- dataset prefetch (download all unique datasets up front) ----------
+# Loop over the shards' configs and figure out which datasets are needed.
+# Download each ONCE; subsequent shards using the same dataset reuse the
+# cached file (the harness's "if exists" short-circuit kicks in).
+DATASETS_TO_FETCH=$(
+    for i in $(seq 0 $((N_SHARDS - 1))); do
+        cfg=$(echo "$SHARDS_LIST" | jq -r ".[$i].config_name")
+        yml="benchmarking/configs/${cfg}.yaml"
+        if [ -f "$yml" ]; then
+            grep -E "^dataset:" "$yml" | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'"
         fi
+    done | sort -u
+)
+echo "[bootstrap] datasets to fetch: $(echo "$DATASETS_TO_FETCH" | tr '\n' ' ')"
+
+if [ "${BOOTSTRAP_TEST:-0}" != "1" ]; then
+    mkdir -p benchmarking/data
+    for ds in $DATASETS_TO_FETCH; do
+        [ -z "$ds" ] && continue
+        dest="benchmarking/data/${ds}.hdf5"
+        if [ -f "$dest" ]; then
+            echo "[bootstrap] dataset already cached: $dest"
+            continue
+        fi
+        for try in 1 2 3; do
+            if AZ storage blob download --auth-mode login \
+                   --account-name "$SA_ACCOUNT" --container-name datasets \
+                   --name "${ds}.hdf5" --file "$dest" --no-progress; then
+                echo "[bootstrap] dataset cached: $dest"
+                break
+            fi
+            echo "[bootstrap] dataset $ds try $try failed"
+            sleep 15
+        done
+        if [ ! -f "$dest" ]; then
+            echo "[bootstrap] FATAL: dataset $ds not found in blob after retries"
+            exit 1
+        fi
+    done
+fi
+
+# ---------- shard execution loop ----------
+# Each shard runs the harness once, uploads its results to a per-shard blob
+# prefix, then we move on to the next. Failure of one shard does NOT abort
+# the others — partial results still upload via the trap.
+for i in $(seq 0 $((N_SHARDS - 1))); do
+    SHARD=$(echo "$SHARDS_LIST" | jq -c ".[$i]")
+    SHARD_ID=$(echo "$SHARD" | jq -r '.shard_id')
+    KIND=$(echo "$SHARD" | jq -r '.kind')
+
+    echo
+    echo "============================================================"
+    echo "[bootstrap] shard $((i+1))/$N_SHARDS: $SHARD_ID (kind=$KIND)"
+    echo "============================================================"
+
+    # Reset workspace state between shards: clear stale output + run.log
+    # so the upload only picks up THIS shard's artifacts.
+    rm -rf "$WORK_DIR/benchmarking/output"
+    rm -f  "$WORK_DIR/run.log"
+
+    # Per-shard metadata.txt — overwrite (not append) the global one so each
+    # upload reflects this shard's context.
+    {
+        echo "=== shard ===";       echo "$SHARD"
+        echo "=== run id ===";      echo "$RUN_ID"
+        echo "=== git sha ===";     git rev-parse HEAD 2>&1 || echo "(not a git repo)"
+        echo "=== started_at ==="; date -u +"%Y-%m-%dT%H:%M:%SZ"
+        echo "=== lscpu ===";       lscpu
+        echo "=== uname ===";       uname -a
+        echo "=== blas pkgs ===";   dpkg -l | grep -E "blas|lapack|gomp" || true
+    } > "$WORK_DIR/metadata.txt" 2>&1 || true
+
+    KIND_SCRIPT="$WORK_DIR/scripts/cloud/kinds/${KIND}.sh"
+    if [ ! -f "$KIND_SCRIPT" ]; then
+        echo "[bootstrap] unknown kind: $KIND — skipping shard"
+        SHARD_ID="$SHARD_ID-error"
+        upload_artifacts || true
+        continue
     fi
-fi
+    # shellcheck disable=SC1090
+    source "$KIND_SCRIPT"
 
-# ---------- dispatch ----------
-KIND_SCRIPT="scripts/cloud/kinds/${KIND}.sh"
-if [ ! -f "$KIND_SCRIPT" ]; then
-    echo "[bootstrap] unknown kind: $KIND" >&2
-    exit 1
-fi
-# shellcheck disable=SC1090
-source "$KIND_SCRIPT"
-run_shard "$SHARD_JSON"
+    cd "$WORK_DIR"
+    # Run the shard. Trap `set -e` for this iteration only — we don't want
+    # one shard's crash to skip the others.
+    set +e
+    run_shard "$SHARD"
+    shard_rc=$?
+    set -e
+    echo "[bootstrap] shard $SHARD_ID exit code: $shard_rc"
 
-# Trap handles upload + deallocate.
-echo "[bootstrap] shard complete"
+    # Upload this shard's artifacts before moving on.
+    cd "$WORK_DIR"
+    upload_artifacts || true
+done
+
+echo "[bootstrap] all shards complete"
+# Trap will deallocate.

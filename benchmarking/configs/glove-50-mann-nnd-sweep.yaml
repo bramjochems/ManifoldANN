@@ -1,0 +1,19 @@
+dataset: glove-50-angular
+metric: angular
+n_train: 0
+n_test: 0
+
+algorithms:
+  MANN-NNDescent-full-deferred:
+    build:
+      k: [16, 32, 64]
+      max_iterations: [10, 15]
+      symmetry_policy: full
+      apply_symmetry_continuously: false
+      sample_rate: 1.0
+      convergence_threshold: 0.01
+      threaded: true
+      init: rptree
+      ef_search: 64
+    query_sweep:
+      max_candidates: [32, 64, 128]

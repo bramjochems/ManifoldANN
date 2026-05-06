@@ -1,4 +1,3 @@
-# Auto-generated thesis shard config
 dataset: nytimes-256-angular
 metric: angular
 n_train: 0
@@ -12,9 +11,3 @@ algorithms:
       neighbor_policy: diversified
     query_sweep:
       ef_search: [25, 50, 100, 200]
-  HNSW-jl:
-    build:
-      M: [8, 12, 16]
-      ef_construction: [100, 200]
-    query_sweep:
-      ef: [25, 50, 100, 200]

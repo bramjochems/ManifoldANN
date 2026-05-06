@@ -1,0 +1,14 @@
+dataset: gist-960-euclidean
+metric: euclidean
+n_train: 0
+n_test: 0
+
+algorithms:
+  MANN-IVF-HNSW:
+    build:
+      nlist: [64, 256, 1024]
+      ef_search: [32, 64, 128]
+      M: 16
+      ef_construction: 200
+      neighbor_policy: diversified
+      routing_k: 8

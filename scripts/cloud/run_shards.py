@@ -58,8 +58,22 @@ def upload_manifest(account, container, run_id, payload):
          "--file", str(tmp), "--overwrite"])
 
 
-def cloud_init_for(shard, run_id, container_url, git_sha, uami_id, repo_url):
-    shard_json = json.dumps(shard)
+def cloud_init_for(work_unit, run_id, container_url, git_sha, uami_id, repo_url):
+    """Build cloud-init for a work unit.
+
+    `work_unit` is one of:
+      - single shard dict (legacy single-shard mode): exports SHARD_JSON
+      - {"vm_id": ..., "shards": [...]} (multi-shard mode): exports SHARDS_JSON
+    """
+    if "shards" in work_unit:
+        env_var = "SHARDS_JSON"
+        env_val = json.dumps(work_unit["shards"])
+        # KIND is per-shard now; bootstrap iterates and dispatches itself.
+        kind_export = ""
+    else:
+        env_var = "SHARD_JSON"
+        env_val = json.dumps(work_unit)
+        kind_export = f"      export KIND={work_unit['kind']!r}\n"
     # `packages:` runs before `runcmd`, so jq/curl/git/azure-cli are in PATH
     # by the time the trap can fire. azure-cli is in the official Microsoft
     # apt repo via the `apt-transport-https` trick - but cloud-init's
@@ -88,8 +102,7 @@ write_files:
       export GIT_SHA={git_sha!r}
       export UAMI_RESOURCE_ID={uami_id!r}
       export REPO_URL={repo_url!r}
-      export KIND={shard['kind']!r}
-      export SHARD_JSON='{shard_json}'
+{kind_export}      export {env_var}='{env_val}'
 
       # Pre-bootstrap deallocate trap. By the time runcmd executes, az/jq/curl
       # are installed (via cloud-init `packages:` stanza above), so this trap
@@ -108,9 +121,20 @@ runcmd:
 """
 
 
-def az_vm_create_cmd(shard, run_id, rg, location, vm_size, image, uami_id,
+def _work_unit_id(work_unit):
+    """ID used for VM name + tags + cloud-init filename."""
+    return work_unit.get("vm_id") or work_unit["shard_id"]
+
+
+def az_vm_create_cmd(work_unit, run_id, rg, location, vm_size, image, uami_id,
                      cloud_init_path):
-    vm_name = f"{run_id}-{shard['shard_id']}"[:63].lower()
+    wid = _work_unit_id(work_unit)
+    vm_name = f"{run_id}-{wid}"[:63].lower()
+    tags = [f"run_id={run_id}"]
+    if "vm_id" in work_unit:
+        tags.append(f"vm_id={work_unit['vm_id']}")
+    else:
+        tags.append(f"shard_id={work_unit['shard_id']}")
     return [
         "az", "vm", "create",
         "--resource-group", rg,
@@ -122,7 +146,7 @@ def az_vm_create_cmd(shard, run_id, rg, location, vm_size, image, uami_id,
         "--generate-ssh-keys",
         "--assign-identity", uami_id,
         "--custom-data", cloud_init_path,
-        "--tags", f"run_id={run_id}", f"shard_id={shard['shard_id']}",
+        "--tags", *tags,
         "--no-wait",
     ], vm_name
 
@@ -143,34 +167,34 @@ def az_auto_shutdown_cmd(rg, vm_name, location, minutes_ahead=90):
     ]
 
 
-def provision(shard, args, container_url):
-    cloud_init = cloud_init_for(shard, args.run_id, container_url,
+def provision(work_unit, args, container_url):
+    wid = _work_unit_id(work_unit)
+    cloud_init = cloud_init_for(work_unit, args.run_id, container_url,
                                 args.git_sha, args.user_assigned_identity_id,
                                 args.repo_url)
-    ci_path = Path(f"/tmp/cloud-init-{args.run_id}-{shard['shard_id']}.yaml")
+    ci_path = Path(f"/tmp/cloud-init-{args.run_id}-{wid}.yaml")
     ci_path.write_text(cloud_init)
 
     create_cmd, vm_name = az_vm_create_cmd(
-        shard, args.run_id, args.resource_group, args.location,
+        work_unit, args.run_id, args.resource_group, args.location,
         args.vm_size, args.image, args.user_assigned_identity_id, str(ci_path))
     shutdown_cmd = az_auto_shutdown_cmd(args.resource_group, vm_name, args.location)
 
     if args.dry_run:
-        print(f"--- shard {shard['shard_id']} ---")
+        print(f"--- {wid} ---")
         print("# cloud-init:")
         print(cloud_init)
         print("# az vm create:")
         print(" ".join(create_cmd))
         print("# auto-shutdown:")
         print(" ".join(shutdown_cmd))
-        return shard["shard_id"], True
+        return wid, True
 
     r = run(create_cmd, check=False)
     if r.returncode != 0:
-        return shard["shard_id"], False
-    # auto-shutdown best-effort
+        return wid, False
     run(shutdown_cmd, check=False)
-    return shard["shard_id"], True
+    return wid, True
 
 
 def main():
@@ -193,20 +217,49 @@ def main():
     if not SHARD_ID_RE.match(args.run_id):
         sys.exit("run_id must be alphanumeric+dash")
 
-    shards = json.loads(Path(args.shards_file).read_text())
-    if not isinstance(shards, list) or not shards:
+    work_units = json.loads(Path(args.shards_file).read_text())
+    if not isinstance(work_units, list) or not work_units:
         sys.exit("shards file must be a non-empty JSON array")
 
-    seen = set()
-    for s in shards:
-        sid = s.get("shard_id", "")
-        if not SHARD_ID_RE.match(sid):
-            sys.exit(f"invalid shard_id: {sid!r}")
-        if sid in seen:
-            sys.exit(f"duplicate shard_id: {sid}")
-        seen.add(sid)
-        if s.get("kind") not in KNOWN_KINDS:
-            sys.exit(f"unknown kind in shard {sid}: {s.get('kind')!r}")
+    # Detect schema: list of shards (each has shard_id+kind directly), OR
+    # list of VMs (each has vm_id + shards: [...]).
+    is_multi_shard = all("shards" in u for u in work_units)
+    if not is_multi_shard and any("shards" in u for u in work_units):
+        sys.exit("Mixed schema: each entry must have 'shards' OR be a single shard")
+
+    seen_ids = set()
+    if is_multi_shard:
+        # Validate VM ids and inner shard ids.
+        all_shard_ids = set()
+        for u in work_units:
+            vid = u.get("vm_id", "")
+            if not SHARD_ID_RE.match(vid):
+                sys.exit(f"invalid vm_id: {vid!r}")
+            if vid in seen_ids:
+                sys.exit(f"duplicate vm_id: {vid}")
+            seen_ids.add(vid)
+            inner = u.get("shards", [])
+            if not isinstance(inner, list) or not inner:
+                sys.exit(f"vm {vid} has no shards")
+            for s in inner:
+                sid = s.get("shard_id", "")
+                if not SHARD_ID_RE.match(sid):
+                    sys.exit(f"invalid shard_id in {vid}: {sid!r}")
+                if sid in all_shard_ids:
+                    sys.exit(f"duplicate shard_id across VMs: {sid}")
+                all_shard_ids.add(sid)
+                if s.get("kind") not in KNOWN_KINDS:
+                    sys.exit(f"unknown kind in shard {sid}: {s.get('kind')!r}")
+    else:
+        for s in work_units:
+            sid = s.get("shard_id", "")
+            if not SHARD_ID_RE.match(sid):
+                sys.exit(f"invalid shard_id: {sid!r}")
+            if sid in seen_ids:
+                sys.exit(f"duplicate shard_id: {sid}")
+            seen_ids.add(sid)
+            if s.get("kind") not in KNOWN_KINDS:
+                sys.exit(f"unknown kind in shard {sid}: {s.get('kind')!r}")
 
     if not args.dry_run:
         validate_sha_pushed(args.git_sha)
@@ -221,7 +274,8 @@ def main():
         "vm_size": args.vm_size,
         "location": args.location,
         "started_at": started,
-        "shards": shards,
+        "schema": "multi-shard" if is_multi_shard else "single-shard",
+        "work_units": work_units,
     }
 
     if not args.dry_run:
@@ -229,14 +283,14 @@ def main():
                         args.run_id, manifest)
 
     results = []
-    with ThreadPoolExecutor(max_workers=min(16, len(shards))) as ex:
-        futs = [ex.submit(provision, s, args, container_url) for s in shards]
+    with ThreadPoolExecutor(max_workers=min(16, len(work_units))) as ex:
+        futs = [ex.submit(provision, u, args, container_url) for u in work_units]
         for f in as_completed(futs):
             results.append(f.result())
 
     ok = sum(1 for _, success in results if success)
     print(f"RUN_ID: {args.run_id}")
-    print(f"Provisioned {ok}/{len(shards)} VMs")
+    print(f"Provisioned {ok}/{len(work_units)} VMs")
     print(f"Watch progress: az storage blob list "
           f"--account-name {args.storage_account} "
           f"--container-name {args.storage_container} "

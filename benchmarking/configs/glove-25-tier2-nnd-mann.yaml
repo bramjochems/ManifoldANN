@@ -1,4 +1,3 @@
-# Auto-generated thesis shard config
 dataset: glove-25-angular
 metric: angular
 n_train: 0
@@ -9,19 +8,12 @@ algorithms:
     build:
       k: [16, 32, 64]
       max_iterations: [10, 20]
-      convergence_threshold: 0.01
-      sample_rate: 1.0
       symmetry_policy: full
       apply_symmetry_continuously: false
+      sample_rate: 1.0
+      convergence_threshold: 0.01
       threaded: true
       init: rptree
-    query_sweep:
-      max_candidates: [32, 64, 128]
-  NearestNeighborDescent-jl:
-    build:
-      k: [16, 32, 64]
-      max_iterations: [10, 20]
-      sample_rate: 1.0
-      precision: 0.01
+      ef_search: 64
     query_sweep:
       max_candidates: [32, 64, 128]

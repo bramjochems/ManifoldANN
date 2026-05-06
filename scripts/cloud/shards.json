@@ -441,16 +441,114 @@
     "reps": 5
   },
   {
-    "shard_id": "nytimes-tier2-hnsw-headtohead",
+    "shard_id": "lastfm-mann-nnd-sweep",
     "kind": "ann-benchmark",
-    "config_name": "nytimes-tier2-hnsw-headtohead",
+    "config_name": "lastfm-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "nytimes-mann-nnd-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "nytimes-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-25-mann-nnd-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "glove-25-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-50-mann-nnd-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "glove-50-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-100-mann-nnd-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "glove-100-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "sift-mann-nnd-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "sift-mann-nnd-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "sift-mann-ivf-flat-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "sift-mann-ivf-flat-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "gist-mann-ivf-flat-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "gist-mann-ivf-flat-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-100-mann-ivf-flat-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "glove-100-mann-ivf-flat-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "sift-mann-ivf-hnsw-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "sift-mann-ivf-hnsw-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "gist-mann-ivf-hnsw-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "gist-mann-ivf-hnsw-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "glove-100-mann-ivf-hnsw-sweep",
+    "kind": "ann-benchmark",
+    "config_name": "glove-100-mann-ivf-hnsw-sweep",
+    "threads": 16,
+    "reps": 5
+  },
+  {
+    "shard_id": "nytimes-tier2-hnsw-mann",
+    "kind": "ann-benchmark",
+    "config_name": "nytimes-tier2-hnsw-mann",
     "threads": 16,
     "reps": 3
   },
   {
-    "shard_id": "glove-25-tier2-nnd-headtohead",
+    "shard_id": "nytimes-tier2-hnsw-jl",
     "kind": "ann-benchmark",
-    "config_name": "glove-25-tier2-nnd-headtohead",
+    "config_name": "nytimes-tier2-hnsw-jl",
+    "threads": 16,
+    "reps": 3
+  },
+  {
+    "shard_id": "glove-25-tier2-nnd-mann",
+    "kind": "ann-benchmark",
+    "config_name": "glove-25-tier2-nnd-mann",
+    "threads": 16,
+    "reps": 3
+  },
+  {
+    "shard_id": "glove-25-tier2-nnd-jl",
+    "kind": "ann-benchmark",
+    "config_name": "glove-25-tier2-nnd-jl",
     "threads": 16,
     "reps": 3
   }
