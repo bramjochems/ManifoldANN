@@ -64,14 +64,24 @@ show_progress() {
         total_shards=$((total_shards + n_total))
         total_done=$((total_done + n_done))
 
-        # VM power state (if still listed)
-        local vm_state
-        vm_state=$(az vm get-instance-view -g "$RG" \
-            -n "$RUN_ID-$vm_id" --query "instanceView.statuses[?starts_with(code,'PowerState')].displayStatus" \
-            -o tsv 2>/dev/null || echo "?")
+        # VM power state. `az vm show` is cheaper than instance-view and
+        # tells us whether the VM still exists at all (torn down → empty).
+        local vm_exists vm_state
+        vm_exists=$(az vm show -g "$RG" -n "$RUN_ID-$vm_id" --query "name" -o tsv 2>/dev/null || true)
+        if [ -z "$vm_exists" ]; then
+            vm_state="GONE"
+        else
+            vm_state=$(az vm get-instance-view -g "$RG" -n "$RUN_ID-$vm_id" \
+                --query "instanceView.statuses[?starts_with(code,'PowerState')].displayStatus" \
+                -o tsv 2>/dev/null || echo "?")
+        fi
         local label
         if [ "$n_done" = "$n_total" ]; then
             label="✓ all $n_total done"
+        elif [ "$vm_state" = "GONE" ]; then
+            # VM no longer exists. Anything not done is abandoned, not pending.
+            local abandoned=$((n_total - n_done))
+            label="$n_done/$n_total done | ✗ $abandoned abandoned (VM torn down)"
         elif [ -n "$active" ]; then
             label="$n_done/$n_total done | running: $active"
         elif [ -n "$pending_first" ]; then
