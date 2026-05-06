@@ -654,6 +654,12 @@ def run_benchmark(config_name: str, data_dir: str = "data", k: int = 10, n_train
     # Download and load dataset
     dataset_path = download_dataset(dataset_name, data_dir)
     train, test, ground_truth = load_dataset(dataset_path, n_train=n_train, n_test=n_test)
+    # Resolve `n_test` to the actual loaded count. With `n_test: 0` in YAML
+    # ("use full set"), load_dataset returns the full test array but the local
+    # `n_test` variable would still be 0 — and downstream `qps = n_test / time`
+    # would compute 0. Same for n_train (less load-bearing, but consistent).
+    n_train = int(train.shape[0])
+    n_test = int(test.shape[0])
 
     print(f"\n{'=' * 80}")
     print("Building and Evaluating Algorithms")
