@@ -88,13 +88,18 @@ function pairwise_euclidean!(D::Matrix{TD}, X::Matrix{TX}, centroids::Matrix{TC}
     DT = TD === T ? D : Matrix{T}(undef, k, n)
     mul!(DT, CT', XT)
 
-    # Combine: ||a-b||² = ||a||² + ||b||² - 2(a·b)
-    @inbounds for j in 1:n
-        data_norm_sq = data_sq_norms[j]
-        for i in 1:k
-            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
-            # Clamp to avoid sqrt of negative due to floating point errors
-            D[i, j] = sqrt(max(sq_dist, zero(T)))
+    # Combine: ||a-b||² = ||a||² + ||b||² - 2(a·b). Each column writes a
+    # disjoint slice of D, so the outer loop parallelises trivially.
+    # At large k*n this combine step (sqrt + scalar ops over k*n entries)
+    # was previously the dominant per-iter cost in lloyd! at high nlist.
+    Threads.@threads for j in 1:n
+        @inbounds begin
+            data_norm_sq = data_sq_norms[j]
+            for i in 1:k
+                sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
+                # Clamp to avoid sqrt of negative due to floating point errors
+                D[i, j] = sqrt(max(sq_dist, zero(T)))
+            end
         end
     end
 
@@ -122,11 +127,15 @@ function pairwise_sqeuclidean!(D::Matrix{TD}, X::Matrix{TX}, centroids::Matrix{T
     DT = TD === T ? D : Matrix{T}(undef, k, n)
     mul!(DT, CT', XT)
 
-    @inbounds for j in 1:n
-        data_norm_sq = data_sq_norms[j]
-        for i in 1:k
-            sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
-            D[i, j] = max(sq_dist, zero(T))  # Clamp to avoid negative
+    # Combine pass parallelised over columns; same reasoning as
+    # pairwise_euclidean! above.
+    Threads.@threads for j in 1:n
+        @inbounds begin
+            data_norm_sq = data_sq_norms[j]
+            for i in 1:k
+                sq_dist = centroid_sq_norms[i] + data_norm_sq - 2 * DT[i, j]
+                D[i, j] = max(sq_dist, zero(T))  # Clamp to avoid negative
+            end
         end
     end
 
@@ -278,18 +287,23 @@ Assign each point to its nearest centroid based on distance matrix.
 function assign_clusters!(assignments::Vector{Int}, D::Matrix)
     k, n = size(D)
 
-    for j in 1:n
-        min_dist = D[1, j]
-        min_idx = 1
+    # Each column produces one assignment, so the outer loop parallelises
+    # cleanly. At large k*n this argmin scan was previously a few seconds
+    # of serial work per Lloyd iteration.
+    Threads.@threads for j in 1:n
+        @inbounds begin
+            min_dist = D[1, j]
+            min_idx = 1
 
-        for i in 2:k
-            if D[i, j] < min_dist
-                min_dist = D[i, j]
-                min_idx = i
+            for i in 2:k
+                if D[i, j] < min_dist
+                    min_dist = D[i, j]
+                    min_idx = i
+                end
             end
-        end
 
-        assignments[j] = min_idx
+            assignments[j] = min_idx
+        end
     end
 
     return assignments
