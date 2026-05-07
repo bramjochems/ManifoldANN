@@ -65,6 +65,6 @@ include("query.jl")        # Uses all index types
 # Exports
 export AbstractIndexConfig, TerminalConfig, TransformedConfig
 export AbstractRoutingStrategy, TopKRouting, ExhaustiveRouting
-export AbstractMergeStrategy, SimpleMerge
+export AbstractMergeStrategy, SimpleMerge, DisjointMerge
 export TransformedIndex, MultiLevelIndex
 export build_ivf_hnsw_index

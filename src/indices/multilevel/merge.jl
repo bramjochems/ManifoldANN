@@ -122,3 +122,48 @@ function merge_results(
     resize!(unique_neighbors, n_kept)
     return unique_neighbors
 end
+
+"""
+    DisjointMerge <: AbstractMergeStrategy
+
+Merge strategy for use when child indices have **disjoint** partitions —
+i.e. the same point id never appears in more than one child's results.
+True for IVF-style configurations where every point is assigned to exactly
+one cluster, but **not** for overlapping-partition strategies such as
+RP-tree forests.
+
+Skips deduplication and uses a bounded max-heap to keep the running top-k,
+which avoids the O(total log total) sort over all candidates that
+[`SimpleMerge`](@ref) performs.
+
+!!! warning
+    Using `DisjointMerge` when partitions overlap silently returns
+    duplicate ids in the output. Only enable it when the precondition holds.
+
+# Examples
+```julia
+merge_strategy = DisjointMerge()
+```
+"""
+struct DisjointMerge <: AbstractMergeStrategy end
+
+function merge_results(
+    ::DisjointMerge,
+    result_lists::Vector{Vector{Neighbor{T}}},
+    k::Int
+) where {T}
+    total = 0
+    @inbounds for r in result_lists
+        total += length(r)
+    end
+    total == 0 && return Neighbor{T}[]
+
+    cap = min(k, total)
+    heap = BoundedMaxHeap{T}(cap)
+    @inbounds for r in result_lists
+        for n in r
+            push!(heap, n.id, n.dist)
+        end
+    end
+    return to_sorted_vector(heap)
+end
