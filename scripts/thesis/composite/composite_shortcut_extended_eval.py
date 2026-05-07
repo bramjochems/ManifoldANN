@@ -39,7 +39,7 @@ from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "benchmark_results" / "composite_shortcut_extended_v2"
+OUT = ROOT / "benchmark_results" / "composite_shortcut_extended_clean"
 OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "per_edge").mkdir(exist_ok=True)
 

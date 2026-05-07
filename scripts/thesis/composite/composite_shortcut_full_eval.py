@@ -42,21 +42,12 @@ S_CAP = 100.0
 # Each run is described by (label, edges_csv, kind, params). We regenerate
 # points using the *same* MersenneTwister(42) procedure used in experiment_orc.jl
 # / generate_swiss_roll / generate_torus.
-_THESIS_RESULTS = Path("/home/bram/projects/mai/thesis/docs/thesis/results/orc_results")
+_THESIS_RESULTS = Path("/home/bram/projects/mai/thesis/docs/thesis/results/orc_results_clean")
 
 RUNS = [
     {
-        "label": "swiss_roll_s005",
-        "edges": _THESIS_RESULTS / "swiss_roll_s005_20260507_173608/edges.csv",
-        "kind": "swiss",
-        "h_scale": 10.0,
-        "t_min": 1.5 * math.pi,
-        "t_range": 3.0 * math.pi,
-        "radial_scale": 0.05,
-    },
-    {
         "label": "swiss_roll_s025",
-        "edges": _THESIS_RESULTS / "swiss_roll_s025_20260507_183616/edges.csv",
+        "edges": _THESIS_RESULTS / "swiss_roll_s025_20260507_220859/edges.csv",
         "kind": "swiss",
         "h_scale": 10.0,
         "t_min": 1.5 * math.pi,
@@ -65,7 +56,7 @@ RUNS = [
     },
     {
         "label": "torus_R2_r1",
-        "edges": _THESIS_RESULTS / "torus_R2_0r1_0_20260507_175143/edges.csv",
+        "edges": _THESIS_RESULTS / "torus_R2_0r1_0_20260507_223239/edges.csv",
         "kind": "torus",
         "R": 2.0,
         "r": 1.0,
