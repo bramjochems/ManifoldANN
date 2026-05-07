@@ -18,7 +18,7 @@ using Distances: Euclidean, SemiMetric
         hnsw_ef_construction::Int = 200,
         hnsw_ef_search::Int = 64,
         hnsw_neighbor_policy::Symbol = :diversified,
-        merge_strategy::AbstractMergeStrategy = SimpleMerge(),
+        merge_strategy::AbstractMergeStrategy = DisjointMerge(),
         distance = default_distance,
     )::MultiLevelIndex
 
@@ -35,7 +35,9 @@ so callers can benchmark IVF-style hierarchies without manually constructing con
 - `kmeans_max_iters`: Maximum Lloyd iterations for clustering
 - `kmeans_tol`: Convergence tolerance for clustering
 - `hnsw_M`, `hnsw_ef_construction`, `hnsw_ef_search`, `hnsw_neighbor_policy`: Parameters forwarded to `HNSWIndex`
-- `merge_strategy`: Strategy for merging child results (default `SimpleMerge`)
+- `merge_strategy`: Strategy for merging child results (default `DisjointMerge`,
+  valid because KMeans assigns every point to exactly one cluster, so the
+  child result lists are guaranteed to have disjoint id sets)
 - `distance`: Distance function used when child indices do not expose their own (fallback for multi-level query)
 
 # Returns
@@ -54,7 +56,7 @@ function build_ivf_hnsw_index(
     hnsw_ef_construction::Int = HNSW_DEFAULT_EF_CONSTRUCTION,
     hnsw_ef_search::Int = HNSW_DEFAULT_EF_SEARCH,
     hnsw_neighbor_policy::Symbol = :diversified,
-    merge_strategy::AbstractMergeStrategy = SimpleMerge(),
+    merge_strategy::AbstractMergeStrategy = DisjointMerge(),
     distance::D = default_distance,
 ) where {D}
     nlist > 0 || throw(ArgumentError("nlist must be positive, got $nlist"))
