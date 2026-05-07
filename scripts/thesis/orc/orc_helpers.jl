@@ -9,7 +9,6 @@
 #   - curvature_stats_by_label
 #   - dijkstra_from, graph_to_adj_weights, prune_graph (legacy)
 #   - find_bridges, oracle_prune, rank_prune, random_prune
-#   - tangent_angles
 #   - spearman_rank_correlation
 #   - geodesic_error_at_pairs
 #   - CSV writing helpers
@@ -413,76 +412,8 @@ function random_prune(adj::Vector{Vector{Int}},
     return adj_p, w_p
 end
 
-# ==============================================================================
-# Tangent-angle computation via local PCA
-# ==============================================================================
-
-"""
-    compute_tangent_angles(adj, data, geometries) → Dict{Tuple{Int,Int}, Float64}
-
-For each edge (i,j), compute the angle between the edge vector and the local
-tangent plane. Uses pre-fitted PCA geometries at each node.
-
-Angle = arcsin(|orthogonal component| / |edge vector|), averaged over both endpoints.
-Range: [0, π/2]. 0 = tangent to manifold, π/2 = perpendicular.
-Higher angle → more likely a shortcut.
-"""
-function compute_tangent_angles(adj::Vector{Vector{Int}},
-                                data::AbstractMatrix,
-                                geometries::Vector)
-    angles = Dict{Tuple{Int,Int}, Float64}()
-    for i in 1:length(adj)
-        for j in adj[i]
-            edge_vec = data[:, j] - data[:, i]
-            edge_len = norm(edge_vec)
-            edge_len < 1e-12 && continue
-
-            # Angle from node i's tangent plane
-            err_i = fit_error(geometries[i], data[:, j])
-            angle_i = asin(clamp(err_i / edge_len, 0.0, 1.0))
-
-            # Angle from node j's tangent plane
-            err_j = fit_error(geometries[j], data[:, i])
-            angle_j = asin(clamp(err_j / edge_len, 0.0, 1.0))
-
-            angles[(i, j)] = (angle_i + angle_j) / 2.0
-        end
-    end
-    return angles
-end
-
-"""
-    compute_local_zscores(adj, scores) → Dict{Tuple{Int,Int}, Float64}
-
-Normalize per-edge scores against the local neighborhood distribution at each
-source node, using MAD (median absolute deviation) for robustness.
-
-For each edge (i,j), computes z_i = (s_ij - median_i) / (1.4826 * MAD_i),
-where the median and MAD are taken over all edges incident to node i.
-The 1.4826 factor scales MAD to be comparable to σ for normal distributions.
-"""
-function compute_local_zscores(adj::Vector{Vector{Int}},
-                                scores::Dict{Tuple{Int,Int}, Float64})
-    zscores = Dict{Tuple{Int,Int}, Float64}()
-    for i in 1:length(adj)
-        # Collect scores of all edges incident to node i
-        local_scores = Float64[]
-        for j in adj[i]
-            s = get(scores, (i, j), NaN)
-            isnan(s) || push!(local_scores, s)
-        end
-        length(local_scores) < 2 && continue
-        med = median(local_scores)
-        mad_val = median(abs.(local_scores .- med))
-        mad_val < 1e-12 && continue  # skip if no spread
-        for j in adj[i]
-            s = get(scores, (i, j), NaN)
-            isnan(s) && continue
-            zscores[(i, j)] = (s - med) / (1.4826 * mad_val)
-        end
-    end
-    return zscores
-end
+# compute_tangent_angles and compute_local_zscores now live in ManifoldANN.jl
+# (src/graphs/detection_signals.jl and src/utils/edge_score_normalization.jl).
 
 # ==============================================================================
 # Spearman rank correlation

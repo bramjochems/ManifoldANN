@@ -10,6 +10,7 @@ include("utils/eval_utils.jl")
 include("utils/neighbor_heaps.jl")
 include("utils/binary_partition_tree.jl")
 include("utils/rptree.jl")
+include("utils/edge_score_normalization.jl")
 include("indices/bruteforce.jl")
 include("indices/lsh.jl")
 include("indices/kdtree.jl")
@@ -49,6 +50,10 @@ include("graphs/weighted_knn_graph.jl")
 
 # Graph curvature (Ollivier-Ricci curvature and filtering)
 include("graphs/refinement/refinement.jl")
+
+# Per-edge shortcut detection signals (Jaccard, Gabriel, tangent angle) —
+# loaded after geometry/ so compute_tangent_angles can call fit_error.
+include("graphs/detection_signals.jl")
 
 # Geodesic distance model
 include("geodesic/geodesic_model.jl")
@@ -262,8 +267,10 @@ export AbstractANNIndex,
        AbstractORCConfig,
        StandardORC,
        ORCManL,
-       # Graph analysis utilities
+       # Per-edge shortcut detection signals
        compute_jaccard_scores,
-       compute_gabriel_mask
+       compute_gabriel_mask,
+       compute_tangent_angles,
+       compute_local_zscores
 
 end
