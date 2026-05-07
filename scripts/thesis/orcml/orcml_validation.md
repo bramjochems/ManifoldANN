@@ -12,9 +12,13 @@ reference Python implementation in `benchmarking/external/orcml/`
 `GraphRicciCurvature` package, called with `weight="effective_eps",
 alpha=0.0, method='OTD'`).
 
-The headline number reported in the thesis is Pearson `r = 0.9981`
-across 4326 edges of a 500-point swiss roll (`k = 15`,
-noise `σ = 0.05`), with a small systematic bias of `−0.037`.
+The headline number reported in the thesis is Pearson `r = 0.9995`
+(Spearman `r = 0.9995`) across 4326 edges of a 500-point swiss roll
+(`k = 15`, noise `σ = 0.05`), with mean signed residual `−0.001` and
+max `|julia − python| = 0.08`. The earlier `−0.037` mean-bias figure
+came from a run that still contained the source-vertex policy bug in
+the reference Python implementation; once both implementations exclude
+both endpoints symmetrically, the residual collapses to near zero.
 
 ## Reproducing the agreement plots
 
