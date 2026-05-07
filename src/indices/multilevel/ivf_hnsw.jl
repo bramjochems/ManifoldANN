@@ -12,7 +12,7 @@ using Distances: Euclidean, SemiMetric
         routing_k::Int=DEFAULT_IVF_ROUTING,
         kmeans_distance::SemiMetric = Euclidean(),
         kmeans_init::Symbol = :kmeans_plus_plus,
-        kmeans_max_iters::Int = 5,
+        kmeans_max_iters::Int = 25,
         kmeans_tol::Float64 = 1e-4,
         hnsw_M::Int = 16,
         hnsw_ef_construction::Int = 200,
@@ -49,7 +49,7 @@ function build_ivf_hnsw_index(
     routing_k::Int=IVF_DEFAULT_NPROBE,
     kmeans_distance::SemiMetric = Euclidean(),
     kmeans_init::Symbol = :kmeans_plus_plus,
-    kmeans_max_iters::Int = 5,  # Fewer iterations for faster IVF build
+    kmeans_max_iters::Int = 25,  # Matches faiss.ClusteringParameters().niter
     kmeans_tol::Float64 = 1e-4,  # Relaxed tolerance for faster IVF build
     kmeans_subsample_size::Union{Nothing,Int} = max(256 * nlist, 32_768),
     hnsw_M::Int = HNSW_DEFAULT_M,

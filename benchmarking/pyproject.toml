@@ -26,8 +26,7 @@ annoy = ["annoy>=1.17.0"]
 hnswlib = ["hnswlib>=0.7.0"]
 faiss = ["faiss-cpu>=1.7.0"]
 scipy = ["scipy>=1.7.0"]
-# Note: pynndescent requires llvmlite which only supports Python <3.10
-# This forces the entire environment to Python 3.9, which isn't fair for modern comparisons
+# pynndescent depends on numba/llvmlite; recent versions support Python 3.10+.
 pynndescent = ["pynndescent>=0.5.0"]
 
 # ORC (Ollivier-Ricci Curvature) benchmarking - Python implementations for comparison
@@ -38,7 +37,9 @@ orc = [
     "pandas>=1.5.0",
 ]
 
-# Modern ANN comparison (Python 3.10+) - excludes pynndescent
+# Modern ANN comparison - excludes pynndescent (kept as a separate group
+# because pynndescent's heavy numba dependency tree adds noise unrelated to
+# the ANN comparison itself).
 ann-modern = [
     "annoy>=1.17.0",
     "hnswlib>=0.7.0",
@@ -46,7 +47,7 @@ ann-modern = [
     "scipy>=1.7.0",
 ]
 
-# Complete ANN comparison (Python 3.9 only) - includes pynndescent
+# Complete ANN comparison - includes pynndescent (heavier dependency tree).
 ann-complete = [
     "annoy>=1.17.0",
     "hnswlib>=0.7.0",
@@ -63,7 +64,7 @@ orc-only = [
     "pandas>=1.5.0",
 ]
 
-# Everything except pynndescent (works on Python 3.10+)
+# Everything except pynndescent (kept separate due to heavy dep tree).
 all = [
     "annoy>=1.17.0",
     "hnswlib>=0.7.0",
@@ -92,8 +93,8 @@ exclude = ["benchmarking.ann-benchmarks*"]
 
 [tool.black]
 line-length = 100
-target-version = ["py38", "py39", "py310", "py311"]
+target-version = ["py310", "py311", "py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py310"

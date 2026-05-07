@@ -27,7 +27,7 @@ include("transforms/transforms.jl")
 include("preprocessing/preprocessing.jl")
 
 # Indices that depend on transforms
-include("indices/faiss_ivf.jl")
+include("indices/ivf_flat.jl")
 
 # Multi-level indices
 include("indices/multilevel/multilevel_index.jl")

@@ -34,7 +34,11 @@ function build_index(
     nprobe::Int = 10,
     distance::Dm = default_distance,
     centroid_metric::Dc = Distances.Euclidean(),
-    kmeans_max_iters::Int = 5,
+    # 25 Lloyd iterations matches faiss.ClusteringParameters().niter (the
+    # default IVF training iter count in FAISS). The previous default of 5
+    # was based on an inaccurate reading of FAISS internals and made build
+    # comparisons against FAISS-IVF unfair (5x fewer iterations).
+    kmeans_max_iters::Int = 25,
     kmeans_tol::Float64 = 1e-4,
     kmeans_subsample_size::Union{Nothing,Int} = max(256 * nlist, 32_768),
 ) where {T<:Real,Dm,Dc<:Distances.SemiMetric}

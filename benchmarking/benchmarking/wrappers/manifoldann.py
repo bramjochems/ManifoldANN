@@ -748,7 +748,7 @@ class ManifoldANN_IVFFlat(ManifoldANNWrapper):
         nlist=100,
         nprobe=10,
         kmeans_init="kmeans_plus_plus",
-        kmeans_max_iters=5,
+        kmeans_max_iters=25,  # Matches faiss.ClusteringParameters().niter for fair build comparisons
         kmeans_tol=1e-4,
     ):
         super().__init__(metric)

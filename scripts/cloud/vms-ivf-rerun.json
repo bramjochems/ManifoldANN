@@ -1,0 +1,18 @@
+[
+  {
+    "vm_id": "rec-ivf-vm1",
+    "shards": [
+      {"shard_id": "glove-100-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-ivf-flat-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "gist-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "sift-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-flat-sweep", "threads": 16, "reps": 5}
+    ]
+  },
+  {
+    "vm_id": "rec-ivf-vm2",
+    "shards": [
+      {"shard_id": "gist-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-ivf-flat-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "glove-100-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "glove-100-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5},
+      {"shard_id": "sift-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5}
+    ]
+  }
+]
