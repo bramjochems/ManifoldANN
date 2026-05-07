@@ -145,20 +145,21 @@ function query(
     centroid_dists = _centroid_distances(q, index.centroids, index.centroid_metric, index.centroid_norms)
     probe_ids = partialsortperm(centroid_dists, 1:nprobe)
 
-    # Collect candidate neighbors
-    candidates = Neighbor{float(T)}[]
+    # Bounded top-k via BoundedMaxHeap — matches the pattern used by KDTree,
+    # PCATree, RPTree-forest, and NN-Descent, and avoids the sort-all-candidates
+    # cost that previously dominated the query profile.
+    S = float(T)
+    k_eff = min(k, sum(@inbounds length(index.lists[cid]) for cid in probe_ids))
+    k_eff <= 0 && return Neighbor{S}[]
+    heap = BoundedMaxHeap{S}(k_eff)
     dist_fn = index.distance
     for cid in probe_ids
         ids = index.lists[cid]
         @inbounds for id in ids
             dist = dist_fn(@view(data[:, id]), q)
-            push!(candidates, Neighbor{float(T)}(id, dist))
+            push!(heap, id, S(dist))
         end
     end
-
-    isempty(candidates) && return Neighbor{float(T)}[]
-    sort!(candidates, by = n -> n.dist)
-    k_eff = min(k, length(candidates))
-    return candidates[1:k_eff]
+    return to_sorted_vector(heap)
 end
 
