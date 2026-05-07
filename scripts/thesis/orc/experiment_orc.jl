@@ -76,6 +76,10 @@ end
 const T_MIN   = 1.5π
 const T_RANGE = 3π
 const H_SCALE = 10.0
+# Radial scale alpha: x = alpha t cos t, z = alpha t sin t. Default 1.0 reproduces
+# the original Swiss roll; the tight variant uses alpha = 0.05.
+const RADIAL_SCALE = !isempty(get(ENV, "RADIAL_SCALE", "")) ?
+                     parse(Float64, ENV["RADIAL_SCALE"]) : 1.0
 
 # Torus parameters (default R2r1; override via TORUS_R / TORUS_r env vars)
 const TORUS_R = !isempty(get(ENV, "TORUS_R", "")) ? parse(Float64, ENV["TORUS_R"]) : 2.0
@@ -102,7 +106,9 @@ _n_grid   = !isempty(get(ENV, "N_OVERRIDE", "")) ? [parse(Int, ENV["N_OVERRIDE"]
              [200, 500, 1000, 2000]
 _k_grid   = !isempty(get(ENV, "K_OVERRIDE", "")) ? [parse(Int, ENV["K_OVERRIDE"])] :
              [5, 10, 15, 20, 30]
-_noise_grid = [0.0, 0.5]
+_noise_grid = !isempty(get(ENV, "NOISE_OVERRIDE", "")) ?
+              [parse(Float64, s) for s in split(ENV["NOISE_OVERRIDE"], ",")] :
+              [0.0, 0.5]
 _variants   = ["standard", "orcml"]
 
 if _smoke
@@ -128,7 +134,8 @@ const SKIP_EDGES     = _skip_edges
 """Generate data and params for the configured manifold."""
 function generate_manifold_data(n::Int, rng::AbstractRNG)
     if MANIFOLD == "swiss"
-        return generate_swiss_roll(n; rng=rng, t_min=T_MIN, t_range=T_RANGE, h_scale=H_SCALE)
+        return generate_swiss_roll(n; rng=rng, t_min=T_MIN, t_range=T_RANGE,
+                                   h_scale=H_SCALE, radial_scale=RADIAL_SCALE)
     else
         return generate_torus(n; rng=rng, R=TORUS_R, r=TORUS_r)
     end
@@ -187,7 +194,12 @@ run_dir = if !isempty(_resume_dir)
     _resume_dir
 else
     ts = Dates.format(now(), "yyyymmdd_HHMMSS")
-    prefix = MANIFOLD == "swiss" ? "swiss_roll" : "torus"
+    prefix = if MANIFOLD == "swiss"
+        RADIAL_SCALE == 1.0 ? "swiss_roll" :
+            "swiss_roll_s$(replace(string(RADIAL_SCALE), "."=>""))"
+    else
+        "torus_$(TORUS_KEY)"
+    end
     joinpath(RESULTS_DIR, "$(prefix)_$(ts)")
 end
 mkpath(run_dir)
@@ -291,8 +303,7 @@ for n in N_GRID, k in K_GRID, noise_std in NOISE_GRID, variant in ORC_VARIANTS
         curvatures = compute_all_curvatures(
             graph, data;
             variant=orc_variant,
-            solver=HungarianSolver(),
-            fallback_solver=NetworkSimplexSolver(),
+            solver=ClpSolver(),
             use_threading=true,
             verbose=false
         )
@@ -587,11 +598,12 @@ end  # let orc_idx
 
 config_kwargs = if MANIFOLD == "swiss"
     Dict(
-        :manifold   => "swiss_roll",
-        :seed       => SEED,
-        :t_min      => T_MIN,
-        :t_range    => T_RANGE,
-        :h_scale    => H_SCALE,
+        :manifold     => "swiss_roll",
+        :seed         => SEED,
+        :t_min        => T_MIN,
+        :t_range      => T_RANGE,
+        :h_scale      => H_SCALE,
+        :radial_scale => RADIAL_SCALE,
     )
 else
     Dict(

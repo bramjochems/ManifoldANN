@@ -31,17 +31,18 @@ function generate_swiss_roll(n::Int;
                              rng=Random.GLOBAL_RNG,
                              t_min::Float64=1.5π,
                              t_range::Float64=3π,
-                             h_scale::Float64=10.0)
+                             h_scale::Float64=10.0,
+                             radial_scale::Float64=1.0)
     t = t_min .+ t_range .* rand(rng, n)
     h = h_scale .* rand(rng, n)
 
     data = vcat(
-        (t .* cos.(t))',
+        (radial_scale .* t .* cos.(t))',
         h',
-        (t .* sin.(t))'
+        (radial_scale .* t .* sin.(t))'
     )
 
-    params = (t=t, h=h)
+    params = (t=t, h=h, radial_scale=radial_scale)
 
     return data, params
 end
@@ -78,12 +79,14 @@ This is simply the Euclidean distance in the unrolled coordinates.
 The Swiss roll is isometric to a portion of the plane, making it ideal for
 validating geodesic distance approximations.
 """
-function exact_swiss_roll_geodesic(t1::Real, h1::Real, t2::Real, h2::Real)
-    # Arc length function along the spiral
-    # s(t) = ∫₀ᵗ √(1 + τ²) dτ
-    # This has a closed form: s(t) = (t√(1+t²) + asinh(t)) / 2
+function exact_swiss_roll_geodesic(t1::Real, h1::Real, t2::Real, h2::Real;
+                                   radial_scale::Real=1.0)
+    # Arc length function along the spiral, generalised for a radial scaling
+    # alpha: x(t) = alpha t cos t, z(t) = alpha t sin t implies the metric is
+    # ds^2 = alpha^2 (1 + t^2) dt^2 + dh^2, so the arc length along the spiral
+    # is alpha * (t sqrt(1+t^2) + asinh(t)) / 2.
     function arc_length(t)
-        return (t * sqrt(1 + t^2) + asinh(t)) / 2
+        return radial_scale * (t * sqrt(1 + t^2) + asinh(t)) / 2
     end
 
     # Compute arc lengths
@@ -110,7 +113,10 @@ Compute exact geodesic distance between two points given their parameter indices
 - Exact geodesic distance
 """
 function exact_swiss_roll_geodesic(params::NamedTuple, i::Int, j::Int)
-    return exact_swiss_roll_geodesic(params.t[i], params.h[i], params.t[j], params.h[j])
+    alpha = haskey(params, :radial_scale) ? params.radial_scale : 1.0
+    return exact_swiss_roll_geodesic(params.t[i], params.h[i],
+                                     params.t[j], params.h[j];
+                                     radial_scale=alpha)
 end
 
 """
