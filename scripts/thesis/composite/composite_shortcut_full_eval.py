@@ -32,7 +32,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / "benchmark_results" / "composite_shortcut_full_eval"
+OUT = ROOT / "benchmark_results" / "composite_shortcut_full_eval_v2"
 OUT.mkdir(parents=True, exist_ok=True)
 
 R_THRESH = 0.67
@@ -42,19 +42,12 @@ S_CAP = 100.0
 # Each run is described by (label, edges_csv, kind, params). We regenerate
 # points using the *same* MersenneTwister(42) procedure used in experiment_orc.jl
 # / generate_swiss_roll / generate_torus.
+_THESIS_RESULTS = Path("/home/bram/projects/mai/thesis/docs/thesis/results/orc_results")
+
 RUNS = [
     {
-        "label": "swiss_roll",
-        "edges": ROOT / "benchmark_results/orc_results_regen/swiss_roll_20260222_012105/edges.csv",
-        "kind": "swiss",
-        "h_scale": 10.0,
-        "t_min": 1.5 * math.pi,
-        "t_range": 3.0 * math.pi,
-        "radial_scale": 1.0,
-    },
-    {
-        "label": "swiss_roll_tight_s005",
-        "edges": ROOT / "benchmark_results/orc_results_tight_swiss/swiss_roll_s005_20260427_012627/edges.csv",
+        "label": "swiss_roll_s005",
+        "edges": _THESIS_RESULTS / "swiss_roll_s005_20260507_173608/edges.csv",
         "kind": "swiss",
         "h_scale": 10.0,
         "t_min": 1.5 * math.pi,
@@ -62,24 +55,19 @@ RUNS = [
         "radial_scale": 0.05,
     },
     {
+        "label": "swiss_roll_s025",
+        "edges": _THESIS_RESULTS / "swiss_roll_s025_20260507_183616/edges.csv",
+        "kind": "swiss",
+        "h_scale": 10.0,
+        "t_min": 1.5 * math.pi,
+        "t_range": 3.0 * math.pi,
+        "radial_scale": 0.25,
+    },
+    {
         "label": "torus_R2_r1",
-        "edges": ROOT / "benchmark_results/orc_results_regen/torus_20260222_015917/edges.csv",
+        "edges": _THESIS_RESULTS / "torus_R2_0r1_0_20260507_175143/edges.csv",
         "kind": "torus",
         "R": 2.0,
-        "r": 1.0,
-    },
-    {
-        "label": "torus_R1_5_r1",
-        "edges": ROOT / "benchmark_results/orc_results_regen/torus_20260426_232917/edges.csv",
-        "kind": "torus",
-        "R": 1.5,
-        "r": 1.0,
-    },
-    {
-        "label": "torus_R4_r1",
-        "edges": ROOT / "benchmark_results/orc_results_regen/torus_20260427_000521/edges.csv",
-        "kind": "torus",
-        "R": 4.0,
         "r": 1.0,
     },
 ]
