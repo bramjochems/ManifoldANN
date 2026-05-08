@@ -1,0 +1,20 @@
+[
+  {
+    "vm_id": "rec-ivf-tail-vm1",
+    "shards": [
+      {"shard_id": "gist-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "gist-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5}
+    ]
+  },
+  {
+    "vm_id": "rec-ivf-tail-vm2",
+    "shards": [
+      {"shard_id": "sift-mann-ivf-flat-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-flat-sweep", "threads": 16, "reps": 5}
+    ]
+  },
+  {
+    "vm_id": "rec-ivf-tail-vm3",
+    "shards": [
+      {"shard_id": "sift-mann-ivf-hnsw-sweep", "kind": "ann-benchmark", "config_name": "sift-mann-ivf-hnsw-sweep", "threads": 16, "reps": 5}
+    ]
+  }
+]
